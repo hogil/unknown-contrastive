@@ -141,13 +141,40 @@ python predict.py \
 ## 개발 (로컬 Windows)
 
 ```bash
-# 테스트 실행
+# 단위 테스트 (합성 입력)
 python -m pytest tests/ -v
 ```
 
 현재 **26 테스트 모두 통과**. Windows에서는 `hdbscan` 패키지가 필요 없음 (학습은 서버에서만).
 
-실제 학습은 CUDA GPU + 대용량 wafer 데이터셋이 필요하므로 로컬에서는 합성 smoke test만 수행. 서버 경로(`/home/sr5/ho.choi/...`)는 `CFG`에 그대로 유지돼있으므로 수정 불필요.
+### Composite smoke evaluation (실데이터 WM-811K)
+
+학습 전에 "같은 GT 클래스의 N장으로 만든 average composite이 class 특성을 재현하는가" 육안 평가:
+
+```bash
+# 1. 데이터 준비 (최초 1회, Kaggle 토큰 필요)
+python data_prep/download_wm811k.py
+python data_prep/wm811k_to_palette.py --n-per-class 222
+
+# 2. 각 클래스 앞 10장으로 composite PNG 생성
+python scripts/generate_per_class_composite.py \
+    --data-root data/wm811k \
+    --out-dir   outputs_smoke/composite_per_class_96 \
+    --target 96 96 \
+    --n 10
+```
+
+출력 9장의 PNG를 육안 확인:
+- `Center_composite.png` — 중앙 spot
+- `Donut_composite.png` — 고리 + 희미한 중앙
+- `Edge-Ring_composite.png` — 가장자리 고리
+- `Near-full_composite.png` — 전체 진함
+- `Random_composite.png` — 균등 분산
+- `Scratch`, `Loc`, `Edge-Loc` — 방향/위치 가변이라 10장으론 희미 (정상)
+
+**WM-811K wafer 크기가 가변(25×25 ~ 63×62)**이므로 `--target 96 96` 같은 고정 리사이즈 필수. 서버 학습 시 cluster composite는 `CFG["COMPOSITE_TARGET_SIZE"]` (기본 `(96, 96)`)로 자동 적용됨. 원본 크기 유지하려면 `None`으로.
+
+실제 학습은 CUDA GPU + 대용량 wafer 데이터셋이 필요하므로 로컬에서는 합성/소규모 smoke test만 수행. 서버 경로(`/home/sr5/ho.choi/...`)는 `CFG`에 그대로 유지돼있으므로 수정 불필요.
 
 ## 규칙 / 주의
 

@@ -148,6 +148,12 @@ CFG: Dict[str, Any] = {
     "__STRONG_AUGMENT__": False,
     "__MULTICROP__": False,
     "__DEEPER_HEAD__": False,
+
+    # -------------------------
+    # Cluster composite map
+    # -------------------------
+    "COMPOSITE_TARGET_SIZE": (96, 96),   # cluster composite용 고정 리사이즈. None이면 첫 이미지 크기 유지
+    "COMPOSITE_N_PER_CLUSTER": 10,       # medoid 가장 가까운 top-N 샘플
 }
 
 RUN_TS = datetime.now().strftime("%y%m%d_%H%M%S")
@@ -1363,6 +1369,9 @@ def main():
     try:
         from cluster_composite import generate_cluster_composites
         composite_dir = Path(run_dir) / "cluster_summary" / "composite"
+        _ct = CFG.get("COMPOSITE_TARGET_SIZE", (96, 96))
+        if _ct is not None:
+            _ct = tuple(_ct)
         generate_cluster_composites(
             run_dir=Path(run_dir),
             emb=emb,
@@ -1370,8 +1379,9 @@ def main():
             cluster_labels=cluster_labels,
             kept_labels=kept_labels,
             out_dir=composite_dir,
-            n_per_cluster=10,
+            n_per_cluster=CFG.get("COMPOSITE_N_PER_CLUSTER", 10),
             logger=logger,
+            target_size=_ct,
         )
     except ImportError as e:
         logger.warning(f"cluster_composite 스킵: {e}")

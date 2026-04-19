@@ -60,6 +60,7 @@ def generate_cluster_composites(
     n_per_cluster: int = 10,
     logger: Optional[Any] = None,
     overlay_dir: Optional[str] = None,  # unused — composites must come from palette PNGs
+    target_size: Optional[tuple] = None,  # force-resize before stacking; None = use first image size
 ) -> List[Path]:
     """Generate one composite PNG per KEPT cluster.
 
@@ -125,7 +126,7 @@ def generate_cluster_composites(
             continue
 
         try:
-            stacked, invalid_mask = stack_and_normalize(paths)
+            stacked, invalid_mask = stack_and_normalize(paths, target_size=target_size)
         except Exception as e:
             if logger is not None:
                 logger.warning(
