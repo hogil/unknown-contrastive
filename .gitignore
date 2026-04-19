@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Virtual envs
+venv/
+.venv/
+env/
+
+# Data (학습/평가용 이미지는 아카이브 금지)
+data_raw/
+data/
+weights/
+*.pkl
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# 학습/클러스터링 실행 결과 (글로벌 CLAUDE 규칙: 삭제·덮어쓰기 금지, repo에도 넣지 않음)
+outputs/
+outputs_*/
+logs/
+runs/
+*.log
+run.log
+run_info.json
+clusters_global_list.txt
+clusters_summary.txt
+eval_summary.json
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.*
+!.env.example
+kaggle.json
+.kaggle/
+
+# Notebooks scratch
+.ipynb_checkpoints/
+*-checkpoint.ipynb
