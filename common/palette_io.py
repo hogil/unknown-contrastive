@@ -89,6 +89,62 @@ def get_default_palette() -> List[int]:
     return flat
 
 
+def _hex_to_rgb(h: str) -> Tuple[int, int, int]:
+    h = h.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def get_failmap_palette() -> List[int]:
+    """Return fail-map's official 32-entry palette (padded to 256).
+
+    Mirrors ``D:/project/fail-map/utils.py::build_palette`` with the default
+    ``color-legends.json`` values. Grade 0..7 follow fail-map's Grade0..Grade7
+    colors exactly; indices 8..30 are the bottom-border palette entries used
+    by fail-map (background, text, borders); index 31 is invalid_fill (white).
+    """
+    grade_colors = [
+        "#FFFFFF",  # 0 Grade0 (pass/white)
+        "#9B9B9B",  # 1 Grade1 (grey)
+        "#009619",  # 2 Grade2 (green)
+        "#0000FF",  # 3 Grade3 (blue)
+        "#D91DFF",  # 4 Grade4 (violet)
+        "#FFFF00",  # 5 Grade5 (yellow)
+        "#FF0000",  # 6 Grade6 (red)
+        "#000000",  # 7 Grade7 (black)
+    ]
+    # fail-map bottom palette entries (indices 8..30 mapped in order)
+    bottom_colors = [
+        "#FEFEFE",  # 8  background (bg)
+        "#000001",  # 9  text
+        "#BEBEBE",  # 10 border Normal
+        "#FF9900",  # 11 border Invalid
+        "#0099FF",  # 12 border B285
+        "#FF714F",  # 13 border B286
+        "#66FFCC",  # 14 border B287
+        "#DA26CD",  # 15 border B288
+        "#FFD700",  # 16 border B290
+        "#32CD32",  # 17 border B291
+        "#AAAAAA",  # 18 border B300
+        "#00C8FF",  # 19 border B385
+        "#FF00C8",  # 20 border B386
+        "#00FF66",  # 21 border B388
+        "#FF6666",  # 22 border B389
+        "#6666FF",  # 23 border B390
+        "#999999",  # 24 border ETC
+    ]
+    palette: List[Tuple[int, int, int]] = [(0, 0, 0)] * 256
+    for i, h in enumerate(grade_colors):
+        palette[i] = _hex_to_rgb(h)
+    for j, h in enumerate(bottom_colors):
+        palette[8 + j] = _hex_to_rgb(h)
+    palette[31] = (255, 255, 255)  # invalid_fill (fail-map overrides to white)
+
+    flat: List[int] = []
+    for r, g, b in palette:
+        flat.extend((r, g, b))
+    return flat
+
+
 # ---------------------------------------------------------------------------
 # Single-image loading
 # ---------------------------------------------------------------------------

@@ -62,7 +62,7 @@
 | `experiments/run_experiment.py` | preset 이름 받아 `CFG` 런타임 패치 후 `contrastive.main()` 호출 → `eval_summary.json` 저장. |
 | `experiments/compare.py` | 여러 run의 `eval_summary.json`을 CSV/TSV로 집계. |
 | `data_prep/download_wm811k.py` | Kaggle CLI → HF mirror → 수동안내 3단 폴백. |
-| `data_prep/wm811k_to_palette.py` | LSWMD.pkl → palette PNG. 매핑: `{0→31 transparent, 1→0 normal, 2→7 severe}`. |
+| `data_prep/wm811k_to_palette.py` | LSWMD.pkl → **fail-map 정식 포맷** palette PNG. `common.palette_io.get_failmap_palette()` + density 기반 grade 0·3–7 + `{CLASS}_00P_W{idx}_{ymd}_{hms}.png` 5-field 파일명. |
 | `tests/` | pytest/unittest 호환. 현재 **26 passed**. |
 
 ## 15 Experiment Presets
