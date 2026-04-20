@@ -110,10 +110,20 @@ def wm_to_palette(wm: np.ndarray) -> np.ndarray:
     return assign_grades_by_neighbor_density(wm)
 
 
-def save_palette_png(idx_array: np.ndarray, path: Path, palette: list[int]) -> None:
+def save_palette_png(
+    idx_array: np.ndarray,
+    path: Path,
+    palette: list[int],
+    target_size: tuple[int, int] | None = None,
+) -> None:
+    """Save ``idx_array`` as palette PNG. If ``target_size=(W, H)`` is given,
+    NEAREST-resize so all wafers land on a uniform canvas (index values
+    preserved exactly — no interpolation of grades)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     img = Image.fromarray(idx_array, mode="P")
     img.putpalette(palette)
+    if target_size is not None:
+        img = img.resize(target_size, Image.NEAREST)
     img.save(path, transparency=31, optimize=True)
 
 
@@ -148,6 +158,10 @@ def main() -> int:
                     help="wafer 선택 시드. grade 할당 자체는 deterministic.")
     ap.add_argument("--base-date", default="20260420",
                     help="합성 파일명 timestamp 의 YYYYMMDD (fail-map 규약용)")
+    ap.add_argument("--target-size", nargs=2, type=int, default=None,
+                    metavar=("W", "H"),
+                    help="모든 wafer 를 이 크기로 NEAREST resize. "
+                         "미지정시 WM-811K 원본 크기 유지 (가변).")
     args = ap.parse_args()
 
     pkl_path = Path(args.pkl)
@@ -169,6 +183,9 @@ def main() -> int:
     base_dt = datetime.strptime(args.base_date + "_000000", "%Y%m%d_%H%M%S")
 
     palette = get_failmap_palette()
+    target_size = tuple(args.target_size) if args.target_size else None
+    if target_size is not None:
+        print(f"[target-size] uniform canvas {target_size[0]}x{target_size[1]} (NEAREST resize)")
     summary: dict[str, int] = {}
 
     for cls in CLASSES:
@@ -187,7 +204,12 @@ def main() -> int:
             try:
                 idx_arr = assign_grades_by_neighbor_density(row["waferMap"])
                 fname = _filename_for(cls, i, base_dt)
-                save_palette_png(idx_arr, out_root / cls / fname, palette)
+                save_palette_png(
+                    idx_arr,
+                    out_root / cls / fname,
+                    palette,
+                    target_size=target_size,
+                )
                 saved += 1
             except Exception as e:
                 print(f"[skip] {cls}/{i}: {e}")
