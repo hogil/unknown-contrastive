@@ -1,4 +1,4 @@
-"""Round-trip tests for save_embedding_artifacts.save_embedding_artifacts.
+"""Round-trip tests for contrastive_rev_com.save_embedding_artifacts.
 
 Runnable via:
     python -m pytest tests/test_save_embedding_artifacts.py -v
@@ -20,7 +20,7 @@ _PROJECT_ROOT = _THIS_DIR.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from save_embedding_artifacts import save_embedding_artifacts  # noqa: E402
+from contrastive_rev_com import save_embedding_artifacts  # noqa: E402
 
 
 class TestSaveEmbeddingArtifacts(unittest.TestCase):
