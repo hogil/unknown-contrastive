@@ -1157,44 +1157,6 @@ def save_run_info(run_dir: Path, device: torch.device, class_to_idx: Dict[str, i
         json.dump(info, f, indent=2, ensure_ascii=False)
 
 
-def save_embedding_artifacts(
-    run_dir: Path,
-    emb: np.ndarray,
-    cluster_labels: np.ndarray,
-    files: List[str],
-    kept_labels: List[int],
-) -> Dict[str, Path]:
-    """Persist embedding + clustering artifacts for downstream re-use.
-
-    Produces four files matching the filenames `cluster_composite._cli` expects,
-    so a run's composite/predict/eval can be replayed without re-embedding.
-    """
-    run_dir = Path(run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    emb_arr = np.ascontiguousarray(emb)
-    labels_arr = np.ascontiguousarray(cluster_labels)
-    if emb_arr.shape[0] != labels_arr.shape[0] or emb_arr.shape[0] != len(files):
-        raise ValueError(
-            f"shape mismatch: emb={emb_arr.shape}, labels={labels_arr.shape}, "
-            f"files={len(files)}"
-        )
-
-    paths = {
-        "emb": run_dir / "emb.npy",
-        "cluster_labels": run_dir / "cluster_labels.npy",
-        "files": run_dir / "files.txt",
-        "kept_labels": run_dir / "kept_labels.txt",
-    }
-    np.save(paths["emb"], emb_arr)
-    np.save(paths["cluster_labels"], labels_arr)
-    paths["files"].write_text("\n".join(str(f) for f in files), encoding="utf-8")
-    paths["kept_labels"].write_text(
-        "\n".join(str(int(x)) for x in kept_labels), encoding="utf-8"
-    )
-    return paths
-
-
 # =========================================================
 # Main
 # =========================================================
@@ -1387,20 +1349,6 @@ def main():
     cluster_labels, clusterer, kept_labels = cluster_and_save_hdbscan(
         emb, files, labs, clss, run_dir, logger
     )
-
-    # Persist embedding + clustering artifacts so composite/predict/eval
-    # can be replayed without re-embedding.
-    try:
-        saved = save_embedding_artifacts(
-            Path(run_dir), emb, cluster_labels, files, kept_labels
-        )
-        logger.info(
-            f"[저장] emb artifacts -> {saved['emb'].name}, "
-            f"{saved['cluster_labels'].name}, {saved['files'].name}, "
-            f"{saved['kept_labels'].name}"
-        )
-    except Exception as e:
-        logger.warning(f"emb artifacts 저장 실패: {e}")
 
     # Save centroids + clusterer for predict.py
     try:
