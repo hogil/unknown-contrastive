@@ -17,7 +17,12 @@ if str(_ROOT) not in sys.path:
 
 from experiments.eval_metrics import (  # noqa: E402
     compute_cluster_metrics,
+    compute_silhouette_cosine,
     compute_subset_selection,
+)
+from experiments.eval_val import (  # noqa: E402
+    read_kept_cluster_count,
+    resolve_output_path,
 )
 
 
@@ -56,6 +61,43 @@ class TestClusterMetrics(unittest.TestCase):
     def test_shape_mismatch(self):
         with self.assertRaises(ValueError):
             compute_cluster_metrics(np.array([0, 1]), np.array([0]))
+
+
+class TestSilhouetteCosine(unittest.TestCase):
+    def test_perfect_separation_gives_positive_score(self):
+        rng = np.random.default_rng(0)
+        # Two tight clusters far apart on unit sphere
+        a = np.array([1.0, 0.0]) + rng.normal(scale=0.01, size=(30, 2))
+        b = np.array([-1.0, 0.0]) + rng.normal(scale=0.01, size=(30, 2))
+        a /= np.linalg.norm(a, axis=1, keepdims=True)
+        b /= np.linalg.norm(b, axis=1, keepdims=True)
+        emb = np.vstack([a, b])
+        lbl = np.array([0] * 30 + [1] * 30)
+        out = compute_silhouette_cosine(emb, lbl, sample_size=None)
+        self.assertIsNotNone(out["silhouette"])
+        self.assertGreater(out["silhouette"], 0.8)
+        self.assertEqual(out["n_clusters"], 2)
+
+    def test_noise_is_excluded(self):
+        rng = np.random.default_rng(1)
+        emb = rng.normal(size=(20, 4))
+        lbl = np.array([0] * 8 + [1] * 8 + [-1] * 4)
+        out = compute_silhouette_cosine(emb, lbl, sample_size=None)
+        self.assertEqual(out["n_used"], 16, "noise must not be scored")
+
+    def test_single_cluster_returns_none(self):
+        emb = np.random.default_rng(2).normal(size=(10, 3))
+        lbl = np.zeros(10, dtype=int)
+        out = compute_silhouette_cosine(emb, lbl, sample_size=None)
+        self.assertIsNone(out["silhouette"])
+
+    def test_subsample_is_applied(self):
+        rng = np.random.default_rng(3)
+        emb = rng.normal(size=(10_000, 8))
+        lbl = rng.integers(0, 5, size=10_000)
+        out = compute_silhouette_cosine(emb, lbl, sample_size=500, seed=0)
+        self.assertLessEqual(out["n_used"], 500)
+        self.assertIsNotNone(out["silhouette"])
 
 
 class TestSubsetSelection(unittest.TestCase):
@@ -120,6 +162,117 @@ class TestSubsetSelection(unittest.TestCase):
                 [(str(p), c) for p, c in a],
                 [(str(p), c) for p, c in b],
             )
+
+
+class TestResolveOutputPath(unittest.TestCase):
+    def test_default_uses_run_dir(self):
+        with tempfile.TemporaryDirectory() as td:
+            rd = Path(td)
+            p = resolve_output_path(rd, None)
+            self.assertEqual(p, rd / "eval_summary.json")
+
+    def test_explicit_file_path(self):
+        with tempfile.TemporaryDirectory() as td:
+            rd = Path(td)
+            target = rd / "eval_summary_test.json"
+            p = resolve_output_path(rd, target)
+            self.assertEqual(p, target)
+
+    def test_existing_directory_gets_default_filename(self):
+        with tempfile.TemporaryDirectory() as td:
+            rd = Path(td)
+            sub = rd / "eval_out"
+            sub.mkdir()
+            p = resolve_output_path(rd, sub)
+            self.assertEqual(p, sub / "eval_summary.json")
+
+    def test_trailing_separator_treated_as_dir(self):
+        with tempfile.TemporaryDirectory() as td:
+            rd = Path(td)
+            # Directory doesn't exist yet, but trailing sep signals intent.
+            raw = str(rd / "not_yet") + os.sep
+            p = resolve_output_path(rd, raw)
+            self.assertEqual(p.name, "eval_summary.json")
+            self.assertEqual(p.parent, rd / "not_yet")
+
+    def test_val_test_split_no_overwrite(self):
+        with tempfile.TemporaryDirectory() as td:
+            rd = Path(td)
+            val = resolve_output_path(rd, rd / "eval_summary_val.json")
+            tst = resolve_output_path(rd, rd / "eval_summary_test.json")
+            self.assertNotEqual(val, tst)
+            default = resolve_output_path(rd, None)
+            self.assertNotEqual(val, default)
+            self.assertNotEqual(tst, default)
+
+
+class TestReadKeptClusterCount(unittest.TestCase):
+    def test_missing_file_returns_zero(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.assertEqual(read_kept_cluster_count(Path(td) / "nope.json"), 0)
+
+    def test_populated_cluster_ids(self):
+        import json as _json
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "centroids_meta.json"
+            p.write_text(_json.dumps({"cluster_ids": [0, 3, 7]}))
+            self.assertEqual(read_kept_cluster_count(p), 3)
+
+    def test_empty_cluster_ids(self):
+        import json as _json
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "centroids_meta.json"
+            p.write_text(_json.dumps({"cluster_ids": []}))
+            self.assertEqual(read_kept_cluster_count(p), 0)
+
+    def test_malformed_json_returns_zero(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "centroids_meta.json"
+            p.write_text("{not valid json")
+            self.assertEqual(read_kept_cluster_count(p), 0)
+
+    def test_missing_key_returns_zero(self):
+        import json as _json
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "centroids_meta.json"
+            p.write_text(_json.dumps({"sizes": {}}))
+            self.assertEqual(read_kept_cluster_count(p), 0)
+
+
+class TestEvalSummaryMetaFields(unittest.TestCase):
+    """Sanity-check that the real eval_summary files carry the new meta keys."""
+
+    REQUIRED = {
+        "cluster_assignment_source",
+        "approximate_predict_used",
+        "filter_cascaded",
+        "kept_cluster_count",
+    }
+
+    def test_meta_fields_present_if_file_exists(self):
+        import json as _json
+        candidates = [
+            _ROOT / "outputs_cpu_ep10" / "baseline_260420_201121" / "eval_summary_val.json",
+            _ROOT / "outputs_cpu_ep10" / "baseline_260420_201121" / "eval_summary_test.json",
+            _ROOT / "outputs_cpu_smoke" / "baseline_260420_181745" / "eval_summary_test.json",
+        ]
+        checked = False
+        for p in candidates:
+            if not p.exists():
+                continue
+            data = _json.loads(p.read_text(encoding="utf-8"))
+            missing = self.REQUIRED - set(data.keys())
+            # Legacy files (from before this commit) may not have the fields yet;
+            # only assert on files that already carry at least one of them,
+            # otherwise skip so the test doesn't spuriously fail on old runs.
+            if self.REQUIRED & set(data.keys()):
+                self.assertFalse(
+                    missing,
+                    f"{p.name} missing meta keys: {missing}",
+                )
+                checked = True
+        if not checked:
+            self.skipTest("no eval_summary with new meta fields present yet")
 
 
 if __name__ == "__main__":

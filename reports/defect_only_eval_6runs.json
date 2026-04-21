@@ -1,0 +1,660 @@
+[
+  {
+    "run_dir": "outputs_gpu_ood_A\\deeper_head_260421_090242",
+    "val": {
+      "split": "val",
+      "n_total": 800,
+      "n_defect": 160,
+      "n_dropped_none": 640,
+      "n_defect_noise": 114,
+      "defect_noise_ratio": 0.7125,
+      "ari": 0.4943278350580455,
+      "nmi": 0.6428347656549431,
+      "cluster_purity": 0.782608695652174,
+      "n_clusters_found": 9,
+      "silhouette": 0.6982302665710449,
+      "silhouette_n_used": 46,
+      "silhouette_n_clusters": 9,
+      "per_cluster_defect_breakdown": {
+        "0": {
+          "size": 11,
+          "dominant_class": "Edge-Ring",
+          "purity": 0.9090909090909091,
+          "class_mix": {
+            "Edge-Ring": 10,
+            "Near-full": 1
+          },
+          "is_defect_cluster": true
+        },
+        "3": {
+          "size": 5,
+          "dominant_class": "Center",
+          "purity": 0.2,
+          "class_mix": {
+            "Center": 1,
+            "Edge-Loc": 1,
+            "Edge-Ring": 1,
+            "Loc": 1,
+            "Scratch": 1
+          },
+          "is_defect_cluster": true
+        },
+        "7": {
+          "size": 1,
+          "dominant_class": "Edge-Loc",
+          "purity": 1.0,
+          "class_mix": {
+            "Edge-Loc": 1
+          },
+          "is_defect_cluster": true
+        },
+        "8": {
+          "size": 1,
+          "dominant_class": "Center",
+          "purity": 1.0,
+          "class_mix": {
+            "Center": 1
+          },
+          "is_defect_cluster": true
+        },
+        "10": {
+          "size": 10,
+          "dominant_class": "Near-full",
+          "purity": 0.7,
+          "class_mix": {
+            "Near-full": 7,
+            "Random": 2,
+            "Loc": 1
+          },
+          "is_defect_cluster": true
+        },
+        "12": {
+          "size": 1,
+          "dominant_class": "Edge-Loc",
+          "purity": 1.0,
+          "class_mix": {
+            "Edge-Loc": 1
+          },
+          "is_defect_cluster": true
+        },
+        "13": {
+          "size": 1,
+          "dominant_class": "Scratch",
+          "purity": 1.0,
+          "class_mix": {
+            "Scratch": 1
+          },
+          "is_defect_cluster": true
+        },
+        "14": {
+          "size": 9,
+          "dominant_class": "Center",
+          "purity": 0.7777777777777778,
+          "class_mix": {
+            "Center": 7,
+            "Loc": 1,
+            "Random": 1
+          },
+          "is_defect_cluster": true
+        },
+        "15": {
+          "size": 7,
+          "dominant_class": "Near-full",
+          "purity": 1.0,
+          "class_mix": {
+            "Near-full": 7
+          },
+          "is_defect_cluster": true
+        }
+      },
+      "defect_classes": [
+        "Center",
+        "Donut",
+        "Edge-Loc",
+        "Edge-Ring",
+        "Loc",
+        "Near-full",
+        "Random",
+        "Scratch"
+      ]
+    },
+    "test": {
+      "split": "test",
+      "n_total": 800,
+      "n_defect": 160,
+      "n_dropped_none": 640,
+      "n_defect_noise": 111,
+      "defect_noise_ratio": 0.69375,
+      "ari": 0.5781749610559974,
+      "nmi": 0.7120563817220986,
+      "cluster_purity": 0.8163265306122449,
+      "n_clusters_found": 9,
+      "silhouette": 0.6867454648017883,
+      "silhouette_n_used": 49,
+      "silhouette_n_clusters": 9,
+      "per_cluster_defect_breakdown": {
+        "0": {
+          "size": 12,
+          "dominant_class": "Edge-Ring",
+          "purity": 0.9166666666666666,
+          "class_mix": {
+            "Edge-Ring": 11,
+            "Donut": 1
+          },
+          "is_defect_cluster": true
+        },
+        "1": {
+          "size": 1,
+          "dominant_class": "Edge-Loc",
+          "purity": 1.0,
+          "class_mix": {
+            "Edge-Loc": 1
+          },
+          "is_defect_cluster": true
+        },
+        "3": {
+          "size": 6,
+          "dominant_class": "Edge-Loc",
+          "purity": 0.3333333333333333,
+          "class_mix": {
+            "Edge-Loc": 2,
+            "Scratch": 2,
+            "Center": 1,
+            "Loc": 1
+          },
+          "is_defect_cluster": true
+        },
+        "7": {
+          "size": 1,
+          "dominant_class": "Scratch",
+          "purity": 1.0,
+          "class_mix": {
+            "Scratch": 1
+          },
+          "is_defect_cluster": true
+        },
+        "9": {
+          "size": 1,
+          "dominant_class": "Edge-Loc",
+          "purity": 1.0,
+          "class_mix": {
+            "Edge-Loc": 1
+          },
+          "is_defect_cluster": true
+        },
+        "10": {
+          "size": 8,
+          "dominant_class": "Near-full",
+          "purity": 1.0,
+          "class_mix": {
+            "Near-full": 8
+          },
+          "is_defect_cluster": true
+        },
+        "13": {
+          "size": 4,
+          "dominant_class": "Loc",
+          "purity": 0.5,
+          "class_mix": {
+            "Loc": 2,
+            "Center": 1,
+            "Scratch": 1
+          },
+          "is_defect_cluster": true
+        },
+        "14": {
+          "size": 7,
+          "dominant_class": "Center",
+          "purity": 0.8571428571428571,
+          "class_mix": {
+            "Center": 6,
+            "Random": 1
+          },
+          "is_defect_cluster": true
+        },
+        "15": {
+          "size": 9,
+          "dominant_class": "Near-full",
+          "purity": 0.8888888888888888,
+          "class_mix": {
+            "Near-full": 8,
+            "Center": 1
+          },
+          "is_defect_cluster": true
+        }
+      },
+      "defect_classes": [
+        "Center",
+        "Donut",
+        "Edge-Loc",
+        "Edge-Ring",
+        "Loc",
+        "Near-full",
+        "Random",
+        "Scratch"
+      ]
+    }
+  },
+  {
+    "run_dir": "outputs_gpu_ood_B\\deeper_head_260421_095118",
+    "val": {
+      "split": "val",
+      "n_total": 800,
+      "n_defect": 160,
+      "n_dropped_none": 640,
+      "n_defect_noise": 117,
+      "defect_noise_ratio": 0.73125,
+      "ari": 0.5961177207263619,
+      "nmi": 0.7735692883753064,
+      "cluster_purity": 0.7906976744186046,
+      "n_clusters_found": 7,
+      "silhouette": 0.7491634488105774,
+      "silhouette_n_used": 43,
+      "silhouette_n_clusters": 7,
+      "per_cluster_defect_breakdown": {
+        "0": {
+          "size": 11,
+          "dominant_class": "Edge-Ring",
+          "purity": 1.0,
+          "class_mix": {
+            "Edge-Ring": 11
+          },
+          "is_defect_cluster": true
+        },
+        "1": {
+          "size": 1,
+          "dominant_class": "Loc",
+          "purity": 1.0,
+          "class_mix": {
+            "Loc": 1
+          },
+          "is_defect_cluster": true
+        },
+        "7": {
+          "size": 1,
+          "dominant_class": "Scratch",
+          "purity": 1.0,
+          "class_mix": {
+            "Scratch": 1
+          },
+          "is_defect_cluster": true
+        },
+        "8": {
+          "size": 8,
+          "dominant_class": "Center",
+          "purity": 0.875,
+          "class_mix": {
+            "Center": 7,
+            "Random": 1
+          },
+          "is_defect_cluster": true
+        },
+        "9": {
+          "size": 1,
+          "dominant_class": "Edge-Loc",
+          "purity": 1.0,
+          "class_mix": {
+            "Edge-Loc": 1
+          },
+          "is_defect_cluster": true
+        },
+        "11": {
+          "size": 6,
+          "dominant_class": "Near-full",
+          "purity": 1.0,
+          "class_mix": {
+            "Near-full": 6
+          },
+          "is_defect_cluster": true
+        },
+        "12": {
+          "size": 15,
+          "dominant_class": "Random",
+          "purity": 0.4666666666666667,
+          "class_mix": {
+            "Random": 7,
+            "Near-full": 6,
+            "Donut": 1,
+            "Loc": 1
+          },
+          "is_defect_cluster": true
+        }
+      },
+      "defect_classes": [
+        "Center",
+        "Donut",
+        "Edge-Loc",
+        "Edge-Ring",
+        "Loc",
+        "Near-full",
+        "Random",
+        "Scratch"
+      ]
+    },
+    "test": {
+      "split": "test",
+      "n_total": 800,
+      "n_defect": 160,
+      "n_dropped_none": 640,
+      "n_defect_noise": 116,
+      "defect_noise_ratio": 0.725,
+      "ari": 0.5828779346309014,
+      "nmi": 0.7401858525634463,
+      "cluster_purity": 0.7954545454545454,
+      "n_clusters_found": 6,
+      "silhouette": 0.849998414516449,
+      "silhouette_n_used": 44,
+      "silhouette_n_clusters": 6,
+      "per_cluster_defect_breakdown": {
+        "0": {
+          "size": 10,
+          "dominant_class": "Edge-Ring",
+          "purity": 1.0,
+          "class_mix": {
+            "Edge-Ring": 10
+          },
+          "is_defect_cluster": true
+        },
+        "4": {
+          "size": 3,
+          "dominant_class": "Edge-Loc",
+          "purity": 0.3333333333333333,
+          "class_mix": {
+            "Edge-Loc": 1,
+            "Loc": 1,
+            "Scratch": 1
+          },
+          "is_defect_cluster": true
+        },
+        "7": {
+          "size": 4,
+          "dominant_class": "Loc",
+          "purity": 0.5,
+          "class_mix": {
+            "Loc": 2,
+            "Center": 1,
+            "Scratch": 1
+          },
+          "is_defect_cluster": true
+        },
+        "8": {
+          "size": 7,
+          "dominant_class": "Center",
+          "purity": 0.8571428571428571,
+          "class_mix": {
+            "Center": 6,
+            "Random": 1
+          },
+          "is_defect_cluster": true
+        },
+        "11": {
+          "size": 6,
+          "dominant_class": "Near-full",
+          "purity": 1.0,
+          "class_mix": {
+            "Near-full": 6
+          },
+          "is_defect_cluster": true
+        },
+        "12": {
+          "size": 14,
+          "dominant_class": "Near-full",
+          "purity": 0.7142857142857143,
+          "class_mix": {
+            "Near-full": 10,
+            "Random": 4
+          },
+          "is_defect_cluster": true
+        }
+      },
+      "defect_classes": [
+        "Center",
+        "Donut",
+        "Edge-Loc",
+        "Edge-Ring",
+        "Loc",
+        "Near-full",
+        "Random",
+        "Scratch"
+      ]
+    }
+  },
+  {
+    "run_dir": "outputs_gpu_ood_C\\deeper_head_260421_110208",
+    "val": {
+      "split": "val",
+      "n_total": 800,
+      "n_defect": 160,
+      "n_dropped_none": 640,
+      "n_defect_noise": 103,
+      "defect_noise_ratio": 0.64375,
+      "ari": 0.46470290634119016,
+      "nmi": 0.6406189001706843,
+      "cluster_purity": 0.7017543859649122,
+      "n_clusters_found": 8,
+      "silhouette": 0.6200665235519409,
+      "silhouette_n_used": 57,
+      "silhouette_n_clusters": 8,
+      "per_cluster_defect_breakdown": {
+        "0": {
+          "size": 10,
+          "dominant_class": "Edge-Ring",
+          "purity": 0.9,
+          "class_mix": {
+            "Edge-Ring": 9,
+            "Donut": 1
+          },
+          "is_defect_cluster": true
+        },
+        "2": {
+          "size": 2,
+          "dominant_class": "Edge-Loc",
+          "purity": 0.5,
+          "class_mix": {
+            "Edge-Loc": 1,
+            "Scratch": 1
+          },
+          "is_defect_cluster": true
+        },
+        "3": {
+          "size": 2,
+          "dominant_class": "Loc",
+          "purity": 0.5,
+          "class_mix": {
+            "Loc": 1,
+            "Scratch": 1
+          },
+          "is_defect_cluster": true
+        },
+        "5": {
+          "size": 1,
+          "dominant_class": "Loc",
+          "purity": 1.0,
+          "class_mix": {
+            "Loc": 1
+          },
+          "is_defect_cluster": true
+        },
+        "7": {
+          "size": 5,
+          "dominant_class": "Random",
+          "purity": 0.6,
+          "class_mix": {
+            "Random": 3,
+            "Near-full": 2
+          },
+          "is_defect_cluster": true
+        },
+        "8": {
+          "size": 2,
+          "dominant_class": "Edge-Loc",
+          "purity": 1.0,
+          "class_mix": {
+            "Edge-Loc": 2
+          },
+          "is_defect_cluster": true
+        },
+        "9": {
+          "size": 9,
+          "dominant_class": "Center",
+          "purity": 0.7777777777777778,
+          "class_mix": {
+            "Center": 7,
+            "Loc": 1,
+            "Random": 1
+          },
+          "is_defect_cluster": true
+        },
+        "10": {
+          "size": 26,
+          "dominant_class": "Near-full",
+          "purity": 0.6153846153846154,
+          "class_mix": {
+            "Near-full": 16,
+            "Random": 7,
+            "Loc": 2,
+            "Center": 1
+          },
+          "is_defect_cluster": true
+        }
+      },
+      "defect_classes": [
+        "Center",
+        "Donut",
+        "Edge-Loc",
+        "Edge-Ring",
+        "Loc",
+        "Near-full",
+        "Random",
+        "Scratch"
+      ]
+    },
+    "test": {
+      "split": "test",
+      "n_total": 800,
+      "n_defect": 160,
+      "n_dropped_none": 640,
+      "n_defect_noise": 95,
+      "defect_noise_ratio": 0.59375,
+      "ari": 0.4814966264567573,
+      "nmi": 0.6701199683512132,
+      "cluster_purity": 0.7076923076923077,
+      "n_clusters_found": 10,
+      "silhouette": 0.608533501625061,
+      "silhouette_n_used": 65,
+      "silhouette_n_clusters": 10,
+      "per_cluster_defect_breakdown": {
+        "0": {
+          "size": 13,
+          "dominant_class": "Edge-Ring",
+          "purity": 0.9230769230769231,
+          "class_mix": {
+            "Edge-Ring": 12,
+            "Donut": 1
+          },
+          "is_defect_cluster": true
+        },
+        "1": {
+          "size": 1,
+          "dominant_class": "Scratch",
+          "purity": 1.0,
+          "class_mix": {
+            "Scratch": 1
+          },
+          "is_defect_cluster": true
+        },
+        "2": {
+          "size": 2,
+          "dominant_class": "Edge-Loc",
+          "purity": 0.5,
+          "class_mix": {
+            "Edge-Loc": 1,
+            "Scratch": 1
+          },
+          "is_defect_cluster": true
+        },
+        "3": {
+          "size": 3,
+          "dominant_class": "Loc",
+          "purity": 0.6666666666666666,
+          "class_mix": {
+            "Loc": 2,
+            "Scratch": 1
+          },
+          "is_defect_cluster": true
+        },
+        "4": {
+          "size": 1,
+          "dominant_class": "Edge-Loc",
+          "purity": 1.0,
+          "class_mix": {
+            "Edge-Loc": 1
+          },
+          "is_defect_cluster": true
+        },
+        "6": {
+          "size": 1,
+          "dominant_class": "Edge-Loc",
+          "purity": 1.0,
+          "class_mix": {
+            "Edge-Loc": 1
+          },
+          "is_defect_cluster": true
+        },
+        "7": {
+          "size": 9,
+          "dominant_class": "Near-full",
+          "purity": 0.8888888888888888,
+          "class_mix": {
+            "Near-full": 8,
+            "Random": 1
+          },
+          "is_defect_cluster": true
+        },
+        "8": {
+          "size": 2,
+          "dominant_class": "Edge-Loc",
+          "purity": 0.5,
+          "class_mix": {
+            "Edge-Loc": 1,
+            "Loc": 1
+          },
+          "is_defect_cluster": true
+        },
+        "9": {
+          "size": 11,
+          "dominant_class": "Center",
+          "purity": 0.8181818181818182,
+          "class_mix": {
+            "Center": 9,
+            "Edge-Loc": 1,
+            "Random": 1
+          },
+          "is_defect_cluster": true
+        },
+        "10": {
+          "size": 22,
+          "dominant_class": "Near-full",
+          "purity": 0.45454545454545453,
+          "class_mix": {
+            "Near-full": 10,
+            "Random": 9,
+            "Donut": 2,
+            "Center": 1
+          },
+          "is_defect_cluster": true
+        }
+      },
+      "defect_classes": [
+        "Center",
+        "Donut",
+        "Edge-Loc",
+        "Edge-Ring",
+        "Loc",
+        "Near-full",
+        "Random",
+        "Scratch"
+      ]
+    }
+  }
+]

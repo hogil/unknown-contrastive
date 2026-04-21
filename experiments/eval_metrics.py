@@ -116,6 +116,82 @@ def compute_cluster_metrics(
 
 
 # =========================================================
+# Silhouette (cosine)
+# =========================================================
+def compute_silhouette_cosine(
+    embeddings: np.ndarray,
+    cluster_labels: np.ndarray,
+    sample_size: Optional[int] = 5000,
+    seed: int = 42,
+) -> Dict:
+    """
+    Cosine-silhouette on the non-noise subset of embeddings.
+
+    Parameters
+    ----------
+    embeddings : np.ndarray of shape (N, D)
+        Projection embeddings. Expected L2-normalized; if not, cosine distance
+        is still well-defined (sklearn normalizes internally).
+    cluster_labels : np.ndarray of shape (N,)
+        HDBSCAN cluster ids. -1 entries (noise) are excluded.
+    sample_size : int | None
+        If the clustered subset exceeds this, draw a deterministic random
+        subsample before calling sklearn (O(N^2) memory otherwise).
+    seed : int
+        Subsample seed.
+
+    Returns
+    -------
+    dict: ``{"silhouette": float, "n_used": int, "n_clusters": int}``.
+    Returns ``silhouette=None`` if fewer than 2 clusters remain.
+    """
+    try:
+        from sklearn.metrics import silhouette_score
+    except Exception as e:  # pragma: no cover
+        raise RuntimeError(
+            "scikit-learn is required for compute_silhouette_cosine "
+            "(pip install scikit-learn)"
+        ) from e
+
+    embeddings = np.asarray(embeddings)
+    cluster_labels = np.asarray(cluster_labels)
+    if embeddings.shape[0] != cluster_labels.shape[0]:
+        raise ValueError(
+            f"N mismatch: embeddings={embeddings.shape[0]} vs "
+            f"cluster_labels={cluster_labels.shape[0]}"
+        )
+
+    keep = cluster_labels != -1
+    emb_kept = embeddings[keep]
+    lbl_kept = cluster_labels[keep]
+    n_used = int(emb_kept.shape[0])
+    n_clusters = int(len(np.unique(lbl_kept))) if n_used else 0
+
+    if n_clusters < 2 or n_used < 2:
+        return {"silhouette": None, "n_used": n_used, "n_clusters": n_clusters}
+
+    if sample_size is not None and n_used > sample_size:
+        rng = np.random.default_rng(seed)
+        sel = rng.choice(n_used, size=sample_size, replace=False)
+        emb_kept = emb_kept[sel]
+        lbl_kept = lbl_kept[sel]
+        # After subsampling, a cluster with only 1 sample will cause sklearn to
+        # fail (silhouette is undefined for singleton clusters). Drop them.
+        uniq, counts = np.unique(lbl_kept, return_counts=True)
+        keep_clusters = set(uniq[counts >= 2].tolist())
+        mask = np.array([int(x) in keep_clusters for x in lbl_kept])
+        emb_kept = emb_kept[mask]
+        lbl_kept = lbl_kept[mask]
+        n_used = int(emb_kept.shape[0])
+        n_clusters = int(len(np.unique(lbl_kept)))
+        if n_clusters < 2:
+            return {"silhouette": None, "n_used": n_used, "n_clusters": n_clusters}
+
+    score = float(silhouette_score(emb_kept, lbl_kept, metric="cosine"))
+    return {"silhouette": score, "n_used": n_used, "n_clusters": n_clusters}
+
+
+# =========================================================
 # Subset selection
 # =========================================================
 def _list_class_images(class_dir: Path) -> List[Path]:

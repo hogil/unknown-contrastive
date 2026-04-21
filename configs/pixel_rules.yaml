@@ -1,0 +1,55 @@
+version: 1
+seed: 42
+size:
+- 4000
+- 4000
+upscale: nearest
+mapping:
+  outside: 31
+  normal: 0
+  defect:
+    mode: random_skewed
+    grades:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    weights:
+    - 1.0
+    - 0.5
+    - 0.25
+    - 0.125
+    - 0.0625
+    - 0.03125
+    - 0.015625
+texture:
+  mode: synthetic_scatter
+  defect_perturb_p: 0.3
+  normal_scatter_p: 0.03
+  normal_scatter_grades:
+  - 1
+  global_scatter_n: 0
+  global_scatter_radius:
+  - 2
+  - 6
+split:
+  train:
+    defect_n_per_class: 50
+    normal_n: 1600
+    total: 2000
+  val:
+    defect_n_per_class: 20
+    normal_n: 640
+    total: 800
+  test:
+    defect_n_per_class: 20
+    normal_n: 640
+    total: 800
+paths:
+  pkl: data_raw/LSWMD.pkl
+  train_out: data/wm811k_train
+  val_out: data/wm811k_val
+  test_out: data/wm811k_test
