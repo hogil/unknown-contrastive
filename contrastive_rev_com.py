@@ -82,7 +82,11 @@ CFG: Dict[str, Any] = {
     # Model / Head
     # -------------------------
     "BACKBONE_NAME": "convnextv2_base.fcmae_ft_in22k_in1k_384",
-    "LOCAL_BACKBONE_WEIGHTS": "/home/sr5/ho.choi/project/wafer-defect-clustering/weights/convnextv2_base.fcmae_ft_in22k_in1k_384_91.8_91.7_250724_1505.pth",
+    # Leave empty to let timm auto-download convnextv2_base.fcmae_ft_in22k_in1k_384
+    # from the Hugging Face hub (cached under ~/.cache/huggingface/hub/). Override
+    # via --extra-cfg LOCAL_BACKBONE_WEIGHTS=weights/custom.pth if you have a
+    # custom fine-tuned checkpoint to overlay on top of the HF weights.
+    "LOCAL_BACKBONE_WEIGHTS": "",
     "PROJ_DIM": 128,
     "FREEZE_BACKBONE": True,
 
@@ -426,7 +430,7 @@ class CL(nn.Module):
 
         self.backbone = timm.create_model(
             CFG["BACKBONE_NAME"],
-            pretrained=False,
+            pretrained=True,   # auto-download from HF hub; LOCAL_BACKBONE_WEIGHTS (if set) overlays on top
             num_classes=0,
             global_pool=""
         )
