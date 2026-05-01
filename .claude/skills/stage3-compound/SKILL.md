@@ -1,6 +1,6 @@
 ---
 name: stage3-compound
-description: 3-stage CNN pipeline orchestration — chip 5-class classifier (stage 1) → per-wafer obj_id_map .npy cache (stage 2) → 3-channel feature wafer compound CNN (stage 3, cnn_train_compound.py). Three log roots logs_chip / logs_wafer / logs_all, each with overall/ best-run mirror.
+description: 3-stage CNN pipeline orchestration — chip 5-class classifier (stage 1) → per-wafer obj_id_map .npy cache (stage 2) → 3-channel feature wafer compound CNN (stage 3, cnn_train_compound.py). Three log roots logs_chip / logs_wafer / logs_compound, each with overall/ best-run mirror.
 ---
 
 # stage3-compound skill
@@ -24,7 +24,7 @@ description: 3-stage CNN pipeline orchestration — chip 5-class classifier (sta
      - R = palette_idx / 31  (0=정상~7=worst defect, 31=invalid_fill)
      - G = obj_id / N        (N = `_meta.json` 의 `n_chip_objects`, BICUBIC up)
      - B = zeros
-   33-class wafer 분류. 결과: `logs_all/<compound_tag>_<TS>_<f1>_<f1>/`
+   33-class wafer 분류. 결과: `logs_compound/<compound_tag>_<TS>_<f1>_<f1>/`
 
 ## obj_id 매핑 (dict 제거됨, runtime derive)
 
@@ -73,7 +73,7 @@ categorical 임에도 NEAREST 안 함:
 세 종류의 학습이 각자 독립 폴더:
 - `logs_wafer/` — `cnn_train.py --data-dir unknown/` (33-class wafer, R-only)
 - `logs_chip/` — `cnn_train.py --data-dir classification_chips/` (5-class chip)
-- `logs_all/` — `cnn_train_compound.py` (33-class wafer, R+G compound)
+- `logs_compound/` — `cnn_train_compound.py` (33-class wafer, R+G compound)
 
 `cnn_train.py` 가 `args.data_dir` 검사하여 자동 결정:
 ```python
@@ -111,7 +111,7 @@ checkpoint + 모든 산출물 한 곳에서 즉시 조회 가능". 새 run 의 v
 |---|---|---|
 | Stage 1 | `cnn_train.py --data-dir classification_chips ...` | `logs_chip/` |
 | Stage 2 | `_build_obj_id_maps.py --chip-model ...` | `obj_id_maps/<class>/<basename>.npy` + `_meta.json` |
-| Stage 3 | `cnn_train_compound.py --obj-id-dir ... [--init-from <wafer>]` | `logs_all/` |
+| Stage 3 | `cnn_train_compound.py --obj-id-dir ... [--init-from <wafer>]` | `logs_compound/` |
 | baseline | `cnn_train.py --data-dir unknown ...` | `logs_wafer/` |
 
 ## 명령어 예시
@@ -128,13 +128,13 @@ python _build_obj_id_maps.py \
     --chip-model logs_chip/chip5_n100_*/best_model.pth \
     --batch 64 --overwrite
 
-# Stage 3 — compound n=50 baseline (logs_all/)
+# Stage 3 — compound n=50 baseline (logs_compound/)
 python cnn_train_compound.py \
     --obj-id-dir D:/project/data/wm-811k/obj_id_maps \
     --subset-config experiments/compound_n50.yaml \
     --epochs 30 --batch 16 --img-size 384 --model-tag compound_n50
 
-# Stage 3 — compound n=100 main (logs_all/)
+# Stage 3 — compound n=100 main (logs_compound/)
 python cnn_train_compound.py \
     --obj-id-dir D:/project/data/wm-811k/obj_id_maps \
     --subset-config experiments/compound_n100.yaml \
@@ -147,7 +147,7 @@ python cnn_train_compound.py \
 |---|---|
 | Stage 1 후 | `logs_chip/chip*/best_history.txt` macro F1 ≥ 0.95 (chip 단순) |
 | Stage 2 후 | `obj_id_maps/<class>/<basename>.npy` 개수 = wafer 개수, sample shape (32,32), unique ⊆ {0..N}, `_meta.json` 존재 |
-| Stage 3 후 | `logs_all/compound_*/best_history.txt` BEST OVERALL test F1 vs `logs_wafer/sz*/` (failbit only) 비교 |
+| Stage 3 후 | `logs_compound/compound_*/best_history.txt` BEST OVERALL test F1 vs `logs_wafer/sz*/` (failbit only) 비교 |
 | overall 갱신 | `logs_*/overall/_overall_meta.json` 의 val_f1 이 그 폴더 안 best 와 일치 |
 
 ## 금지

@@ -77,14 +77,14 @@ CNN 분류기 (open-set, Normal 제외 학습):
 | `cnn-pipeline` | `cnn-pipeline` | `/cnn-pipeline` | train→Normal predict→threshold 추천 chain |
 | `cnn-analyze` | `cnn-analyze` | `/cnn-analyze` | 학습 결과 진단, 다중 run 비교 |
 | `chip-object-dataset` | `chip-object-dataset` | — | inline chip-object crop dataset 검증 (`_sample_gen.save_chip_crops`) |
-| `stage3-compound` | `stage3-compound` | `/stage3-compound` | 3-stage 학습 orchestrator: chip 5-class (logs_chip/) → obj_id_map cache → 3-channel compound CNN (logs_all/) |
+| `stage3-compound` | `stage3-compound` | `/stage3-compound` | 3-stage 학습 orchestrator: chip 5-class (logs_chip/) → obj_id_map cache → 3-channel compound CNN (logs_compound/) |
 
 학습 로그 root 분리 — `cnn_train.py` 가 `data_dir` 검사하여 자동 결정:
 | Root | 학습 종류 | script |
 |---|---|---|
 | `logs_chip/` | chip 5-class 분류기 (object 단위) | `cnn_train.py --data-dir classification_chips` |
 | `logs_wafer/` | wafer 33-class 분류기 (failbit only, R 채널) | `cnn_train.py --data-dir unknown` |
-| `logs_all/` | wafer 33-class compound 분류기 (R+G obj_id) | `cnn_train_compound.py` |
+| `logs_compound/` | wafer 33-class compound 분류기 (R+G obj_id) | `cnn_train_compound.py` |
 
 각 logs_*/ 안에 `overall/` 폴더 — 학습 종료 시 val F1 이 그 폴더 내 best 면 현재 run 폴더 통째 복사 교체. `_overall_meta.json` 에 source_run + val_f1 기록.
 

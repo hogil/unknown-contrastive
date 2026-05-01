@@ -81,7 +81,7 @@ from _resource_guard import assess_start, format_assessment, ResourceMonitor
 DEFAULT_DATA_DIR = "D:/project/data/wm-811k/unknown"
 DEFAULT_POSITION_DIR = "D:/project/data/positions/unknown"
 DEFAULT_OBJ_ID_DIR = "D:/project/data/wm-811k/obj_id_maps"
-DEFAULT_LOG_ROOT_COMPOUND = "logs_all"                                              # compound 학습 로그 루트
+DEFAULT_LOG_ROOT_COMPOUND = "logs_compound"                                         # compound 학습 로그 루트
 EXCLUDE_CLASSES  = {"Normal"}
 BACKBONE         = "convnextv2_base.fcmae_ft_in22k_in1k_384"
 

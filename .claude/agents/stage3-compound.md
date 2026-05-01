@@ -1,6 +1,6 @@
 ---
 name: stage3-compound
-description: 3-stage compound CNN training orchestrator — chip classifier (logs_chip/) → obj_id_maps cache → compound 3-channel wafer CNN (logs_all/). Three log roots logs_chip / logs_wafer / logs_all, each with overall/ best-run mirror. Optional cooperation with resource-monitor for RAM/GPU guard.
+description: 3-stage compound CNN training orchestrator — chip classifier (logs_chip/) → obj_id_maps cache → compound 3-channel wafer CNN (logs_compound/). Three log roots logs_chip / logs_wafer / logs_compound, each with overall/ best-run mirror. Optional cooperation with resource-monitor for RAM/GPU guard.
 tools: Read, Write, Edit, Bash, Glob, Grep, Agent
 ---
 
@@ -71,7 +71,7 @@ python _build_obj_id_maps.py \
 - `<obj-id-dir>/_meta.json` 존재 + `n_chip_objects` 일치
 - counts_by_label 5 obj 균등 + invalid_main 우세
 
-### Stage 3 — compound 3-channel CNN 학습 (logs_all/)
+### Stage 3 — compound 3-channel CNN 학습 (logs_compound/)
 
 체크: `<obj-id-dir>/_meta.json` 존재.
 
@@ -87,12 +87,12 @@ python cnn_train_compound.py \
 
 cnn_train_compound 가 시작 시 `_meta.json` 의 `n_chip_objects` 읽고 G 정규화 분모로 사용.
 `[ImageFolder class order]` 33 wafer class 알파벳 순 출력 확인.
-종료 시 `logs_all/overall/` 자동 갱신.
+종료 시 `logs_compound/overall/` 자동 갱신.
 
 ### Optional baseline 비교
 
 같은 subset 으로 `cnn_train.py` (failbit only) → `logs_wafer/`.
-`logs_all/<compound>/best_history.txt` BEST OVERALL test F1 vs `logs_wafer/<baseline>/`
+`logs_compound/<compound>/best_history.txt` BEST OVERALL test F1 vs `logs_wafer/<baseline>/`
 의 동일 metric 차이 표.
 
 ## Resource cooperation (cnn-train-safe pattern)
