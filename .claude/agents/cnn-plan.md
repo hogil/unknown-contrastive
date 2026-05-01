@@ -36,6 +36,11 @@ tools: Read, Write, Edit, Bash, Glob, Grep
 3. **subset YAML 생성** (필요 시):
    - `experiments/<plan_name>.yaml` 작성
    - `default` key 항상 포함 (지정되지 않은 class 처리)
+   - **상단 주석 블록 필수** — Plan / Status / Intent / Hypothesis / Why these
+     numbers / Run / Output 비교. 형식은 SKILL.md "subset YAML 파일 위치 + 주석
+     규칙" 섹션 + 기존 `experiments/*.yaml` 참고. 의도 없는 `default: N` 한 줄
+     yaml 만들지 말 것 (실험 history 가치 손실).
+   - PowerShell/Bash runner 스크립트도 동일 주석 블록 필수.
 
 4. **명령어 보고**: 사용자에게
    - 추천 명령어 (한 줄)

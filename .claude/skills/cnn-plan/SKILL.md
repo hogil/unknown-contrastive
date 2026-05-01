@@ -97,11 +97,31 @@ python cnn_train.py --epochs 2 --subset-config experiments/quick.yaml --batch 8 
 | "빨리 검증" | Quick smoke (#4) |
 | "성능 더 짜내야" | Phase 2 옵션 (CutMix, two-stage, larger img) |
 
-## subset YAML 파일 위치
+## subset YAML 파일 위치 + 주석 규칙
 
 - `experiments/<plan_name>.yaml` (repo root에 `experiments/` 만들기)
 - 예: `experiments/imbalance_minor3.yaml`, `experiments/quick.yaml`
-- git ignore 안 함 — 실험 spec 보존
+- git ignore 안 함 — 실험 spec 보존 (= "어떤 실험을 했는가" 의 기록)
+
+**필수: 파일 상단에 주석 블록 추가**. 단순 `default: N` 한 줄만 두면 의도가
+사라짐. 새 yaml 만들 때 다음 형식 따를 것 (기존 `experiments/*.yaml` 참고):
+
+```yaml
+# =============================================================================
+# Plan: <짧은 이름>
+# Status: 활성 / 미실행 / deprecated (사용 안 하면 사유)
+# Intent: 이 plan이 무엇을 측정·비교하려는지 1-3 문장
+# Hypothesis: 예상 결과 (없으면 N/A)
+# Why these numbers: 각 숫자(default, minor cap)의 근거
+# Run: 실제 실행할 명령어 (A/B 비교면 짝꿍 둘 다)
+# Output 비교: 결과 폴더 어디서 어떤 metric 보고 결론 낼지
+# =============================================================================
+classes:
+  default: <N>
+```
+
+같이 만들거나 호출하는 PowerShell/Bash runner 스크립트도 동일하게 상단
+주석 블록 (Intent / Hypothesis / Run / Output) 필수.
 
 ## 이전 실험 참고법
 
