@@ -1063,6 +1063,7 @@ def main():
         except Exception as e:
             lg.info(f"  [guard] rename to ABORTED failed: {e}")
         lg.info(f"[Aborted] reason: {aborted_reason}")
+    metric_source = "test" if 'best_test_res' in dir() else "val"
     lg.info(f"[Metric source] {metric_source}")
     lg.info(f"[Done] outputs: {final_dir.resolve()}")
     lg.info("===== END =====")
