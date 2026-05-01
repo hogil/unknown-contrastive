@@ -19,8 +19,10 @@ Normal class는 학습 제외 — 운영 시 max_prob threshold로 "Normal/unkno
 산출:
     log/<run_dir>/
       hparams.yaml, hparams.txt, best_model.pth,
-      best_confusion_matrix.png, curves.png,
-      per_class_report.txt, history.json, test_eval.json, run.log
+      best_history.txt          ← 모든 best 갱신 결과 통합 (per-class 포함)
+      best_confusion_matrix.png ← test(위)+val(아래) combined
+      curves.png, history.json, run.log
+      wrong/{val,test}/<true>/<pred>/*.png
       (옵션) predictions/{tp,fp,fn}/<class>/*.png
 
 사용 예:
@@ -519,47 +521,103 @@ def format_per_class_report(eval_res: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def save_per_class_report(eval_res: dict, out_path: Path):
-    out_path.write_text(format_per_class_report(eval_res), encoding="utf-8")
-
-
-def _format_best_block(title: str, snap: dict) -> str:
-    """1개 best 갱신 블록 — header + VAL/TEST summary + per-class 표."""
+def _format_per_class_block(snap: dict) -> str:
+    """1개 best의 TEST(위)+VAL(아래) per-class 표만 반환."""
     v = snap["val_res"]; t = snap.get("test_res")
-    bar = "=" * 90
-    head = f"{title}  |  epoch {snap['epoch']}  |  smoothed val F1 = {snap['smooth_f1']:.4f}"
-    if snap.get("train_loss") is not None:
-        head += f"  |  train_loss={snap['train_loss']:.4f}"
-    sum_v = (f"VAL   acc={v['acc']*100:6.2f}%   f1={v['macro_f1']*100:6.2f}%   "
-             f"p={v['macro_p']*100:6.2f}%   r={v['macro_r']*100:6.2f}%")
-    lines = [bar, head, bar, "", sum_v]
+    out = []
     if t is not None:
-        sum_t = (f"TEST  acc={t['acc']*100:6.2f}%   f1={t['macro_f1']*100:6.2f}%   "
-                 f"p={t['macro_p']*100:6.2f}%   r={t['macro_r']*100:6.2f}%")
-        lines.append(sum_t)
-    lines.extend(["", "[VAL per-class]", format_per_class_report(v).rstrip()])
-    if t is not None:
-        lines.extend(["", "[TEST per-class]", format_per_class_report(t).rstrip()])
+        out.extend(["[TEST per-class]", format_per_class_report(t).rstrip(), ""])
+    out.extend(["[VAL per-class]", format_per_class_report(v).rstrip()])
+    return "\n".join(out)
+
+
+def _format_summary_table(snapshots: List[dict]) -> str:
+    """epoch별 total best 요약 표 — VAL/TEST aggregate metrics 한 줄/best."""
+    has_test = any(s.get("test_res") is not None for s in snapshots)
+    if has_test:
+        head = (f"{'ep':>4s}  {'smooth_f1':>9s}  |  "
+                f"{'VAL acc':>7s}  {'f1':>6s}  {'p':>6s}  {'r':>6s}  |  "
+                f"{'TEST acc':>8s}  {'f1':>6s}  {'p':>6s}  {'r':>6s}")
+    else:
+        head = (f"{'ep':>4s}  {'smooth_f1':>9s}  |  "
+                f"{'VAL acc':>7s}  {'f1':>6s}  {'p':>6s}  {'r':>6s}")
+    sep = "-" * len(head)
+    lines = [head, sep]
+    for s in snapshots:
+        v = s["val_res"]; t = s.get("test_res")
+        row = (f"{s['epoch']:>4d}  {s['smooth_f1']:>9.4f}  |  "
+               f"{v['acc']*100:>7.2f}  {v['macro_f1']*100:>6.2f}  "
+               f"{v['macro_p']*100:>6.2f}  {v['macro_r']*100:>6.2f}")
+        if t is not None:
+            row += (f"  |  {t['acc']*100:>8.2f}  {t['macro_f1']*100:>6.2f}  "
+                    f"{t['macro_p']*100:>6.2f}  {t['macro_r']*100:>6.2f}")
+        elif has_test:
+            row += "  |  " + (" " * 8 + "  " + " " * 6 + "  " + " " * 6 + "  " + " " * 6)
+        lines.append(row)
     return "\n".join(lines)
 
 
 def write_best_history(snapshots: List[dict], out_path: Path):
-    """val-best 갱신 시점들을 한 파일에 누적.
+    """val-best 갱신 시점들을 한 파일에 누적 (유일한 result txt — 개별 val/test
+    per-class report 파일과 eval_summary.json 모두 폐지).
 
     구조:
-      1) 맨 위에 ★ FINAL BEST 블록 (전체 per-class 표 포함)
-      2) 그 아래로 처음 best #1 부터 시간순으로 쭉 (마지막 #N은 = FINAL 표시)
+      0) 맨 윗줄: BEST OVERALL one-liner (TEST + VAL aggregate, FINAL 시점)
+      1) FINAL BEST per-class (TEST 위 + VAL 아래)
+      2) BEST UPDATES SUMMARY (best 갱신 epoch별 한 줄, VAL/TEST aggregate)
+      3) PER-EPOCH PER-CLASS REPORTS (best #1부터 시간순 per-class 상세)
 
     각 snapshot dict: {epoch, smooth_f1, val_res, test_res(opt), train_loss(opt)}
     """
     if not snapshots:
         return
     total = len(snapshots)
-    blocks = [_format_best_block("★ FINAL BEST", snapshots[-1])]
+    final = snapshots[-1]
+    fv = final["val_res"]; ft = final.get("test_res")
+    bar = "=" * 90
+
+    # ===== Section 0: BEST OVERALL 맨윗줄 =====
+    sec0 = [bar,
+            f"★ BEST OVERALL  |  epoch {final['epoch']}  |  smoothed val F1 = {final['smooth_f1']:.4f}",
+            bar]
+    if ft is not None:
+        sec0.append(f"TEST  acc={ft['acc']*100:6.2f}%   f1={ft['macro_f1']*100:6.2f}%   "
+                    f"p={ft['macro_p']*100:6.2f}%   r={ft['macro_r']*100:6.2f}%")
+    sec0.append(f"VAL   acc={fv['acc']*100:6.2f}%   f1={fv['macro_f1']*100:6.2f}%   "
+                f"p={fv['macro_p']*100:6.2f}%   r={fv['macro_r']*100:6.2f}%")
+
+    # ===== Section 1: FINAL BEST per-class =====
+    sec1 = [bar,
+            "[1] FINAL BEST per-class",
+            bar, "",
+            _format_per_class_block(final)]
+
+    # ===== Section 2: epoch별 best update 요약 =====
+    sec2 = [bar,
+            "[2] BEST UPDATES SUMMARY  (one row per best-val improvement)",
+            bar, "",
+            _format_summary_table(snapshots)]
+
+    # ===== Section 3: epoch별 per-class 상세 =====
+    sec3_blocks = [bar,
+                   "[3] PER-EPOCH PER-CLASS REPORTS  (every best-val update, chronological)",
+                   bar, ""]
     for i, snap in enumerate(snapshots, 1):
-        title = f"best #{i}" + ("  (= FINAL)" if i == total else "")
-        blocks.append(_format_best_block(title, snap))
-    out_path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
+        marker = "  (= FINAL)" if i == total else ""
+        head = (f"---- best #{i}{marker}  |  epoch {snap['epoch']}  |  "
+                f"smoothed val F1 = {snap['smooth_f1']:.4f}")
+        if snap.get("train_loss") is not None:
+            head += f"  |  train_loss={snap['train_loss']:.4f}"
+        head += " ----"
+        sec3_blocks.extend([head, "", _format_per_class_block(snap), ""])
+
+    out_path.write_text(
+        "\n".join(sec0) + "\n\n\n" +
+        "\n".join(sec1) + "\n\n\n" +
+        "\n".join(sec2) + "\n\n\n" +
+        "\n".join(sec3_blocks).rstrip() + "\n",
+        encoding="utf-8",
+    )
 
 def save_pred_samples(eval_res: dict, out_dir: Path, max_per_bucket: int = 20):
     """TP/FP/FN 샘플 이미지를 폴더 구조로 저장."""
@@ -943,34 +1001,17 @@ def main():
                 ckpt["ema_state"] = ema.state_dict()
             torch.save(ckpt, out_dir / "best_model.pth")
 
-            # per-class TXT
-            save_per_class_report(val_res,  out_dir / "val_per_class_report.txt")
-            save_confusion_matrix(val_res,  out_dir / "best_confusion_matrix_val.png")
+            # confusion matrix — combined만 (test 위 / val 아래) 또는 val 단독
             n_wrong_val = save_wrong_tree(val_res, out_dir / "wrong" / "val")
             if test_res is not None:
-                save_per_class_report(test_res, out_dir / "test_per_class_report.txt")
-                save_confusion_matrix(test_res, out_dir / "best_confusion_matrix_test.png")
-                # combined confusion matrix — test 위 / val 아래
                 save_confusion_matrix_combined(val_res, test_res,
                                                out_dir / "best_confusion_matrix.png")
                 n_wrong = save_wrong_tree(test_res, out_dir / "wrong" / "test")
                 lg.info(f"  wrong saved: test={n_wrong} val={n_wrong_val} -> wrong/{{test,val}}/<true>/<pred>/")
             else:
+                save_confusion_matrix(val_res, out_dir / "best_confusion_matrix.png")
                 lg.info(f"  wrong saved: val={n_wrong_val} -> wrong/val/<true>/<pred>/")
 
-            # eval_summary.json
-            def _summary(res):
-                rep = classification_report(res["labels"], res["preds"],
-                                            target_names=classes, output_dict=True, zero_division=0)
-                s = {k: rep[k] for k in classes}
-                s["macro_avg"] = rep["macro avg"]; s["weighted_avg"] = rep["weighted avg"]
-                s["overall_acc"] = res["acc"]
-                return s
-            summary = {"best_epoch": ep, "val": _summary(val_res)}
-            if test_res is not None:
-                summary["test"] = _summary(test_res)
-            with open(out_dir / "eval_summary.json", "w", encoding="utf-8") as f:
-                json.dump(summary, f, indent=2)
             if test_res is not None:
                 best_test_res = test_res
             best_val_res = val_res
