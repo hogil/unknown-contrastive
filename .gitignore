@@ -1,11 +1,11 @@
 # ===== large or per-run output (절대 commit 금지, 절대 삭제 금지) =====
 log/
 models/
-_dist_heatmaps/
 _resize_compare/
 _resize_compare1024/
 _resize_compare4/
 _resize_compare512/
+# _dist_heatmaps/ — repo에 포함 (32KB, _dist_learn.py 삭제했으므로 fresh clone에서 필요)
 
 # ===== python =====
 __pycache__/

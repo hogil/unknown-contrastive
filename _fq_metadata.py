@@ -158,8 +158,8 @@ def add_synthetic_fq_to_json(
 ) -> bool:
     """Mutate a positions JSON object in place.
 
-    Returns True when chip FTN/QTN arrays were added or replaced. partid/pgm and
-    key lists are always populated if missing.
+    Returns True when chip FTN/QTN arrays were added or replaced. Top-level
+    keys (partid/part_id/pgm/ftn_keys/qtn_keys) are always populated/mirrored.
     """
     item_count = int(item_count)
     obj["ftn_keys"] = ftn_keys(item_count)
@@ -168,6 +168,8 @@ def add_synthetic_fq_to_json(
         obj["partid"] = synthetic_partid(class_label, str(obj.get("root", "")))
     if not obj.get("pgm"):
         obj["pgm"] = synthetic_pgm(str(obj.get("step", "")), item_count)
+    # part_id (snake_case) — partid mirror로 두 컨벤션 호환 유지
+    obj["part_id"] = obj["partid"]
 
     chips = obj.get("chips") or []
     needs_fq = overwrite_fq or any(("f" not in chip or "q" not in chip) for chip in chips)

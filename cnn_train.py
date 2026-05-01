@@ -429,6 +429,46 @@ def save_confusion_matrix(eval_res, out_path: Path):
     except Exception as e:
         print(f"[confusion_matrix save fail] {e}")
 
+
+def save_confusion_matrix_combined(val_res, test_res, out_path: Path):
+    """Test (위) + Val (아래) 2단 combined confusion matrix PNG.
+
+    각 subplot은 셀 숫자 annotation 포함 (진한 셀 흰 글자).
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        classes = val_res["classes"]; n = len(classes)
+        font_size = 6 if n <= 36 else 5
+
+        cm_test = confusion_matrix(test_res["labels"], test_res["preds"], labels=list(range(n)))
+        cm_val  = confusion_matrix(val_res["labels"],  val_res["preds"],  labels=list(range(n)))
+
+        fig, axes = plt.subplots(2, 1, figsize=(14, 24))
+        for ax, cm, title in [(axes[0], cm_test, "TEST"),
+                              (axes[1], cm_val,  "VAL")]:
+            im = ax.imshow(cm, cmap="Blues")
+            ax.set_xticks(range(n)); ax.set_yticks(range(n))
+            ax.set_xticklabels(classes, rotation=90, fontsize=7)
+            ax.set_yticklabels(classes, fontsize=7)
+            ax.set_xlabel("predicted"); ax.set_ylabel("true")
+            ax.set_title(title, fontsize=14, fontweight="bold")
+            plt.colorbar(im, ax=ax)
+            thresh = cm.max() / 2.0 if cm.max() > 0 else 0
+            for i in range(n):
+                for j in range(n):
+                    v = int(cm[i, j])
+                    if v == 0: continue
+                    ax.text(j, i, str(v), ha="center", va="center",
+                            fontsize=font_size,
+                            color="white" if v > thresh else "black")
+        fig.tight_layout(); fig.savefig(out_path, dpi=150); plt.close(fig)
+    except Exception as e:
+        print(f"[confusion_matrix combined save fail] {e}")
+
+
 def save_curves_png(history: List[dict], out_path: Path):
     """3-axis figure: train_loss / val_loss / val_macro_f1."""
     try:
@@ -847,8 +887,11 @@ def main():
                "val_macro_p": va["macro_p"], "val_macro_r": va["macro_r"]}
         history.append(rec)
         lg.info(f"[Ep {ep}] tr_loss={tr_loss:.4f} | val_loss={rec['val_loss']:.4f} acc={100*va['acc']:.2f}% f1={100*va['macro_f1']:.2f}%")
-        # 매 epoch마다 curves.png 갱신 — mid-run 종료시에도 plot 유지
+        # 매 epoch마다 curves.png + history.json 갱신 — mid-run 종료시에도 결과 보존
         save_curves_png(history, out_dir / "curves.png")
+        with open(out_dir / "history.json", "w", encoding="utf-8") as _hf:
+            json.dump({"history": history, "best_epoch": best_ep,
+                       "best_smoothed_val_f1": best_score}, _hf, indent=2)
 
         # smoothed val F1 (median of last N)
         val_f1_window.append(va["macro_f1"])
@@ -907,6 +950,9 @@ def main():
             if test_res is not None:
                 save_per_class_report(test_res, out_dir / "test_per_class_report.txt")
                 save_confusion_matrix(test_res, out_dir / "best_confusion_matrix_test.png")
+                # combined confusion matrix — test 위 / val 아래
+                save_confusion_matrix_combined(val_res, test_res,
+                                               out_dir / "best_confusion_matrix.png")
                 n_wrong = save_wrong_tree(test_res, out_dir / "wrong" / "test")
                 lg.info(f"  wrong saved: test={n_wrong} val={n_wrong_val} -> wrong/{{test,val}}/<true>/<pred>/")
             else:

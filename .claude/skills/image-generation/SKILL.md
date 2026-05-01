@@ -34,9 +34,9 @@ description: WM-811K 분포 + chip object 5종을 합성해 36 클래스 wafer f
 
 ## 사전 조건
 
-1. WM-811K cca/* heatmap 학습됨: `_dist_heatmaps/<Class>_p_defect_32.npy` 8개 클래스
-   (Thick-Edge는 heatmap 불필요, 코드에서 직접 계산)
-   - 없으면 `python _dist_learn.py` 먼저 실행
+1. WM-811K heatmap: `_dist_heatmaps/<Class>_p_defect_32.npy` 8개 클래스
+   (repo에 포함됨, fresh clone에서도 즉시 사용 가능). Thick-Edge는 heatmap
+   불필요, 코드에서 직접 계산.
 2. WM-811K 원본: `D:/project/data/wm-811k/cca/<Class>/*.png` 존재
 3. 출력 폴더 쓰기 권한
 
@@ -56,19 +56,15 @@ CLI 옵션:
 - `--n N`: 클래스당 샘플 수 (default 200)
 - `--workers W`: 병렬 worker (default 4)
 
-기존 positions JSON에 FTN/QTN이 없으면:
-
-```bash
-python _backfill_fq_positions.py
-```
-
-기본 item 수는 FTN 128 + QTN 128. 참조처럼 500개가 필요하면
-`--item-count 500 --overwrite-fq`를 명시한다.
+새 generation 결과는 `_fq_metadata.add_synthetic_fq_to_json` 통해 partid/
+part_id/pgm/ftn_keys/qtn_keys/chip f·q를 자동 포함한다 (FTN 128 + QTN 128).
+기본값 변경 시 `_fq_metadata.DEFAULT_FQ_ITEM_COUNT` 조정 후 재생성.
 
 ## 클래스 매트릭스 변경
 
 새 wafer distribution 추가:
-1. WM-811K 원본 폴더 추가 → `_dist_learn.py` 재실행
+1. WM-811K 원본 폴더에서 heatmap 학습 → `_dist_heatmaps/<NewClass>_p_defect_32.npy`
+   추가 (학습 코드는 git history `441c532` 이전 `_dist_learn.py` 참고)
 2. `CLASSES` 리스트에 등록 + `DEFECT_BUDGET`에 chip 수
 3. `select_distribution_chips()`에 분기 추가 (heatmap 기반이면 자동)
 

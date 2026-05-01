@@ -21,7 +21,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 ## 사전 조건
 
 - `_dist_heatmaps/Center_p_wafer_32.npy` 등 7개 클래스 heatmap 존재
-- 없으면 `python _dist_learn.py` 먼저
+- repo의 `_dist_heatmaps/`에 8 클래스 heatmap이 포함됨 (fresh clone 후에도 즉시 generation 가능)
 - `D:/project/data/wm-811k/cca/<Class>/` 원본 존재 (학습용)
 
 ## 실행 단계
@@ -29,8 +29,8 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 1. **사양 확인**: 사용자 요구가 spec과 일치하는지 docs/image-generation/SPEC.md와 비교.
 2. **변경이 필요하면**: `_sample_gen.py`만 수정, 변경 의도를 SKILL.md "파라미터 미세조정" 표에 누적 기록.
 3. **테스트 생성**: `python _sample_gen.py --n 1 --workers 4` (36장, ~2분).
-4. **FTN/QTN 확인**: positions JSON에 `partid`, `pgm`, `ftn_keys`, `qtn_keys`,
-   chip별 `f`/`q`가 있는지 확인. 없으면 `python _backfill_fq_positions.py`.
+4. **FTN/QTN 확인**: positions JSON에 `partid`/`part_id`/`pgm`/`ftn_keys`/
+   `qtn_keys`/chip별 `f`/`q` 존재 여부 (`_verify.py`로 자동 체크).
    **분석성 검증**: hot index가 클래스마다 다른지(`_fq_metadata._hot_indices`),
    defect chip(b≥200) 영역에서 hot item 평균값이 normal chip 대비 ≥3x 인지 확인 →
    fail-bit map과 cross-correlation 분석 가능 여부 보장.

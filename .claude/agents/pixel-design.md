@@ -20,7 +20,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 ## 사전 조건
 
 - WM-811K cca/* 8 클래스 원본 존재 (`D:/project/data/wm-811k/cca/`)
-- `_dist_heatmaps/` 학습 완료 (없으면 `python _dist_learn.py`)
+- `_dist_heatmaps/` 학습 완료 (repo에 포함됨)
 
 ## 설계 변경 단계
 
@@ -45,7 +45,8 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 
 ## 새 wafer distribution 추가 절차
 
-1. WM-811K cca/* 새 클래스 폴더 → `python _dist_learn.py`
+1. WM-811K cca/* 새 클래스 폴더 → heatmap 추출 후 `_dist_heatmaps/<NewClass>_p_defect_32.npy` 추가
+   (학습 코드는 git history `441c532` 이전 `_dist_learn.py` 참고)
    - 또는 사용자 정의 heatmap 함수 (예: Thick-Edge)
 2. `CLASSES` 리스트 + `DEFECT_BUDGET` 등록
 3. `select_distribution_chips()`에 분기 (heatmap 기반은 자동)

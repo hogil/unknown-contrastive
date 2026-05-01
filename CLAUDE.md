@@ -30,11 +30,11 @@ docs/image-generation/ 와 .claude/ 에 기록**되어 있어 새 세션에서 �
 
 | 파일 | 역할 |
 |---|---|
-| `_sample_gen.py` | 메인 generator, multiprocessing, `--n` `--workers` |
-| `_fq_metadata.py` | synthetic `partid`/`pgm` + FTN/QTN key/value 생성 |
-| `_backfill_fq_positions.py` | 기존 `positions/unknown` JSON에 FTN/QTN backfill |
-| `_dist_learn.py` | WM-811K cca/* heatmap 학습 (1회) |
-| `_verify.py` | 데이터셋 검증 (filename/PNG/JSON) |
+| `_sample_gen.py` | 메인 generator (multiprocessing). FTN/QTN 자동 포함. |
+| `_sample_gen_gpu.py` | GPU 가속 generator (single-proc + ThreadPool) |
+| `_fq_metadata.py` | synthetic `partid`/`part_id`/`pgm` + FTN/QTN key/value 생성 |
+| `_verify.py` | 데이터셋 검증 (filename/PNG/JSON 스키마/분포 sanity) |
+| `_dist_heatmaps/` | WM-811K cca/* 학습된 heatmap 8 클래스 (.npy + .png, repo 포함) |
 
 ## 출력 위치
 

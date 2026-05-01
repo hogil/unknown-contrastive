@@ -78,6 +78,7 @@ ETC bin (200-299 중 위에 안 속하는 것)은 sys에 안 들어감. Invalid�
   "wafer": "W07",                                    // ← W prefix 붙음
   "stime": "20260501_010000",
   "partid": "PART_CENTER_BANK_BOUNDARY_ABC123",
+  "part_id": "PART_CENTER_BANK_BOUNDARY_ABC123",     // partid mirror (snake_case 호환)
   "tester": "PE",                                    // = LT 값 (참조 데이터 컨벤션)
   "device": "NORMAL",                                // = TM 값
   "pgm": "PGM_SYN_FQ128_00P",
@@ -143,10 +144,10 @@ ETC bin (200-299 중 위에 안 속하는 것)은 sys에 안 들어감. Invalid�
   `PGM_SYN_FQ<item_count>_<STEP>` 형태를 넣는다.
 
 ### FTN/QTN
-- `_fq_metadata.py`가 담당한다.
-- 기본 item 수는 FTN 128개 + QTN 128개다. 참조 데이터는 500개지만, unknown 전체
-  11600장 backfill 용량을 고려해 기본은 128로 둔다. 필요 시
-  `_backfill_fq_positions.py --item-count 500 --overwrite-fq`로 늘릴 수 있다.
+- `_fq_metadata.py`가 담당한다 (`_sample_gen.py`/`_sample_gen_gpu.py`가 import).
+- 기본 item 수는 FTN 128개 + QTN 128개. 참조 데이터는 500개지만, unknown 전체
+  11600장 처리 용량을 고려해 기본은 128. 필요시 `_fq_metadata.DEFAULT_FQ_ITEM_COUNT`
+  상수 조정 후 재생성.
 - key 범위:
   - `ftn_keys`: 1000부터 연속
   - `qtn_keys`: 5000부터 연속

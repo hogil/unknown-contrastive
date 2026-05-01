@@ -12,10 +12,11 @@
 | `docs/image-generation/PIPELINE.md` | 렌더 알고리즘 단계별 세부 |
 | `docs/image-generation/CLASSES.md` | 35개 클래스 정의표 + 기본 chip object 5종 |
 | `docs/image-generation/OUTPUT.md` | PNG 파일명 + positions JSON 스키마 |
-| `_sample_gen.py` (repo root) | 합성 generator (실행 가능) |
-| `_fq_metadata.py` (repo root) | synthetic `partid`/`pgm` + FTN/QTN 생성 규칙 |
-| `_backfill_fq_positions.py` (repo root) | 기존 positions JSON에 FTN/QTN backfill |
-| `_dist_learn.py` (repo root) | WM-811K 분포 heatmap 추출기 |
+| `_sample_gen.py` (repo root) | 합성 generator (실행 가능, FTN/QTN 자동 포함) |
+| `_sample_gen_gpu.py` (repo root) | GPU 가속 generator (single-proc + ThreadPool) |
+| `_fq_metadata.py` (repo root) | synthetic `partid`/`part_id`/`pgm` + FTN/QTN 생성 규칙 |
+| `_dist_heatmaps/` (repo root) | WM-811K cca/* 학습된 heatmap 8 클래스 (.npy + .png, repo 포함) |
+| `_verify.py` (repo root) | 데이터셋 검증 (filename/PNG/JSON/분포 sanity) |
 
 ## 핵심 아이디어
 
@@ -53,18 +54,18 @@
 ```bash
 cd D:/project/unknown-contrastive
 
-# 1. WM-811K 분포 heatmap 추출 (1회)
-python _dist_learn.py
-# → _dist_heatmaps/<Class>_p_defect_32.npy + .png
-
-# 2. 35개 sample 생성 (PNG + JSON 동시)
-python _sample_gen.py
+# Sample 생성 (PNG + JSON 동시, FTN/QTN/part_id 자동 포함)
+python _sample_gen.py --n 200 --workers 8
+# 또는 GPU 가속 single-proc + ThreadPool:
+python _sample_gen_gpu.py --n 200 --save-workers 8
 # → D:/project/data/wm-811k/unknown/<class>/<filename>.png
 # → D:/project/data/positions/unknown/<class>/<filename>.json
 
-# 기존 JSON에 FTN/QTN이 빠져 있으면 보정
-python _backfill_fq_positions.py
+# 검증
+python _verify.py --sample 5
 ```
+
+heatmap (`_dist_heatmaps/`)은 repo에 포함되므로 별도 학습 불필요.
 
 ## 외부 참조 (필독)
 
@@ -86,4 +87,4 @@ python _backfill_fq_positions.py
 
 - 분포·object·class 추가 시 `SPEC.md` + `_sample_gen.py`만 수정
 - 새 chip object 추가: `alpha_<name>` 함수 + `OBJECT_DISTS[<name>]` + `OBJECT_BIN_PREF[<name>]` + `OBJECTS` 리스트에 등록
-- 새 wafer 분포 추가: `_dist_learn.py`로 heatmap 만들고 `CLASSES`에 등록
+- 새 wafer 분포 추가: WM-811K cca/<NewClass>에서 heatmap 학습한 후 `_dist_heatmaps/<NewClass>_p_defect_32.npy` 추가, `CLASSES`에 등록 (학습 코드는 git history `441c532` 이전 `_dist_learn.py` 참고)

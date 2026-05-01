@@ -3,9 +3,12 @@
 이 문서는 `_sample_gen.py`의 `render(class_name, object_name, seed)` 함수가
 하는 일을 단계별로 설명한다. 새 세션에서 처음부터 작성할 때 그대로 따라하면 됨.
 
-## Pre-requisite: WM-811K 분포 학습 (1회)
+## Pre-requisite: WM-811K 분포 heatmap
 
-`_dist_learn.py`로 `D:/project/data/wm-811k/cca/<class>/*.png`에서 학습.
+`_dist_heatmaps/<Class>_p_defect_32.npy` 8개 (Center/Donut/Edge-Loc/Edge-Ring/
+Loc/Near-full/Random + meta) 가 repo에 포함되어 있으므로 fresh clone에서도
+별도 학습 불필요. 학습 절차 자체는 다음 단계로 1회 수행되었다 (재학습 필요
+시 git history `441c532` 이전의 `_dist_learn.py` 참고):
 
 각 클래스(Center/Donut/Edge-Loc/Edge-Ring/Loc/Near-full/Random)별:
 1. PNG 로드 (224×224 RGBA, 값 = {0=outside, 128=normal, 255=defect})
@@ -241,14 +244,10 @@ img.save(f"D:/project/data/wm-811k/unknown/{class_name}_{object_name}/{fname}",
   defect/invalid chip과 주변 chip에서 크게 나오도록 boost되어, FTN/QTN heatmap도
   fail-bit 분포와 비슷한 공간 패턴을 갖는다.
 
-기존 JSON을 보정할 때는:
-
-```bash
-python _backfill_fq_positions.py
-```
-
-기본은 missing `f/q`만 채운다. 이미 있는 값을 재생성하려면
-`--overwrite-fq`를 명시한다.
+새로 generation을 돌리면 partid/part_id/pgm/ftn_keys/qtn_keys/chip f·q가
+자동 포함된다. 기존(다른 데서 들여온) JSON을 보정해야 하는 일회성
+스크립트는 git history `441c532..fed8c24` 의 `_backfill_fq_positions.py`
+참고 (현재 repo에서는 제거됨).
 
 ## Performance Notes
 

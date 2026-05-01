@@ -64,7 +64,7 @@ python _verify.py --sample 5
 
 ## Open issues / TODO
 
-- positions JSON FTN/QTN backfill 진행 중이면 `log/_backfill_fq_positions.out` 확인.
+- 새 generation은 partid/part_id/pgm/ftn_keys/qtn_keys/chip f·q 자동 포함 (별도 backfill 불필요).
 
 ## 변경 history
 
@@ -73,5 +73,7 @@ python _verify.py --sample 5
 - 2026-05-01: 7200 background generation 시작, skills/agents/memory 정비, CLAUDE.md 작성
 - 2026-05-01: 첫 시도 (optimize=True) ~9% 진행 후 kill. PNG save 병목 → optimize=False + compress_level=1로 재시작 (예상 ~40분, 파일 2배 ≈ 86GB). bg job ID: `bnhiu7d7y`
 - 2026-05-01: 생성 완료. 7200/7200 ok=7200 fail=0, 32.5분 소요, rate ~3.7/s. 검증 sample N=5 모두 OK. 디스크: 72GB PNG + 931MB JSON.
-- 2026-05-01: positions JSON에 synthetic `partid`/`pgm` + FTN/QTN 추가. `_fq_metadata.py`,
-  `_backfill_fq_positions.py` 도입. FTN/QTN hot item은 `b>=200` defect/invalid chip 분포와 맞춰 boost.
+- 2026-05-01: positions JSON에 synthetic `partid`/`part_id`/`pgm` + FTN/QTN 추가. `_fq_metadata.py` 도입.
+  FTN/QTN hot item은 `b>=200` defect/invalid chip 분포와 맞춰 boost (분석성 보장).
+- 2026-05-01: repo cleanup — `_dist_learn.py`/`_backfill_fq_positions.py`/`_make_cache.py` 삭제,
+  `_dist_heatmaps/` (32KB) repo에 포함. fresh clone에서 `_sample_gen.py` 즉시 실행 가능.
