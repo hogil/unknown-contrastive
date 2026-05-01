@@ -114,6 +114,17 @@ python cnn_train_failobj.py \
 | Stage 2 후 | `obj_id_maps/<class>/<basename>.npy` 개수 = unknown wafer 개수, sample npy unique ⊆ {0,1,2,3,4,5}, defect chip 위치에 nonzero 분포 |
 | Stage 3 후 | `log/<failobj_tag>/best_history.txt` BEST OVERALL test F1 비교 — `cnn_train.py` baseline (failbit only) 대비 향상 여부 |
 
+## Augmentation (Stage 3 wafer CNN)
+
+`cnn_train_failobj.py::build_transforms` 동일 정책 (cnn_train.py 와 sync):
+- ✅ ±15° rotation, ±3% translate/scale, Gaussian noise σ=0.01
+- ❌ **HFlip 금지** (scratch_21deg 21° → -21° angle 정체성 변경)
+- ❌ VFlip / 180° rot, ColorJitter, MixUp/CutMix/Cutout
+
+3-channel 입력에 augmentation 적용 시 **R/G/B 같은 transform** 동시 적용 (특히
+G obj_id map 도 같이 회전/affine — BICUBIC 으로 회전된 categorical 값 fractional
+허용). Gaussian noise 는 R 채널에만 적용 권장 (G categorical 의미 보존).
+
 ## 금지
 
 - OBJECT_TYPE_ID 매핑 무근거 변경 금지 — 두 스크립트 일관성 깨짐
@@ -122,3 +133,4 @@ python cnn_train_failobj.py \
 - positions JSON 에 `chips[].obj` 추가 금지 (기존 정책 — chip 분류기로 inference만)
 - chip 분류기를 매 학습 step 에서 inline 호출 금지 — Stage 2 cache 사용으로 GPU
   경합 회피
+- Augmentation 에 HFlip 추가 금지 (angle 클래스 정체성 변경)

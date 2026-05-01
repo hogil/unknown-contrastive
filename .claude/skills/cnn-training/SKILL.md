@@ -22,7 +22,14 @@ description: ConvNeXtV2 base FCMAE 분류기를 33 class wafer fail-bit 데이�
 - **Resize**: BICUBIC (사용자 결정 — 1024 BICUBIC이 chip 격자 + line/blob 보존 최소 size)
 - **Loss default**: CE + label_smoothing=0.02 + class_weight=`effective` (Cui et al. β=0.999)
 - **EMA default**: ON, decay 0.95, warmup 3 epoch
-- **Augmentation (도메인-safe)**: HFlip(좌우 대칭) + ±15° rotation(소각도) + small affine(±3%) + Gaussian noise. **금지**: VFlip / 180° rotation (Edge-Top↔Edge-Bottom 손상), ColorJitter (palette grade 의미 손상)
+- **Augmentation (도메인-safe, position+palette+angle safe)**:
+  - ✅ ±15° rotation (stage 회전 오차 모사)
+  - ✅ small affine ±3% (alignment / magnification)
+  - ✅ Gaussian noise σ=0.01 (sensor pixel noise)
+  - ❌ **HFlip 금지** — scratch_21deg 등 angle 자체가 클래스 정체성 (21° → -21°)
+  - ❌ VFlip / 180° rotation (Edge-Top ↔ Edge-Bottom)
+  - ❌ ColorJitter (palette grade 의미 손상)
+  - ❌ MixUp / CutMix / Cutout (palette pixel 평균이 무의미한 grade)
 - **AMP**: bf16
 - **Best 갱신**: smoothed val F1 (median window 3) + val_loss guard (×2 best 거부)
 - **Best 갱신 시**: test set 자동 평가 → 모든 결과 파일 갱신

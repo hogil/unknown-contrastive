@@ -142,10 +142,14 @@ default `model_tag` = backbone short name (`convnextv2_base`).
 폐지: `eval_summary.json`, `val_per_class_report.txt`, `test_per_class_report.txt`,
 `best_confusion_matrix_{val,test}.png` — 모두 `best_history.txt` + 통합 PNG에 흡수.
 
-도메인-safe augmentation (cnn_train.py::build_transforms):
-- ✅ HFlip, ±15° rotation, 작은 translate/scale, Gaussian noise
-- ❌ VFlip, 180° rotation (Edge-Top↔Edge-Bottom 손상)
-- ❌ ColorJitter (palette grade 의미 손상)
+도메인-safe augmentation (cnn_train.py / cnn_train_failobj.py::build_transforms):
+- ✅ ±15° rotation: 검사장비 stage 회전 오차 범위 내
+- ✅ 작은 translate/scale (±3%): alignment / magnification variability
+- ✅ Gaussian noise σ=0.01: sensor pixel noise
+- ❌ HFlip: scratch_21deg 등 angle = 클래스 정체성 (21° → -21°)
+- ❌ VFlip / 180° rotation: Edge-Top ↔ Edge-Bottom 클래스 뒤집힘
+- ❌ ColorJitter: palette grade(0=정상, 1-7=강도) 의미 손상
+- ❌ MixUp / CutMix / Cutout: palette pixel 평균이 무의미한 grade 생성
 
 Subset YAML (`experiments/<plan>.yaml`):
 ```yaml
