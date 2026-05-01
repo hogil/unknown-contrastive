@@ -402,6 +402,19 @@ def evaluate(model, loader, device, classes, criterion=None, return_paths: bool 
         res["paths"] = all_paths
     return res
 
+def _cm_size_params(n: int):
+    """class 수 n 에 따라 figsize / cell font / label font 동적 결정."""
+    if n <= 5:
+        return (8, 7), 22, 14
+    if n <= 10:
+        return (10, 9), 16, 11
+    if n <= 20:
+        return (12, 10), 11, 9
+    if n <= 36:
+        return (14, 12), 7, 7
+    return (16, 14), 5, 6
+
+
 def save_confusion_matrix(eval_res, out_path: Path):
     try:
         import matplotlib
@@ -410,16 +423,17 @@ def save_confusion_matrix(eval_res, out_path: Path):
         classes = eval_res["classes"]
         n = len(classes)
         cm = confusion_matrix(eval_res["labels"], eval_res["preds"], labels=list(range(n)))
-        fig, ax = plt.subplots(figsize=(14, 12))
+        figsize, cell_fs, label_fs = _cm_size_params(n)
+        fig, ax = plt.subplots(figsize=figsize)
         im = ax.imshow(cm, cmap="Blues")
         ax.set_xticks(range(n)); ax.set_yticks(range(n))
-        ax.set_xticklabels(classes, rotation=90, fontsize=7)
-        ax.set_yticklabels(classes, fontsize=7)
-        ax.set_xlabel("predicted"); ax.set_ylabel("true")
+        ax.set_xticklabels(classes, rotation=90, fontsize=label_fs)
+        ax.set_yticklabels(classes, fontsize=label_fs)
+        ax.set_xlabel("predicted", fontsize=label_fs + 2)
+        ax.set_ylabel("true", fontsize=label_fs + 2)
         plt.colorbar(im, ax=ax)
         # cell annotations — non-zero만, 진한 셀은 흰 글자
         thresh = cm.max() / 2.0 if cm.max() > 0 else 0
-        font_size = 6 if n <= 36 else 5
         for i in range(n):
             for j in range(n):
                 v = int(cm[i, j])
@@ -427,7 +441,7 @@ def save_confusion_matrix(eval_res, out_path: Path):
                     continue
                 ax.text(j, i, str(v),
                         ha="center", va="center",
-                        fontsize=font_size,
+                        fontsize=cell_fs,
                         color="white" if v > thresh else "black")
         fig.tight_layout(); fig.savefig(out_path, dpi=150); plt.close(fig)
     except Exception as e:
@@ -445,20 +459,23 @@ def save_confusion_matrix_combined(val_res, test_res, out_path: Path):
         import matplotlib.pyplot as plt
 
         classes = val_res["classes"]; n = len(classes)
-        font_size = 6 if n <= 36 else 5
+        figsize_single, cell_fs, label_fs = _cm_size_params(n)
+        # combined: 가로 그대로, 세로 2배 (test 위 + val 아래)
+        figsize = (figsize_single[0], figsize_single[1] * 2)
 
         cm_test = confusion_matrix(test_res["labels"], test_res["preds"], labels=list(range(n)))
         cm_val  = confusion_matrix(val_res["labels"],  val_res["preds"],  labels=list(range(n)))
 
-        fig, axes = plt.subplots(2, 1, figsize=(14, 24))
+        fig, axes = plt.subplots(2, 1, figsize=figsize)
         for ax, cm, title in [(axes[0], cm_test, "TEST"),
                               (axes[1], cm_val,  "VAL")]:
             im = ax.imshow(cm, cmap="Blues")
             ax.set_xticks(range(n)); ax.set_yticks(range(n))
-            ax.set_xticklabels(classes, rotation=90, fontsize=7)
-            ax.set_yticklabels(classes, fontsize=7)
-            ax.set_xlabel("predicted"); ax.set_ylabel("true")
-            ax.set_title(title, fontsize=14, fontweight="bold")
+            ax.set_xticklabels(classes, rotation=90, fontsize=label_fs)
+            ax.set_yticklabels(classes, fontsize=label_fs)
+            ax.set_xlabel("predicted", fontsize=label_fs + 2)
+            ax.set_ylabel("true", fontsize=label_fs + 2)
+            ax.set_title(title, fontsize=label_fs + 6, fontweight="bold")
             plt.colorbar(im, ax=ax)
             thresh = cm.max() / 2.0 if cm.max() > 0 else 0
             for i in range(n):
@@ -466,7 +483,7 @@ def save_confusion_matrix_combined(val_res, test_res, out_path: Path):
                     v = int(cm[i, j])
                     if v == 0: continue
                     ax.text(j, i, str(v), ha="center", va="center",
-                            fontsize=font_size,
+                            fontsize=cell_fs,
                             color="white" if v > thresh else "black")
         fig.tight_layout(); fig.savefig(out_path, dpi=150); plt.close(fig)
     except Exception as e:
