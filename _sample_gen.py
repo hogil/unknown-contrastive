@@ -87,8 +87,54 @@ SIZE = 6400; GRID = 32; CHIP = 200
 HEATMAP_DIR  = "D:/project/unknown-contrastive/_dist_heatmaps"
 PNG_OUT_DIR  = "D:/project/data/wm-811k/unknown"
 JSON_OUT_DIR = "D:/project/data/positions/unknown"
+CHIP_OBJ_OUT_DIR = "D:/project/data/wm-811k/classification_chips"               # chip-object crop dataset (per-chip true label)
+CHIP_OBJECT_LABELS = ('bank_boundary', 'particle_blast', 'scratch',
+                     'scratch_21deg', 'invalid_main')
 os.makedirs(PNG_OUT_DIR, exist_ok=True)
 os.makedirs(JSON_OUT_DIR, exist_ok=True)
+
+
+def _wafer_basename_chip_key(base: str) -> str:
+    """Drop yield/sys (idx 5, 6) tokens from 9-token wafer basename for chip filename."""
+    parts = base.split("_")
+    if len(parts) >= 9:
+        return "_".join(parts[:5] + parts[7:])
+    return base
+
+
+def save_chip_crops(img, chip_meta: dict, base: str, out_root: str = CHIP_OBJ_OUT_DIR) -> dict:
+    """Save per-chip 200x200 crops to classification_chips/<obj>/<wafer_key>_x<x>_y<y>_b<bin>.png.
+
+    chip_meta entry: {'kind': 'defect'|'invalid', 'obj': <obj_name|None>, 'bin': int, 'inside': bool}
+    - kind=='defect': crop labeled with chip_meta['obj'] (handles 75% primary + 25% mixed correctly)
+    - kind=='invalid': crop labeled 'invalid_main'
+    Returns counts dict: {label: count}.
+    """
+    counts = {}
+    if not chip_meta:
+        return counts
+    wafer_key = _wafer_basename_chip_key(base)
+    for (gy, gx), meta in chip_meta.items():
+        if not meta.get('inside', False):
+            continue
+        b = meta.get('bin')
+        if b is None or b < 200:
+            continue
+        if meta['kind'] == 'invalid':
+            obj = 'invalid_main'
+        else:
+            obj = meta.get('obj')
+        if obj not in CHIP_OBJECT_LABELS:
+            continue
+        x0, y0 = gx * CHIP, gy * CHIP
+        x1, y1 = x0 + CHIP, y0 + CHIP
+        crop = img.crop((x0, y0, x1, y1))
+        out_dir = os.path.join(out_root, obj)
+        os.makedirs(out_dir, exist_ok=True)
+        crop_name = f"{wafer_key}_x{gx}_y{gy}_b{b}.png"
+        crop.save(os.path.join(out_dir, crop_name))
+        counts[obj] = counts.get(obj, 0) + 1
+    return counts
 
 # normal chip baseline: P(0)+P(1) ≈ 98% — defect chip과 압도적 차이
 BASELINE = np.array([0.83, 0.15, 0.012, 0.005, 0.002, 0.0008, 0.0001, 0.0001], dtype=np.float64)
@@ -639,6 +685,11 @@ def render(class_name, object_name, seed):
     png_path  = os.path.join(png_dir,  base + ".png")
     json_path = os.path.join(json_dir, base + ".json")
     img.save(png_path, optimize=False, compress_level=1)                              # 빠른 저장 (압축 약함, 파일 2배 큼)
+
+    # 10b) Save per-chip object-true crops for chip-object classifier dataset.
+    # chip_meta[(gy,gx)]['obj'] 는 75% primary + 25% mixed 의 실제 object 라벨이라
+    # 같은 wafer 안에 다른 object 가 섞여 있어도 정확히 분류됨 (folder-suffix weak label 대체).
+    save_chip_crops(img, chip_meta, base)
 
     # 11) Generate matching positions JSON (fail-map docs schema + synthetic FTN/QTN)
     chips_list = []

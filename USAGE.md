@@ -31,9 +31,13 @@
 python download_backbone.py
 ```
 
-heatmap (`_dist_heatmaps/`) 은 **repo에 포함되지 않음 (gitignored)**. generation을
-이 환경 외에서도 돌리려면 `_dist_heatmaps/` 폴더를 직접 복사하거나, git history
-`441c532` 이전 `_dist_learn.py` 를 가져와 WM-811K `cca/<class>/*.png` 에서 재학습.
+heatmap (`_dist_heatmaps/`) 은 **repo에 포함되지 않음 (gitignored)**. 부재 시
+`python _dist_learn.py` 로 1회 재학습 (WM-811K `cca/<class>/*.png` 입력, ~10초).
+
+**chip-object crop dataset 동시 생성**: `_sample_gen.py` 가 wafer PNG 저장
+직후 chip별 true object 라벨로 200×200 crop을 `D:/project/data/wm-811k/classification_chips/<obj>/`
+에 자동 저장 (chip object 5종 × 폴더). 75% primary + 25% mixed 환경에서도
+chip별 라벨 정확. detail은 `.claude/skills/chip-object-dataset/SKILL.md`.
 
 ---
 

@@ -82,3 +82,9 @@ python _verify.py --sample 5
   매 epoch curves.png + history.json 갱신 (mid-run 종료 시 결과 보존).
   폴더 rename: `{model_tag}_{YYMMDD_HHMMSS}_{test_f1}_{val_f1}/`.
 - 2026-05-01: `USAGE.md` (repo root) 작성 — image-gen → train → predict 명령어 + 워크플로우 요약.
+- 2026-05-01: chip-object crop dataset inline 생성 도입 (`_sample_gen.save_chip_crops`).
+  wafer generation 시점에 `chip_meta['obj']` 의 true 라벨 기반으로 200×200 chip crop을
+  `D:/project/data/wm-811k/classification_chips/<obj>/` 에 동시 저장. 후처리 folder-suffix
+  weak label 방식 (`_make_chip_object_dataset.py`) 폐기 — wafer 안 25% mixed object 가
+  잘못된 라벨로 분류되는 버그가 있었음. `_sample_gen_gpu.py` 도 동일 hook 추가.
+  `_dist_learn.py` 재추가 (heatmap 부재 시 1회 재학습용).

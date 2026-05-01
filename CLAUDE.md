@@ -32,11 +32,13 @@ docs/image-generation/ 와 .claude/ 에 기록**되어 있어 새 세션에서 �
 
 | 파일 | 역할 |
 |---|---|
-| `_sample_gen.py` | 메인 generator (multiprocessing). FTN/QTN 자동 포함. |
-| `_sample_gen_gpu.py` | GPU 가속 generator (single-proc + ThreadPool) |
+| `_sample_gen.py` | 메인 generator (multiprocessing). FTN/QTN + chip-object crop 자동 포함. |
+| `_sample_gen_gpu.py` | GPU 가속 generator (single-proc + ThreadPool). chip-object crop 동일 포함. |
 | `_fq_metadata.py` | synthetic `partid`/`part_id`/`pgm` + FTN/QTN key/value 생성 |
+| `cnn_train_failobj.py` | 3-channel feature CNN (R=failbit, G=object_type_id map, B=zero) |
 | `_verify.py` | 데이터셋 검증 (filename/PNG/JSON 스키마/분포 sanity) |
-| `_dist_heatmaps/` | WM-811K cca/* 학습된 heatmap 8 클래스 (.npy + .png, **gitignored**, 로컬 1회성). 다른 환경에서 generation 필요시 별도 복사 또는 git history `441c532` 이전 `_dist_learn.py`로 재학습 |
+| `_dist_learn.py` | WM-811K cca/* heatmap 학습 (1회). gitignored heatmap 부재 시 재실행. |
+| `_dist_heatmaps/` | WM-811K cca/* 학습된 heatmap 8 클래스 (.npy + .png, **gitignored**). 부재 시 `python _dist_learn.py` 로 재생성. |
 
 ## 출력 위치
 
@@ -47,6 +49,12 @@ docs/image-generation/ 와 .claude/ 에 기록**되어 있어 새 세션에서 �
   **목적: FTN/QTN ↔ fail-bit map cross-correlation 분석.** 클래스마다 hot index 셋이
   다르고, defect chip의 hot item 평균은 normal chip 대비 ≥3x (실측 3.5-4.9x).
   새 클래스/spec 변경 시 이 분석성 검증 필수.
+- **chip-object crop**: `D:/project/data/wm-811k/classification_chips/<obj>/<wafer_basename_without_yield_sys>_x<x>_y<y>_b<bin>.png`
+  - 5 obj label (bank_boundary / particle_blast / scratch / scratch_21deg / invalid_main)
+  - **wafer generation 시점에 inline 저장** (`_sample_gen.save_chip_crops`).
+    chip별 true object 라벨(`chip_meta['obj']`)을 사용하므로 75% primary + 25% mixed
+    환경에서도 정확. **post-process folder-suffix 라벨링 절대 금지** (25% mixed chip 오라벨).
+  - source positions JSON 에 `chips[].obj` 추가 금지 (정책)
 
 ## Skills/Agents
 

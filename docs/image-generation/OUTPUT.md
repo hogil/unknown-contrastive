@@ -10,6 +10,10 @@ D:/project/data/wm-811k/unknown/
 D:/project/data/positions/unknown/
 └── <Distribution>_<Object>/
     └── <same basename>.json
+
+D:/project/data/wm-811k/classification_chips/             ← chip-object crop (per-chip true label)
+└── <obj>/                                                  ← bank_boundary | particle_blast | scratch | scratch_21deg | invalid_main
+    └── <wafer_basename_without_yield_sys>_x<x>_y<y>_b<bin>.png
 ```
 
 PNG와 JSON는 **basename이 동일**. 페어로 생성됨.

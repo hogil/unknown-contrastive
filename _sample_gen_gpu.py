@@ -41,6 +41,7 @@ from _sample_gen import (
     assign_defect_bin, assign_invalid_bin, pick_mixed_object,
     FONT_BIG,
     build_tasks,
+    save_chip_crops,
 )
 
 assert torch.cuda.is_available(), "GPU pipeline requires CUDA"
@@ -502,6 +503,9 @@ def save_to_disk(r):
             tw = th = 40; ty = cy_px - th/2
         draw.text((cx_px - tw/2, ty), text, fill=IDX_TEXT, font=FONT_BIG)
     img.save(png_path, optimize=False, compress_level=1)
+
+    # Per-chip object-true crops (chip-object classifier dataset)
+    save_chip_crops(img, r['chip_meta'], base)
 
     # JSON
     chips_list = []

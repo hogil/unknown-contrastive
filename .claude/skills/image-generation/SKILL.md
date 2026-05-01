@@ -31,12 +31,15 @@ description: WM-811K 분포 + chip object 5종을 합성해 36 클래스 wafer f
   **목적: FTN/QTN ↔ fail-bit cross-correlation 분석.** 클래스마다 hot index 셋이
   다르고 (class-specific signature), defect chip에서 hot item 값이 normal chip 대비 약 4-5배.
   새 클래스 추가/spec 변경 시 이 분석성(클래스 식별 + 공간 패턴 매칭)을 검증한 뒤 commit.
+- **chip-object crop dataset 동시 생성**: `_sample_gen.save_chip_crops()` 가
+  PNG 저장 직후 chip별 true object 라벨로 200×200 crop을 `classification_chips/<obj>/`
+  에 저장. 75% primary + 25% mixed 환경에서도 정확. detail은
+  `.claude/skills/chip-object-dataset/SKILL.md`.
 
 ## 사전 조건
 
 1. WM-811K heatmap: `_dist_heatmaps/<Class>_p_defect_32.npy` 8개 클래스
-   (gitignored 로컬 산출물 — fresh clone에는 없음. 다른 환경에서 generation
-   하려면 폴더 복사 또는 git history `441c532` 이전 `_dist_learn.py` 로 재학습).
+   (gitignored 로컬 산출물). 부재 시 `python _dist_learn.py` 실행 (cca/* 에서 1회 학습).
    Thick-Edge는 heatmap 불필요, 코드에서 직접 계산.
 2. WM-811K 원본: `D:/project/data/wm-811k/cca/<Class>/*.png` 존재
 3. 출력 폴더 쓰기 권한
