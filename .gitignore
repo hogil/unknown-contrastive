@@ -1,5 +1,8 @@
 # ===== large or per-run output (절대 commit 금지, 절대 삭제 금지) =====
 log/
+logs_chip/
+logs_wafer/
+logs_compound/
 models/
 _dist_heatmaps/
 _resize_compare/
