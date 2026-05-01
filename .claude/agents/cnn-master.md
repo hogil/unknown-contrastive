@@ -26,9 +26,10 @@ slash command `/cnn-train-safe`로 인자 전달:
 
 ### 2. 학습 dispatch (background)
 ```bash
-python cnn_train.py <args> > log/_master_run.log 2>&1
+python cnn_train.py <args>
 ```
 `run_in_background=True`. PID는 BashOutput으로 추적 (또는 `tasklist`/`Get-Process`로 cnn_train.py 프로세스 PID 찾기).
+**top-level `log/_*.log` 외부 redirect 금지** — cnn_train.py가 자체적으로 `log/<run_dir>/run.log`를 기록하므로 외부 stdout 미러는 불필요. 콘솔 stdout은 BashOutput으로 직접 확인.
 
 ### 3. Watchdog loop
 - 30초마다 resource-monitor mode=check 호출 (또는 mode=watch <pid>)
