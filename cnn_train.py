@@ -12,7 +12,9 @@ Normal class는 학습 제외 — 운영 시 max_prob threshold로 "Normal/unkno
 - EMA (default ON, decay 0.95)
 - val_loss guard + median F1 smoothing → spike best 차단
 - 출력 폴더 rename-on-end:
-    log/{model_tag}_{YYYYMMDD_HHMMSS}_{test_f1:.2f}_{test_recall:.2f}/
+    log/{model_tag}_{YYMMDD_HHMMSS}_{test_f1:.2f}_{val_f1:.2f}/  (3-way split)
+    log/{model_tag}_{YYMMDD_HHMMSS}_{val_f1:.2f}/                 (--train-val-only)
+  default model_tag = backbone short name (e.g. convnextv2_base)
 
 산출:
     log/<run_dir>/
@@ -97,7 +99,8 @@ CFG = {
     "mixup": 0.0,
 }
 
-RUN_TS = datetime.now().strftime("%Y%m%d_%H%M%S")
+RUN_TS = datetime.now().strftime("%y%m%d_%H%M%S")                                       # YYMMDD_HHMMSS (e.g. 260501_104843)
+BACKBONE_SHORT = BACKBONE.split(".")[0]                                                  # 폴더명 prefix용 — "convnextv2_base"
 
 # ===================== Logging =====================
 def setup_logger(out: Path) -> logging.Logger:
@@ -580,9 +583,17 @@ def save_wrong_tree(eval_res: dict, out_dir: Path):
     return n
 
 
-def rename_run_dir(out_dir: Path, model_tag: str, ts: str, f1: float, recall: float) -> Path:
-    """log/{model_tag}_{TS}_F{f1:.2f}_R{r:.2f}/ 로 이름 변경."""
-    new_name = f"{model_tag}_{ts}_F{f1:.2f}_R{recall:.2f}"
+def rename_run_dir(out_dir: Path, model_tag: str, ts: str,
+                   test_f1: Optional[float], val_f1: float) -> Path:
+    """log/{model_tag}_{TS}_{test_f1:.2f}_{val_f1:.2f}/ 로 이름 변경.
+
+    test 없으면 (--train-val-only) 끝 segment 1개 (val_f1만).
+    model_tag default = backbone short name (e.g. convnextv2_base).
+    """
+    if test_f1 is not None:
+        new_name = f"{model_tag}_{ts}_{test_f1:.2f}_{val_f1:.2f}"
+    else:
+        new_name = f"{model_tag}_{ts}_{val_f1:.2f}"
     parent = out_dir.parent
     new_path = parent / new_name
     if new_path.exists():
@@ -952,13 +963,10 @@ def main():
         save_pred_samples(best_val_res, out_dir / "predictions_val", max_per_bucket=20)
         lg.info(f"  pred samples saved → predictions_val/")
 
-    # rename folder log/{model_tag}_{TS}_F{f1:.2f}_R{r:.2f}/ — test 없으면 val metrics
-    metric_source = "test" if 'best_test_res' in dir() else "val"
-    final_f1 = (best_test_res["macro_f1"] if 'best_test_res' in dir()
-                else best_val_res["macro_f1"] if 'best_val_res' in dir() else 0.0)
-    final_r  = (best_test_res["macro_r"] if 'best_test_res' in dir()
-                else best_val_res["macro_r"] if 'best_val_res' in dir() else 0.0)
-    final_dir = rename_run_dir(out_dir, args.model_tag, RUN_TS, final_f1, final_r)
+    # rename folder log/{model_tag}_{TS}_{test_f1:.2f}_{val_f1:.2f}/ — test 없으면 val_f1만
+    final_test_f1 = best_test_res["macro_f1"] if 'best_test_res' in dir() else None
+    final_val_f1  = best_val_res["macro_f1"]  if 'best_val_res' in dir() else 0.0
+    final_dir = rename_run_dir(out_dir, args.model_tag, RUN_TS, final_test_f1, final_val_f1)
     if aborted_reason:
         # abort 표시 — 결과 폴더는 보존, 이름만 suffix 추가
         aborted_dir = final_dir.with_name(final_dir.name + "_ABORTED")
