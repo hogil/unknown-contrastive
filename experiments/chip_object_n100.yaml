@@ -1,0 +1,27 @@
+# =============================================================================
+# Plan: chip-object classifier 첫 학습 (5 class × 100 sample = 500)
+# Status: 활성 (chip-level CNN baseline)
+# Intent:
+#   _sample_gen.py 가 inline으로 만든 chip-object crop dataset (200×200 PNG)에서
+#   5 object class (bank_boundary / particle_blast / scratch / scratch_21deg /
+#   invalid_main) 분류기를 학습. wafer-level CNN (cnn_train_failobj.py) 의
+#   stage 2 (chip predict → object_type_id map) 에 사용할 모델 산출.
+# Hypothesis:
+#   chip pattern은 매우 단순(직선/대각/십자/중앙 blob/invalid fill)이라 적은
+#   데이터로도 ≥0.95 macro F1 도달. 100/class × 5 = 500 샘플이면 충분.
+# Why these numbers:
+#   - default 100: 클래스당 100, 전체 500 → train 400 / val 50 / test 50.
+#     val/test 50개면 macro F1 분산 ±0.04 수준. 빠른 sanity baseline 용도.
+#   - 향후 본 학습은 1000/class 로 확장 권장.
+# Run:
+#   python cnn_train.py \
+#       --data-dir D:/project/data/wm-811k/classification_chips \
+#       --subset-config experiments/chip_object_n100.yaml \
+#       --epochs 20 --batch 16 --img-size 384 \
+#       --model-tag chip5_n100
+# Output 비교:
+#   log/chip5_n100_<TS>_<test_f1>_<val_f1>/best_history.txt 의 [0] BEST OVERALL.
+#   per-class F1 분포에서 5 class 모두 ≥0.9 인지 확인.
+# =============================================================================
+classes:
+  default: 100

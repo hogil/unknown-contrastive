@@ -41,6 +41,46 @@ chip별 라벨 정확. detail은 `.claude/skills/chip-object-dataset/SKILL.md`.
 
 ---
 
+## 3-Stage Failobj 학습 (advanced)
+
+기본 `cnn_train.py` (failbit only 단일 채널) 외에, chip 분류기 정보를 추가
+채널로 합쳐서 학습하는 3-stage fusion 파이프라인:
+
+```
+Stage 1: chip 5-class 분류기                       cnn_train.py --data-dir classification_chips
+Stage 2: chip CNN inference → 32×32 obj_id .npy    _build_obj_id_maps.py
+Stage 3: 3-channel wafer CNN                       cnn_train_failobj.py
+         (R=failbit, G=obj_id BICUBIC normalized, B=zero)
+```
+
+명령어 예:
+
+```bash
+# Stage 1
+python cnn_train.py --data-dir D:/project/data/wm-811k/classification_chips \
+    --subset-config experiments/chip_object_n100.yaml \
+    --epochs 20 --batch 16 --img-size 384 --workers 0 --model-tag chip5_n100
+
+# Stage 2 (GPU 권장; 1024 wafer 학습 끝난 뒤)
+python _build_obj_id_maps.py \
+    --chip-model log/chip5_n100_w0_*/best_model.pth \
+    --batch 64 --overwrite
+
+# Stage 3
+python cnn_train_failobj.py \
+    --obj-id-dir D:/project/data/wm-811k/obj_id_maps \
+    --init-from log/<wafer_best>/best_model.pth \
+    --epochs 30 --batch 16 --img-size 384 --model-tag failobj_v1
+```
+
+`/stage3-failobj` slash command + `stage3-failobj` agent 가 위 3단계를 순차
+dispatch + 자원 점검 + 산출 검증 + 실패 시 abort/보존 처리.
+
+OBJECT_TYPE_ID 매핑, BICUBIC G channel 근거, 검증 체크포인트 등 상세는
+`.claude/skills/stage3-failobj/SKILL.md`.
+
+---
+
 ## 2. 이미지 생성
 
 ### 2.1. 기본 (multiprocessing CPU)

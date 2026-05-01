@@ -76,6 +76,8 @@ CNN 분류기 (open-set, Normal 제외 학습):
 | `cnn-inference` | `cnn-inference` | `/cnn-predict` | `cnn_predict.py` wrapper, threshold sweep |
 | `cnn-pipeline` | `cnn-pipeline` | `/cnn-pipeline` | train→Normal predict→threshold 추천 chain |
 | `cnn-analyze` | `cnn-analyze` | `/cnn-analyze` | 학습 결과 진단, 다중 run 비교 |
+| `chip-object-dataset` | `chip-object-dataset` | — | inline chip-object crop dataset 검증 (`_sample_gen.save_chip_crops`) |
+| `stage3-failobj` | `stage3-failobj` | `/stage3-failobj` | 3-stage 학습 orchestrator: chip 5-class → obj_id_map cache → 3-channel wafer CNN (`cnn_train_failobj.py`) |
 
 자원 가드 team (RAM 80% / GPU 90% 한계 자동 polling, master/monitor 분리):
 
