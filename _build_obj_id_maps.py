@@ -53,15 +53,11 @@ PNG_ROOT  = Path("D:/project/data/wm-811k/unknown")
 JSON_ROOT = Path("D:/project/data/positions/unknown")
 OUT_ROOT  = Path("D:/project/data/wm-811k/obj_id_maps")
 
-# must match cnn_train_failobj.OBJECT_TYPE_ID
-OBJECT_TYPE_ID = {
-    "none": 0,
-    "invalid_main": 1,
-    "scratch": 2,
-    "scratch_21deg": 3,
-    "particle_blast": 4,
-    "bank_boundary": 5,
-}
+# obj_id 매핑 정책 (dict 제거됨 — runtime derive):
+# - obj_id 0 = "none / 정상 chip / 외곽" 예약
+# - obj_id 1..N = chip CNN 의 ImageFolder 알파벳 정렬 class 에 +1 offset
+# - 출력에 `_meta.json` 작성 → cnn_train_compound 가 N 읽음
+NONE_ID = 0
 GRID = 32
 MIN_DEFECT_BIN = 200
 
@@ -198,14 +194,13 @@ def main() -> int:
     print(f"[device] {device}")
 
     model, classes, img_size = load_chip_model(chip_ckpt, device)
-    print(f"[model] classes={classes} img_size={img_size}")
+    print(f"[model] classes (ImageFolder alphabetical)={classes}  img_size={img_size}")
+    n_chip_objects = len(classes)
 
-    # class index -> object_type_id (uint8)
-    class_idx_to_obj_id = np.array(
-        [OBJECT_TYPE_ID[c] for c in classes],
-        dtype=np.uint8,
-    )
-    print(f"[class_idx_to_obj_id] {dict(zip(classes, class_idx_to_obj_id.tolist()))}")
+    # class index -> obj_id (uint8) — runtime derive: ImageFolder idx + 1 (idx 0 = NONE_ID)
+    class_idx_to_obj_id = np.arange(1, n_chip_objects + 1, dtype=np.uint8)
+    obj_id_to_label = ["none"] + list(classes)                                           # idx 0..N
+    print(f"[obj_id mapping] " + ", ".join(f"{i}={lbl}" for i, lbl in enumerate(obj_id_to_label)))
 
     # collect wafers
     out_root = Path(args.out_root)
@@ -255,17 +250,29 @@ def main() -> int:
 
     print(f"[predict] done in {(time.time() - t0):.1f}s")
 
-    # save .npy per wafer
-    counts_by_label = {n: 0 for n in OBJECT_TYPE_ID}
-    inv_map = {v: k for k, v in OBJECT_TYPE_ID.items()}
+    # save .npy per wafer + counts
+    counts_by_label = {lbl: 0 for lbl in obj_id_to_label}
     for wi, spec in enumerate(specs):
         out_path = Path(spec["out_path"])
         out_path.parent.mkdir(parents=True, exist_ok=True)
         np.save(out_path, obj_maps[wi])
         for v, c in zip(*np.unique(obj_maps[wi], return_counts=True)):
-            counts_by_label[inv_map[int(v)]] += int(c)
+            counts_by_label[obj_id_to_label[int(v)]] += int(c)
     print(f"[saved] {len(specs)} npy files under {out_root}")
     print(f"[counts_by_label] {counts_by_label}")
+
+    # _meta.json — cnn_train_compound 가 n_chip_objects 읽음
+    meta_path = out_root / "_meta.json"
+    meta = {
+        "n_chip_objects": n_chip_objects,
+        "chip_classes": list(classes),                                                    # ImageFolder 알파벳 순서
+        "obj_id_to_label": obj_id_to_label,                                               # idx i → label[i]
+        "chip_model": str(chip_ckpt).replace("\\", "/"),
+        "built_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    with meta_path.open("w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+    print(f"[meta] {meta_path}")
     return 0
 
 

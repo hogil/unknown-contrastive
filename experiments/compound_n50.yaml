@@ -1,0 +1,23 @@
+# =============================================================================
+# Plan: compound 학습 — wafer class별 50 sample (Stage 3 baseline / smoke)
+# Status: 활성 — compound 첫 학습, n=100 본 학습 전 baseline
+# Intent:
+#   3-channel feature wafer CNN (cnn_train_compound.py).
+#   R = palette failbit, G = obj_id (chip CNN predict), B = zero.
+#   wafer 33-class 분류. n=50 으로 빠른 수렴 + cnn_train.py n50 baseline 과 직접 비교.
+# Hypothesis:
+#   compound (R+G) > failbit only (cnn_train.py 같은 subset) — chip object cue 추가 효과.
+# Why these numbers:
+#   - default 50: 33 × 50 = 1650 → train 1320 / val 165 / test 165
+#   - cnn_train.py 의 ablation_size_n50.yaml 과 같은 split → 직접 비교 가능
+# Run:
+#   python cnn_train_compound.py \
+#     --obj-id-dir D:/project/data/wm-811k/obj_id_maps \
+#     --subset-config experiments/compound_n50.yaml \
+#     --epochs 30 --batch 16 --img-size 384 --model-tag compound_n50
+# Output 비교:
+#   logs_all/compound_n50_<TS>_<test_f1>_<val_f1>/best_history.txt 의 [0] BEST OVERALL
+#   vs logs_wafer/sz384_n50_<TS>_*/best_history.txt (failbit only)
+# =============================================================================
+classes:
+  default: 50

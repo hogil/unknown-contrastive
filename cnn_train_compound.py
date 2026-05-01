@@ -80,29 +80,26 @@ from _resource_guard import assess_start, format_assessment, ResourceMonitor
 # ===================== CONFIG =====================
 DEFAULT_DATA_DIR = "D:/project/data/wm-811k/unknown"
 DEFAULT_POSITION_DIR = "D:/project/data/positions/unknown"
+DEFAULT_OBJ_ID_DIR = "D:/project/data/wm-811k/obj_id_maps"
+DEFAULT_LOG_ROOT_COMPOUND = "logs_all"                                              # compound 학습 로그 루트
 EXCLUDE_CLASSES  = {"Normal"}
 BACKBONE         = "convnextv2_base.fcmae_ft_in22k_in1k_384"
 
-OBJECT_TYPE_ID = {
-    "none": 0,
-    "invalid_main": 1,
-    "scratch": 2,
-    "scratch_21deg": 3,
-    "particle_blast": 4,
-    "bank_boundary": 5,
-}
-OBJECT_SUFFIXES = sorted(
-    [k for k in OBJECT_TYPE_ID if k != "none"],
-    key=len,
-    reverse=True,
-)
-MAX_OBJECT_TYPE_ID = max(OBJECT_TYPE_ID.values())
+# obj_id 매핑 정책 (dict 안 두고 runtime derive — _build_obj_id_maps.py 와 동일):
+# - obj_id 0 = "none / 정상 chip / 외곽" 예약
+# - obj_id 1..N = chip CNN 의 ImageFolder 알파벳 정렬 class 에 +1 offset
+# - N (= n_chip_objects) 은 obj_id_maps/_meta.json 의 'n_chip_objects' 에서 읽음
+# - 새 class 추가 시 모든 stage 재학습 필요하므로 ID 안정성은 비목표
+NONE_ID = 0
+PALETTE_IDX_NORM = 31                                                               # 31 = invalid_fill, max palette idx (R channel norm)
+OBJ_ID_GRID = 32                                                                    # source obj_id map size
 
 CFG = {
     "data_dir": DEFAULT_DATA_DIR,
     "position_dir": DEFAULT_POSITION_DIR,
-    "log_root": "log",
-    "model_tag": "convnextv2_failobj",
+    "obj_id_dir": DEFAULT_OBJ_ID_DIR,
+    "log_root": DEFAULT_LOG_ROOT_COMPOUND,
+    "model_tag": "convnextv2_compound",
     "img_size": 384,
     "batch": 16,
     "epochs": 30,
@@ -223,6 +220,95 @@ class FilteredImageFolder(ImageFolder):
         kept = [c for c in classes if c not in EXCLUDE_CLASSES]
         new_class_to_idx = {c: i for i, c in enumerate(kept)}
         return kept, new_class_to_idx
+
+
+class FailObjImageFolder(FilteredImageFolder):
+    """3-channel feature ImageFolder for cnn_train_failobj.
+
+    Replaces the standard PIL.Image -> RGB visualization pipeline with a
+    raw-feature 3-channel float tensor:
+        R = palette_idx / PALETTE_IDX_NORM (31)            — failbit grade
+        G = obj_id     / n_chip_objects (= N from meta.json) — chip object id BICUBIC up
+        B = zeros                                           — dummy
+
+    Both R and G are BICUBIC-resized to img_size. Augmentation (no HFlip!) is
+    done after stacking, then ImageNet mean/std normalize for backbone init
+    compatibility.
+
+    obj_id .npy is loaded from `obj_id_root/<wafer_class>/<basename>.npy`.
+    Missing .npy → G channel = zeros (graceful fallback for unbuilt wafers).
+    """
+    _IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(3, 1, 1)
+    _IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(3, 1, 1)
+
+    def __init__(self, root: str, obj_id_root: str, img_size: int, train_aug: bool,
+                 n_chip_objects: int):
+        super().__init__(root)
+        self.obj_id_root = Path(obj_id_root)
+        self.img_size = int(img_size)
+        self.train_aug = bool(train_aug)
+        self.n_chip_objects = int(n_chip_objects)                                     # G normalization 분모
+        self._missing_obj_id_warned: bool = False
+
+    def _load_3ch(self, png_path: str) -> torch.Tensor:
+        """Load palette PNG + obj_id .npy → [3, H, W] float32 ∈ [0, 1]."""
+        # R: palette idx (mode 'P' or 'L') BICUBIC to img_size
+        img = Image.open(png_path)
+        if img.mode != "P":
+            img = img.convert("P")
+        idx = np.asarray(img, dtype=np.uint8)
+        idx_pil = Image.fromarray(idx, mode="L")                                       # treat idx as 8-bit grayscale for BICUBIC
+        idx_resized = idx_pil.resize((self.img_size, self.img_size), Image.BICUBIC)
+        r = torch.from_numpy(np.asarray(idx_resized, dtype=np.float32) / float(PALETTE_IDX_NORM)).clamp_(0.0, 1.0).unsqueeze(0)
+
+        # G: obj_id 32x32 BICUBIC to img_size  (categorical 0-5, fractional values OK as boundary cue)
+        wafer_class = Path(png_path).parent.name
+        basename = Path(png_path).stem
+        obj_path = self.obj_id_root / wafer_class / f"{basename}.npy"
+        if obj_path.exists():
+            obj_id = np.load(obj_path).astype(np.uint8)                                # (32, 32)
+            obj_pil = Image.fromarray(obj_id, mode="L")
+            obj_resized = obj_pil.resize((self.img_size, self.img_size), Image.BICUBIC)
+            g = torch.from_numpy(np.asarray(obj_resized, dtype=np.float32) / float(self.n_chip_objects)).clamp_(0.0, 1.0).unsqueeze(0)
+        else:
+            g = torch.zeros((1, self.img_size, self.img_size), dtype=torch.float32)
+            if not self._missing_obj_id_warned:
+                print(f"[FailObjImageFolder] missing obj_id {obj_path} — G=zeros (warn once)", flush=True)
+                self._missing_obj_id_warned = True
+
+        # B: zero dummy
+        b = torch.zeros_like(r)
+        return torch.cat([r, g, b], dim=0)
+
+    def _augment(self, x: torch.Tensor) -> torch.Tensor:
+        """Wafer-safe geometric + R-only Gaussian noise.
+        NO HFlip (angle = class identity), NO VFlip (Edge-Top↔Bottom).
+        Rotation/affine apply to all 3 channels — G categorical fractional is
+        intentional spatial cue.
+        """
+        # ±15° rotation
+        angle = float(torch.empty(1).uniform_(-15.0, 15.0).item())
+        x = TF.rotate(x, angle, interpolation=transforms.InterpolationMode.BILINEAR, fill=0)
+        # Affine: ±3% translate, ±3% scale
+        sx = float(torch.empty(1).uniform_(-0.03, 0.03).item())
+        sy = float(torch.empty(1).uniform_(-0.03, 0.03).item())
+        scale = float(torch.empty(1).uniform_(0.97, 1.03).item())
+        tx = int(round(sx * self.img_size)); ty = int(round(sy * self.img_size))
+        x = TF.affine(x, angle=0.0, translate=(tx, ty), scale=scale, shear=[0.0, 0.0],
+                       interpolation=transforms.InterpolationMode.BILINEAR, fill=0)
+        # Gaussian noise on R only — G categorical preserved (no semantic blur), B unused
+        noise = torch.randn_like(x[0:1]) * 0.01
+        r_noisy = (x[0:1] + noise).clamp_(0.0, 1.0)
+        x = torch.cat([r_noisy, x[1:]], dim=0)
+        return x
+
+    def __getitem__(self, index):
+        png_path, label = self.samples[index]
+        x = self._load_3ch(png_path)
+        if self.train_aug:
+            x = self._augment(x)
+        x = (x - self._IMAGENET_MEAN) / self._IMAGENET_STD
+        return x, label
 
 def _add_gaussian_noise(t):
     """transforms.Lambda에 박는 module-level callable (Windows DataLoader spawn picklable)."""
@@ -736,6 +822,53 @@ def rename_run_dir(out_dir: Path, model_tag: str, ts: str,
     except Exception:
         return out_dir
 
+
+def update_overall_best(log_root: Path, current_run_dir: Path, current_val_f1: float,
+                        logger=None) -> bool:
+    """log_root/overall/ 에 현재 run 의 val F1 이 그 폴더 내 best 면 통째 복사 교체.
+
+    `<log_root>/overall/_overall_meta.json` 에 best val F1 + run name 저장.
+    첫 실행 시 (overall/ 없음) → 자동 생성.
+    """
+    overall = log_root / "overall"
+    meta_path = overall / "_overall_meta.json"
+    prev_f1 = -1.0; prev_name = None
+    if meta_path.exists():
+        try:
+            with meta_path.open("r", encoding="utf-8") as f:
+                m = json.load(f)
+            prev_f1 = float(m.get("val_f1", -1.0))
+            prev_name = m.get("source_run")
+        except Exception:
+            pass
+
+    log_msg = f"[overall] current val_f1={current_val_f1:.4f} vs prev_best={prev_f1:.4f}"
+    if logger: logger.info(log_msg)
+    else: print(log_msg, flush=True)
+
+    if current_val_f1 <= prev_f1:
+        msg = f"[overall] not improved — keep prev '{prev_name}'"
+        if logger: logger.info(msg)
+        else: print(msg, flush=True)
+        return False
+
+    # 교체
+    if overall.exists():
+        shutil.rmtree(overall)
+    shutil.copytree(current_run_dir, overall)
+    new_meta = {
+        "val_f1": float(current_val_f1),
+        "source_run": current_run_dir.name,
+        "updated_at": datetime.now().strftime("%Y%m%d_%H%M%S"),
+    }
+    with meta_path.open("w", encoding="utf-8") as f:
+        json.dump(new_meta, f, indent=2, ensure_ascii=False)
+    msg = f"[overall] UPDATED — copied {current_run_dir.name} → {overall} (val_f1 {prev_f1:.4f} → {current_val_f1:.4f})"
+    if logger: logger.info(msg)
+    else: print(msg, flush=True)
+    return True
+
+
 # ===================== Path-aware datasets (for pred sample saving) =====================
 class IndexPathSubset(Dataset):
     """Subset wrapper that returns (image, label, path)."""
@@ -752,6 +885,10 @@ class IndexPathSubset(Dataset):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--data-dir", default=CFG["data_dir"])
+    p.add_argument("--obj-id-dir", default=CFG["obj_id_dir"],
+                   help="32x32 obj_id .npy 디렉토리 (`<class>/<basename>.npy`). _build_obj_id_maps.py 산출물.")
+    p.add_argument("--init-from", default=None,
+                   help="TAPT init: wafer best `best_model.pth` 경로. backbone weight만 load (head 재초기화).")
     p.add_argument("--log-root", default=CFG["log_root"])
     p.add_argument("--model-tag", default=CFG["model_tag"])
     p.add_argument("--epochs", type=int, default=CFG["epochs"])
@@ -825,9 +962,26 @@ def main():
     lg.info(f"loss={args.loss} class_weight={args.class_weight} ema={args.ema} drop_path={args.stochastic_depth}")
 
     # ===== Data =====
-    train_tfm, eval_tfm = build_transforms(args.img_size)
-    full_eval = FilteredImageFolder(args.data_dir, transform=eval_tfm)
-    full_train = FilteredImageFolder(args.data_dir, transform=train_tfm)
+    # obj_id_maps/_meta.json 에서 n_chip_objects 읽기 (G normalization 분모)
+    obj_meta_path = Path(args.obj_id_dir) / "_meta.json"
+    if obj_meta_path.exists():
+        with obj_meta_path.open("r", encoding="utf-8") as f:
+            obj_meta = json.load(f)
+        n_chip_objects = int(obj_meta["n_chip_objects"])
+        chip_classes = obj_meta.get("chip_classes", [])
+        lg.info(f"[obj_id meta] {obj_meta_path}: n_chip_objects={n_chip_objects}, chip_classes={chip_classes}")
+    else:
+        n_chip_objects = 5
+        lg.info(f"[obj_id meta] {obj_meta_path} 없음 — fallback n_chip_objects=5")
+
+    # 3-channel feature pipeline: R=palette_idx/31, G=obj_id/n_chip_objects, B=zero. BICUBIC resize.
+    # Augmentation은 FailObjImageFolder._augment 내부에서 직접 수행 (no HFlip).
+    full_eval  = FailObjImageFolder(args.data_dir, args.obj_id_dir, args.img_size,
+                                     train_aug=False, n_chip_objects=n_chip_objects)
+    full_train = FailObjImageFolder(args.data_dir, args.obj_id_dir, args.img_size,
+                                     train_aug=True, n_chip_objects=n_chip_objects)
+    lg.info(f"obj_id_dir={args.obj_id_dir}")
+    lg.info(f"[ImageFolder class order] {full_eval.classes}")                          # ImageFolder 알파벳 순 검증용 print
     classes = full_eval.classes; num_classes = len(classes)
     lg.info(f"Classes ({num_classes}): {classes}")
     lg.info(f"Total samples (pre-subset): {len(full_eval)}")
@@ -894,6 +1048,22 @@ def main():
 
     # ===== Model =====
     model = build_model(num_classes, drop_path_rate=args.stochastic_depth).to(device)
+    if args.init_from:
+        # TAPT — wafer best 의 backbone weight 로 init (head 는 33-class 재초기화).
+        # ckpt 형태: {"model": state_dict, "classes": [...], "ema_state": {...}, ...}
+        ckpt = torch.load(args.init_from, map_location="cpu")
+        sd_full = ckpt.get("model", ckpt)
+        backbone_sd = {k: v for k, v in sd_full.items() if not k.startswith("head.")}
+        missing, unexpected = model.load_state_dict(backbone_sd, strict=False)
+        # head.* keys missing 은 의도된 것
+        head_missing = [k for k in missing if k.startswith("head.")]
+        backbone_missing = [k for k in missing if not k.startswith("head.")]
+        lg.info(f"[init-from] {args.init_from}")
+        lg.info(f"  loaded {len(backbone_sd)} backbone keys, "
+                f"head re-init={len(head_missing)} keys, "
+                f"backbone missing={len(backbone_missing)}, unexpected={len(unexpected)}")
+        if backbone_missing:
+            lg.info(f"  WARN backbone keys not in init: {backbone_missing[:3]}...")
     if device.type == "cuda":
         model = model.to(memory_format=torch.channels_last)
 
@@ -1096,8 +1266,17 @@ def main():
         except Exception as e:
             lg.info(f"  [guard] rename to ABORTED failed: {e}")
         lg.info(f"[Aborted] reason: {aborted_reason}")
+    metric_source = "test" if 'best_test_res' in dir() else "val"
     lg.info(f"[Metric source] {metric_source}")
     lg.info(f"[Done] outputs: {final_dir.resolve()}")
+
+    # logs_*/ overall/ 자동 갱신 — 같은 logs_root 안에서 val F1 best 면 통째 복사
+    if not aborted_reason:
+        try:
+            update_overall_best(out_root, final_dir, float(final_val_f1), logger=lg)
+        except Exception as e:
+            lg.info(f"[overall] update failed: {e}")
+
     lg.info("===== END =====")
 
 if __name__ == "__main__":

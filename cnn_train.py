@@ -705,6 +705,53 @@ def rename_run_dir(out_dir: Path, model_tag: str, ts: str,
     except Exception:
         return out_dir
 
+
+def update_overall_best(log_root: Path, current_run_dir: Path, current_val_f1: float,
+                        logger=None) -> bool:
+    """log_root/overall/ 에 현재 run 의 val F1 이 그 폴더 내 best 면 통째 복사 교체.
+
+    `<log_root>/overall/_overall_meta.json` 에 best val F1 + run name 저장.
+    첫 실행 시 (overall/ 없음) → 자동 생성.
+    """
+    overall = log_root / "overall"
+    meta_path = overall / "_overall_meta.json"
+    prev_f1 = -1.0; prev_name = None
+    if meta_path.exists():
+        try:
+            with meta_path.open("r", encoding="utf-8") as f:
+                m = json.load(f)
+            prev_f1 = float(m.get("val_f1", -1.0))
+            prev_name = m.get("source_run")
+        except Exception:
+            pass
+
+    log_msg = f"[overall] current val_f1={current_val_f1:.4f} vs prev_best={prev_f1:.4f}"
+    if logger: logger.info(log_msg)
+    else: print(log_msg, flush=True)
+
+    if current_val_f1 <= prev_f1:
+        msg = f"[overall] not improved — keep prev '{prev_name}'"
+        if logger: logger.info(msg)
+        else: print(msg, flush=True)
+        return False
+
+    # 교체
+    if overall.exists():
+        shutil.rmtree(overall)
+    shutil.copytree(current_run_dir, overall)
+    new_meta = {
+        "val_f1": float(current_val_f1),
+        "source_run": current_run_dir.name,
+        "updated_at": datetime.now().strftime("%Y%m%d_%H%M%S"),
+    }
+    with meta_path.open("w", encoding="utf-8") as f:
+        json.dump(new_meta, f, indent=2, ensure_ascii=False)
+    msg = f"[overall] UPDATED — copied {current_run_dir.name} → {overall} (val_f1 {prev_f1:.4f} → {current_val_f1:.4f})"
+    if logger: logger.info(msg)
+    else: print(msg, flush=True)
+    return True
+
+
 # ===================== Path-aware datasets (for pred sample saving) =====================
 class IndexPathSubset(Dataset):
     """Subset wrapper that returns (image, label, path)."""
@@ -783,6 +830,11 @@ def main():
     torch.backends.cudnn.benchmark = True
 
     device = torch.device(a["device"])
+    # log_root 자동 결정 — data_dir 이 classification_chips 면 logs_chip, 아니면 logs_wafer
+    # (--log-root 명시 시 우선)
+    if args.log_root == "log":                                                          # default sentinel
+        log_root_auto = "logs_chip" if "classification_chips" in args.data_dir.replace("\\", "/") else "logs_wafer"
+        args.log_root = log_root_auto
     out_root = Path(args.log_root); out_root.mkdir(parents=True, exist_ok=True)
     # Initial folder name (will rename at end with test F1/recall)
     init_name = f"{args.model_tag}_{RUN_TS}_running"
@@ -799,6 +851,7 @@ def main():
     full_train = FilteredImageFolder(args.data_dir, transform=train_tfm)
     classes = full_eval.classes; num_classes = len(classes)
     lg.info(f"Classes ({num_classes}): {classes}")
+    lg.info(f"[ImageFolder class order] {classes}")                                   # 알파벳 순 매핑 검증용 (chip CNN 학습 시 OBJECT_TYPE_ID 와 정합 확인)
     lg.info(f"Total samples (pre-subset): {len(full_eval)}")
 
     # subset
@@ -1068,6 +1121,14 @@ def main():
     metric_source = "test" if 'best_test_res' in dir() else "val"
     lg.info(f"[Metric source] {metric_source}")
     lg.info(f"[Done] outputs: {final_dir.resolve()}")
+
+    # logs_*/ overall/ 자동 갱신 — 같은 logs_root 안에서 val F1 best 면 통째 복사
+    if not aborted_reason:
+        try:
+            update_overall_best(out_root, final_dir, float(final_val_f1), logger=lg)
+        except Exception as e:
+            lg.info(f"[overall] update failed: {e}")
+
     lg.info("===== END =====")
 
 if __name__ == "__main__":
