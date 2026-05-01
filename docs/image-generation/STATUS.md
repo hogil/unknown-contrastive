@@ -77,3 +77,8 @@ python _verify.py --sample 5
   FTN/QTN hot item은 `b>=200` defect/invalid chip 분포와 맞춰 boost (분석성 보장).
 - 2026-05-01: repo cleanup — `_dist_learn.py`/`_backfill_fq_positions.py`/`_make_cache.py` 삭제,
   `_dist_heatmaps/` (32KB) repo에 포함. fresh clone에서 `_sample_gen.py` 즉시 실행 가능.
+- 2026-05-01: cnn_train.py 출력 통합 — `best_history.txt` (4 sections) + `best_confusion_matrix.png`
+  (test 위/val 아래 combined) 만 유지. eval_summary.json / 개별 val·test report·CM 폐지.
+  매 epoch curves.png + history.json 갱신 (mid-run 종료 시 결과 보존).
+  폴더 rename: `{model_tag}_{YYMMDD_HHMMSS}_{test_f1}_{val_f1}/`.
+- 2026-05-01: `USAGE.md` (repo root) 작성 — image-gen → train → predict 명령어 + 워크플로우 요약.

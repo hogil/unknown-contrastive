@@ -19,12 +19,14 @@ docs/image-generation/ 와 .claude/ 에 기록**되어 있어 새 세션에서 �
 
 2. **프로젝트 컨텍스트** — `MEMORY.md`의 `project_wafer_synthetic_v1.md` 읽기
 
-3. **상세 spec** — `docs/image-generation/`
+3. **명령어 / 워크플로우** — `USAGE.md` (image-gen → train → predict 명령어 + 옵션 + 출력 구조)
+
+4. **상세 spec** — `docs/image-generation/`
    - `README.md` (인덱스), `SPEC.md`, `PIPELINE.md`, `CLASSES.md`, `OUTPUT.md`
 
-4. **사용자 피드백 누적** — `.claude/skills/pixel-design/SKILL.md` v1~v13 history 표
+5. **사용자 피드백 누적** — `.claude/skills/pixel-design/SKILL.md` v1~v13 history 표
 
-5. **현재 진행 상태** — `docs/image-generation/STATUS.md` (background 작업 등)
+6. **현재 진행 상태** — `docs/image-generation/STATUS.md` (background 작업 등)
 
 ## 주요 스크립트
 
@@ -114,12 +116,21 @@ python cnn_predict.py --model log/<run>/best_model.pth --input <dir> --threshold
 python cnn_predict.py --model log/<run>/best_model.pth --input val_dir --threshold-sweep 0.1,0.9,0.05
 ```
 
-출력 컨벤션: `log/{model_tag}_{YYYYMMDD_HHMMSS}_F{f1:.2f}_R{recall:.2f}/`
-- `best_model.pth` (state_dict + classes + ema_state)
-- `hparams.yaml`, `history.json`, `eval_summary.json`
-- `val_per_class_report.txt`, `test_per_class_report.txt`
-- `best_confusion_matrix_val.png`, `best_confusion_matrix_test.png`
-- `curves.png`
+출력 컨벤션: `log/{model_tag}_{YYMMDD_HHMMSS}_{test_f1:.2f}_{val_f1:.2f}/` (3-way),
+또는 `log/{model_tag}_{YYMMDD_HHMMSS}_{val_f1:.2f}/` (`--train-val-only`).
+default `model_tag` = backbone short name (`convnextv2_base`).
+
+산출:
+- `best_model.pth` (state_dict + classes + ema_state + test/val metrics)
+- `best_history.txt` — 통합 결과 (4 sections: BEST OVERALL, FINAL per-class, BEST UPDATES SUMMARY, PER-EPOCH PER-CLASS)
+- `best_confusion_matrix.png` — combined (test 위 + val 아래, 셀 숫자 annotation)
+- `curves.png` (매 epoch 갱신)
+- `history.json` (매 epoch 갱신)
+- `hparams.{yaml,txt}`, `run.log`
+- `wrong/{val,test}/<true>/<pred>/*.png`
+
+폐지: `eval_summary.json`, `val_per_class_report.txt`, `test_per_class_report.txt`,
+`best_confusion_matrix_{val,test}.png` — 모두 `best_history.txt` + 통합 PNG에 흡수.
 
 도메인-safe augmentation (cnn_train.py::build_transforms):
 - ✅ HFlip, ±15° rotation, 작은 translate/scale, Gaussian noise
