@@ -1,0 +1,12 @@
+# Size ablation — 33 class × 50 sample = 1650 → train/val/test 0.8/0.1/0.1 → train 1320 / val 165 / test 165
+# best val F1 update 시 test도 자동 predict해서 test_per_class_report.txt, best_confusion_matrix_test.png,
+# eval_summary.json["test"] 갱신 (cnn_train.py:821, 850-854, 866-870 기존 로직).
+# 사용:
+#   python cnn_train.py --epochs 30 --subset-config experiments/ablation_size_n50.yaml \
+#       --img-size 384 --batch 16 --model-tag sz384_n50
+#   python cnn_train.py --epochs 30 --subset-config experiments/ablation_size_n50.yaml \
+#       --img-size 512 --batch 8  --model-tag sz512_n50
+#   python cnn_train.py --epochs 30 --subset-config experiments/ablation_size_n50.yaml \
+#       --img-size 1024 --batch 2 --model-tag sz1024_n50
+classes:
+  default: 50

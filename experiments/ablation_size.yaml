@@ -1,0 +1,5 @@
+# Ablation: 입력 사이즈 효과 (384 vs 512 vs 1024 BICUBIC cache)
+# 33 class × 20 sample = 660 → split 0.8/0.1/0.1 → train 528 / val 66 / test 66
+# 사용: python cnn_train.py --subset-config experiments/ablation_size.yaml ...
+classes:
+  default: 20

@@ -1,0 +1,11 @@
+# Imbalance simulation — minor 3 class를 30 샘플로 줄임. class_weight A/B 비교용.
+# 사용:
+#   python cnn_train.py --epochs 30 --subset-config experiments/imbalance_minor3.yaml \
+#       --model-tag imbal_eff_cw --class-weight effective
+#   python cnn_train.py --epochs 30 --subset-config experiments/imbalance_minor3.yaml \
+#       --model-tag imbal_no_cw --class-weight none
+classes:
+  Donut_scratch: 30
+  Edge-Bottom_scratch: 30
+  Loc_invalid_main: 50
+  default: 200

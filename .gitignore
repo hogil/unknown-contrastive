@@ -1,0 +1,26 @@
+# ===== large or per-run output (절대 commit 금지, 절대 삭제 금지) =====
+log/
+models/
+_dist_heatmaps/
+_resize_compare/
+_resize_compare1024/
+_resize_compare4/
+_resize_compare512/
+
+# ===== python =====
+__pycache__/
+*.pyc
+*.pyo
+
+# ===== local-only / sensitive =====
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+real.png
+
+# ===== editor / OS =====
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

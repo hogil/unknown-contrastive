@@ -1,0 +1,5 @@
+# Quick smoke test — 33 class × 20 sample = 660 (2 epoch ~3-5분)
+# 사용:
+#   python cnn_train.py --epochs 2 --subset-config experiments/quick.yaml --batch 8 --model-tag smoke
+classes:
+  default: 20
