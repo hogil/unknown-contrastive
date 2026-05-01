@@ -75,8 +75,8 @@ python _verify.py --sample 5
 - 2026-05-01: 생성 완료. 7200/7200 ok=7200 fail=0, 32.5분 소요, rate ~3.7/s. 검증 sample N=5 모두 OK. 디스크: 72GB PNG + 931MB JSON.
 - 2026-05-01: positions JSON에 synthetic `partid`/`part_id`/`pgm` + FTN/QTN 추가. `_fq_metadata.py` 도입.
   FTN/QTN hot item은 `b>=200` defect/invalid chip 분포와 맞춰 boost (분석성 보장).
-- 2026-05-01: repo cleanup — `_dist_learn.py`/`_backfill_fq_positions.py`/`_make_cache.py` 삭제,
-  `_dist_heatmaps/` (32KB) repo에 포함. fresh clone에서 `_sample_gen.py` 즉시 실행 가능.
+- 2026-05-01: repo cleanup — `_dist_learn.py`/`_backfill_fq_positions.py`/`_make_cache.py` 삭제.
+  `_dist_heatmaps/` 는 gitignored (로컬 보존, 다른 환경에서 generation 시 복사 또는 history 참고).
 - 2026-05-01: cnn_train.py 출력 통합 — `best_history.txt` (4 sections) + `best_confusion_matrix.png`
   (test 위/val 아래 combined) 만 유지. eval_summary.json / 개별 val·test report·CM 폐지.
   매 epoch curves.png + history.json 갱신 (mid-run 종료 시 결과 보존).

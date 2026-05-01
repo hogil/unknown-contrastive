@@ -20,7 +20,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 ## 사전 조건
 
 - WM-811K cca/* 8 클래스 원본 존재 (`D:/project/data/wm-811k/cca/`)
-- `_dist_heatmaps/` 학습 완료 (repo에 포함됨)
+- `_dist_heatmaps/` 학습 완료 (gitignored — 로컬 폴더 존재 필수)
 
 ## 설계 변경 단계
 

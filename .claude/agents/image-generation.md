@@ -21,7 +21,7 @@ tools: Read, Write, Edit, Bash, Grep, Glob
 ## 사전 조건
 
 - `_dist_heatmaps/Center_p_wafer_32.npy` 등 7개 클래스 heatmap 존재
-- repo의 `_dist_heatmaps/`에 8 클래스 heatmap이 포함됨 (fresh clone 후에도 즉시 generation 가능)
+- `_dist_heatmaps/<Class>_p_defect_32.npy` 8 클래스 존재해야 함 (gitignored — 없으면 별도 복사 또는 git history `441c532` 이전 `_dist_learn.py` 로 재학습)
 - `D:/project/data/wm-811k/cca/<Class>/` 원본 존재 (학습용)
 
 ## 실행 단계

@@ -6,9 +6,8 @@
 ## Pre-requisite: WM-811K 분포 heatmap
 
 `_dist_heatmaps/<Class>_p_defect_32.npy` 8개 (Center/Donut/Edge-Loc/Edge-Ring/
-Loc/Near-full/Random + meta) 가 repo에 포함되어 있으므로 fresh clone에서도
-별도 학습 불필요. 학습 절차 자체는 다음 단계로 1회 수행되었다 (재학습 필요
-시 git history `441c532` 이전의 `_dist_learn.py` 참고):
+Loc/Near-full/Random + meta) 는 gitignored 로컬 산출물. 학습 절차는 다음 단계로
+1회 수행됐고 (재학습 시 git history `441c532` 이전의 `_dist_learn.py` 참고):
 
 각 클래스(Center/Donut/Edge-Loc/Edge-Ring/Loc/Near-full/Random)별:
 1. PNG 로드 (224×224 RGBA, 값 = {0=outside, 128=normal, 255=defect})

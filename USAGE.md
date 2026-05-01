@@ -31,7 +31,9 @@
 python download_backbone.py
 ```
 
-heatmap (`_dist_heatmaps/`) 은 repo 에 포함돼 있어 별도 작업 불필요.
+heatmap (`_dist_heatmaps/`) 은 **repo에 포함되지 않음 (gitignored)**. generation을
+이 환경 외에서도 돌리려면 `_dist_heatmaps/` 폴더를 직접 복사하거나, git history
+`441c532` 이전 `_dist_learn.py` 를 가져와 WM-811K `cca/<class>/*.png` 에서 재학습.
 
 ---
 

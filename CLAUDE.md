@@ -36,7 +36,7 @@ docs/image-generation/ 와 .claude/ 에 기록**되어 있어 새 세션에서 �
 | `_sample_gen_gpu.py` | GPU 가속 generator (single-proc + ThreadPool) |
 | `_fq_metadata.py` | synthetic `partid`/`part_id`/`pgm` + FTN/QTN key/value 생성 |
 | `_verify.py` | 데이터셋 검증 (filename/PNG/JSON 스키마/분포 sanity) |
-| `_dist_heatmaps/` | WM-811K cca/* 학습된 heatmap 8 클래스 (.npy + .png, repo 포함) |
+| `_dist_heatmaps/` | WM-811K cca/* 학습된 heatmap 8 클래스 (.npy + .png, **gitignored**, 로컬 1회성). 다른 환경에서 generation 필요시 별도 복사 또는 git history `441c532` 이전 `_dist_learn.py`로 재학습 |
 
 ## 출력 위치
 

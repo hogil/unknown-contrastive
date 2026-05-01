@@ -15,7 +15,7 @@
 | `_sample_gen.py` (repo root) | 합성 generator (실행 가능, FTN/QTN 자동 포함) |
 | `_sample_gen_gpu.py` (repo root) | GPU 가속 generator (single-proc + ThreadPool) |
 | `_fq_metadata.py` (repo root) | synthetic `partid`/`part_id`/`pgm` + FTN/QTN 생성 규칙 |
-| `_dist_heatmaps/` (repo root) | WM-811K cca/* 학습된 heatmap 8 클래스 (.npy + .png, repo 포함) |
+| `_dist_heatmaps/` (repo root) | WM-811K cca/* 학습된 heatmap 8 클래스 (.npy + .png) — **gitignored**, 로컬에만 |
 | `_verify.py` (repo root) | 데이터셋 검증 (filename/PNG/JSON/분포 sanity) |
 
 ## 핵심 아이디어
@@ -65,7 +65,8 @@ python _sample_gen_gpu.py --n 200 --save-workers 8
 python _verify.py --sample 5
 ```
 
-heatmap (`_dist_heatmaps/`)은 repo에 포함되므로 별도 학습 불필요.
+heatmap (`_dist_heatmaps/`)은 gitignored. generation 환경에 폴더가 없으면 직접
+복사하거나 git history `441c532` 이전 `_dist_learn.py` 로 재학습.
 
 ## 외부 참조 (필독)
 

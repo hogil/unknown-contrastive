@@ -35,8 +35,9 @@ description: WM-811K 분포 + chip object 5종을 합성해 36 클래스 wafer f
 ## 사전 조건
 
 1. WM-811K heatmap: `_dist_heatmaps/<Class>_p_defect_32.npy` 8개 클래스
-   (repo에 포함됨, fresh clone에서도 즉시 사용 가능). Thick-Edge는 heatmap
-   불필요, 코드에서 직접 계산.
+   (gitignored 로컬 산출물 — fresh clone에는 없음. 다른 환경에서 generation
+   하려면 폴더 복사 또는 git history `441c532` 이전 `_dist_learn.py` 로 재학습).
+   Thick-Edge는 heatmap 불필요, 코드에서 직접 계산.
 2. WM-811K 원본: `D:/project/data/wm-811k/cca/<Class>/*.png` 존재
 3. 출력 폴더 쓰기 권한
 
