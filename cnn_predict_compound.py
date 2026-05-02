@@ -376,7 +376,8 @@ def main():
         if len(results) > 10:
             print(f"... ({len(results) - 10} more) — use --output to save full", file=sys.stderr)
 
-    # === Output CSV (wide table: basename split + JSON meta + pred + prob_<class>) ===
+    # === Output CSV (wide meta + single pred row per input) ===
+    # NOTE: per-class probability columns intentionally NOT emitted (multi-label은 row 여러 개로).
     csv_path = None
     if args.output:
         csv_path = Path(args.output).with_suffix(".csv")
@@ -392,17 +393,14 @@ def main():
             cols += ["pred_class", "pred_idx", "max_prob", "is_normal", "is_pseudo", "obj_id_npy"]
             if has_labels:
                 cols += ["true_class", "true_idx", "correct"]
-            cols += [f"prob_{c}" for c in classes]
             w.writerow(cols)
             for rec in results:
                 pth = Path(rec["path"])
                 basename = pth.stem
                 row = [rec["path"], basename]
-                # basename split
                 parts = basename.split("_")
                 for i, name in enumerate(bn_schema):
                     row.append(parts[i] if i < len(parts) else "")
-                # sibling JSON read
                 jdoc = {}
                 if json_root is not None and json_fields:
                     cls_dir = pth.parent.name
@@ -416,7 +414,6 @@ def main():
                     v = jdoc.get(fld, "")
                     if isinstance(v, (list, dict)): v = ""
                     row.append(v)
-                # pred metadata
                 row += [
                     rec["pred_class"],
                     rec["pred_idx"],
@@ -432,7 +429,6 @@ def main():
                         ti,
                         int(ti == rec["pred_idx"]) if ti >= 0 else "",
                     ]
-                row += [f"{rec['probs'][c]:.6f}" for c in classes]
                 w.writerow(row)
         print(f"[*] preds.csv saved -> {csv_path}  ({len(results)} rows)", file=sys.stderr)
 

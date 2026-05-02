@@ -253,8 +253,8 @@ def process_batch(product: str, line: str, date: str, leaf: Path,
                     logits = model(tens)
                 probs = F.softmax(logits, dim=-1)
                 confs, preds = probs.max(dim=-1)
-                probs_np = probs.cpu().numpy()
                 preds = preds.cpu().numpy(); confs = confs.cpu().numpy()
+                # multi-label은 row 여러 개로 표현 — prob_<class> 와이드 dummy 컬럼 X
                 for k, c in enumerate(batch_chips):
                     pi = int(preds[k]); mp = float(confs[k])
                     is_normal = int(threshold is not None and mp < threshold)
@@ -275,8 +275,6 @@ def process_batch(product: str, line: str, date: str, leaf: Path,
                     row["chip_object_class_idx"] = pi
                     row["max_prob"] = mp
                     row["is_normal"] = is_normal
-                    for j, cls_name in enumerate(classes):
-                        row[f"prob_{cls_name}"] = float(probs_np[k, j])
                     rows.append(row)
                     n_chip_processed += 1
 

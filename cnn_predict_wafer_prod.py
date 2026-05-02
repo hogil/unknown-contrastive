@@ -237,8 +237,10 @@ def process_batch(product: str, line: str, date: str, leaf: Path,
                 logits = model(xb)
             probs = F.softmax(logits, dim=1)
             confs, preds = probs.max(dim=1)
-            probs_np = probs.cpu().numpy()
             preds = preds.cpu().numpy(); confs = confs.cpu().numpy()
+            # NOTE: per-class probability columns (prob_<class>) intentionally NOT emitted —
+            # multi-label use case will be handled by emitting multiple rows per input,
+            # not by one-hot/dummy-variable wide columns. One row = one prediction.
             for i, p_str in enumerate(pb):
                 pi = int(preds[i]); mp = float(confs[i])
                 is_normal = int(threshold is not None and mp < threshold)
@@ -257,8 +259,6 @@ def process_batch(product: str, line: str, date: str, leaf: Path,
                 row["wafer_class_idx"] = pi
                 row["max_prob"] = float(mp)
                 row["is_normal"] = is_normal
-                for k, c in enumerate(classes):
-                    row[f"prob_{c}"] = float(probs_np[i, k])
                 rows.append(row)
 
     # write parquet (and optional csv)

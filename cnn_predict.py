@@ -339,7 +339,10 @@ def main(default_model_glob: Optional[str] = None,
         if len(results) > 10:
             print(f"... ({len(results) - 10} more) — use --output to save full", file=sys.stderr)
 
-    # === Output CSV (wide table: meta cols + prob_<class> cols, one row per input) ===
+    # === Output CSV (wide table: meta + pred result; one row per input) ===
+    # NOTE: per-class probability columns intentionally NOT emitted —
+    # multi-label use case will be expressed by emitting multiple rows per input,
+    # not by one-hot/dummy-variable wide columns.
     if args.output:
         csv_path = Path(args.output).with_suffix(".csv")
     elif run_dir is not None:
@@ -347,7 +350,6 @@ def main(default_model_glob: Optional[str] = None,
     else:
         csv_path = None
     if csv_path is not None:
-        # basename split + sibling JSON read for richer metadata
         bn_schema = default_basename_schema or []
         json_root = Path(default_json_root) if default_json_root else None
         json_fields = default_json_fields or []
@@ -359,17 +361,14 @@ def main(default_model_glob: Optional[str] = None,
             cols += ["pred_class", "pred_idx", "max_prob", "is_normal", "is_pseudo"]
             if has_labels:
                 cols += ["true_class", "true_idx", "correct"]
-            cols += [f"prob_{c}" for c in classes]
             w.writerow(cols)
             for rec in results:
                 pth = Path(rec["path"])
                 basename = pth.stem
                 row = [rec["path"], basename]
-                # basename split
                 parts = basename.split("_")
                 for i, name in enumerate(bn_schema):
                     row.append(parts[i] if i < len(parts) else "")
-                # JSON sibling read (wafer/compound only, json_root given)
                 jdoc = {}
                 if json_root is not None and json_fields:
                     cls_dir = pth.parent.name
@@ -384,7 +383,6 @@ def main(default_model_glob: Optional[str] = None,
                     if isinstance(v, (list, dict)):
                         v = ""
                     row.append(v)
-                # pred metadata
                 row += [
                     rec["pred_class"],
                     rec["pred_idx"],
@@ -399,7 +397,6 @@ def main(default_model_glob: Optional[str] = None,
                         ti,
                         int(ti == rec["pred_idx"]) if ti >= 0 else "",
                     ]
-                row += [f"{rec['probs'][c]:.6f}" for c in classes]
                 w.writerow(row)
         print(f"[*] preds.csv saved -> {csv_path}  ({len(results)} rows)", file=sys.stderr)
 

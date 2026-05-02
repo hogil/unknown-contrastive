@@ -333,7 +333,6 @@ def process_batch(product: str, line: str, date: str, leaf: Path,
                 logits = compound_model(x)
             probs = F.softmax(logits, dim=-1)
             confs, preds = probs.max(dim=-1)
-            probs_np = probs.cpu().numpy()
             preds = preds.cpu().numpy(); confs = confs.cpu().numpy()
         for i, meta in enumerate(pending_meta):
             wafer_pi = int(preds[i]); wafer_mp = float(confs[i])
@@ -366,8 +365,7 @@ def process_batch(product: str, line: str, date: str, leaf: Path,
                 row["wafer_is_normal"] = wafer_is_normal
                 row["chip_object_class"] = chip_obj_class
                 row["chip_object_class_id"] = chip_obj_id
-                for j, cls_name in enumerate(compound_classes):
-                    row[f"prob_{cls_name}"] = float(probs_np[i, j])
+                # multi-label은 row 여러 개로 표현 — prob_<class> 와이드 dummy 컬럼 X
                 rows.append(row)
                 n_chip_processed += 1
             n_wafer_processed += 1
