@@ -53,7 +53,7 @@ NONE_ID = 0
 MIN_DEFECT_BIN = 200
 
 CSV_HEADER = ["prefix","kind","w_idx","date","time","yld","syp","tester","device",
-              "x_abs","y_abs","b","wafer_class","obj_id","obj_label"]
+              "x_abs","y_abs","b","wafer_class","obj_id","obj_label","confidence","is_pseudo"]
 
 
 # ---------- color palette for PNG visualization (obj_id 0..N) ----------
@@ -214,7 +214,23 @@ def main() -> int:
     ap.add_argument("--no-png", dest="save_png", action="store_false",
                     help="PNG 시각화 비활성화 (.npy + CSV 만)")
     ap.add_argument("--csv-path", default=None, help="predictions.csv 경로 (default: <out-root>/predictions.csv)")
+    # ----- pseudo-label (opt-in) -----
+    ap.add_argument("--pseudo-label-threshold", type=float, default=None,
+                    help="confidence(softmax max) ≥ threshold 인 chip crop 을 "
+                         "<--pseudo-label-out>/<pred_class>/<wafer_key>_X<gx>_Y<gy>_B<b><suffix>.png 로 저장. "
+                         "default None = 비활성. 권장 0.95+")
+    ap.add_argument("--pseudo-label-out",
+                    default="D:/project/data/wm-811k/classification_chips",
+                    help="pseudo crop 저장 root (default: chip 학습 데이터 root)")
+    ap.add_argument("--pseudo-label-suffix", default="_PSEUDO",
+                    help="pseudo crop 파일명 suffix (default _PSEUDO)")
+    ap.add_argument("--pseudo-label-cap-per-class", type=int, default=None,
+                    help="class 당 최대 pseudo 개수 (불균형 방지, default None = 무제한)")
     args = ap.parse_args()
+    use_pseudo = (args.pseudo_label_threshold is not None)
+    pseudo_root = Path(args.pseudo_label_out) if use_pseudo else None
+    pseudo_suffix = args.pseudo_label_suffix
+    pseudo_cap = args.pseudo_label_cap_per_class
 
     matches = sorted(glob.glob(args.chip_model))
     if not matches:
@@ -271,6 +287,11 @@ def main() -> int:
 
     use_amp = (device.type == "cuda")
     counts_by_label: Dict[str, int] = {lbl: 0 for lbl in obj_id_to_label}
+    pseudo_count: Dict[str, int] = {cls: 0 for cls in classes}                          # per chip CNN class
+    if use_pseudo:
+        print(f"[pseudo-label] threshold={args.pseudo_label_threshold:.3f} "
+              f"out={pseudo_root} suffix={pseudo_suffix!r} "
+              f"cap_per_class={pseudo_cap}", flush=True)
     t0 = time.time()
     n_done = 0
     last_progress_print = 0
@@ -283,6 +304,8 @@ def main() -> int:
             wafer_class = spec["wafer_class"]
             basename = spec["basename"]
             parts = spec["basename_parts"]
+            # wafer_key = basename without yield/sys (idx 5,6) — chip filename convention
+            wafer_key = "_".join(parts[:5] + parts[7:])
 
             try:
                 img = Image.open(spec["png_path"])
@@ -293,20 +316,40 @@ def main() -> int:
             csv_rows = []
             for i in range(0, len(chips), args.batch):
                 batch_chips = chips[i:i+args.batch]
-                tensors = [tfm(img.crop(c["rect"]).convert("RGB")) for c in batch_chips]
+                # keep PIL crops alongside tensors so pseudo-label can re-save the
+                # same chip as palette-mode PNG without re-cropping.
+                crops_pil = [img.crop(c["rect"]) for c in batch_chips]
+                tensors = [tfm(crop.convert("RGB")) for crop in crops_pil]
                 tens = torch.stack(tensors, dim=0).to(device, non_blocking=True)
                 if use_amp:
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                         logits = model(tens)
                 else:
                     logits = model(tens)
-                preds = logits.argmax(dim=-1).cpu().numpy()
-                for c, p in zip(batch_chips, preds):
+                probs = torch.softmax(logits.float(), dim=-1)
+                confs, preds = probs.max(dim=-1)
+                preds = preds.cpu().numpy(); confs = confs.cpu().numpy()
+                for c, p, cf, crop_pil in zip(batch_chips, preds, confs, crops_pil):
                     oid = int(class_idx_to_obj_id[int(p)])
                     obj_map[c["gy"], c["gx"]] = oid
                     obj_label = obj_id_to_label[oid]
                     counts_by_label[obj_label] += 1
-                    csv_rows.append((*parts, c["gx"], c["gy"], c["b"], wafer_class, oid, obj_label))
+                    is_pseudo = 0
+                    # pseudo-label save (opt-in)
+                    if use_pseudo and float(cf) >= args.pseudo_label_threshold:
+                        pred_class_name = classes[int(p)]
+                        if pseudo_cap is None or pseudo_count[pred_class_name] < pseudo_cap:
+                            try:
+                                pdir = pseudo_root / pred_class_name
+                                pdir.mkdir(parents=True, exist_ok=True)
+                                pname = f"{wafer_key}_X{c['gx']}_Y{c['gy']}_B{c['b']}{pseudo_suffix}.png"
+                                crop_pil.save(pdir / pname)
+                                pseudo_count[pred_class_name] += 1
+                                is_pseudo = 1
+                            except Exception as e:
+                                print(f"[pseudo-err] {pname}: {e}", flush=True)
+                    csv_rows.append((*parts, c["gx"], c["gy"], c["b"], wafer_class,
+                                     oid, obj_label, f"{float(cf):.4f}", is_pseudo))
                 n_done += len(batch_chips)
                 if n_done - last_progress_print >= max(args.batch * 50, 6400):
                     rate = n_done / max(0.1, time.time() - t0)
@@ -333,6 +376,8 @@ def main() -> int:
 
     print(f"[predict] done in {(time.time() - t0):.1f}s", flush=True)
     print(f"[counts_by_label] {counts_by_label}", flush=True)
+    if use_pseudo:
+        print(f"[pseudo-label] saved: {pseudo_count}", flush=True)
 
     meta_path = out_root / "_meta.json"
     meta = {

@@ -161,14 +161,18 @@ def _make_predict_run_dir(default_predict_root: Optional[str], input_path: str) 
 def main(default_model_glob: Optional[str] = None,
          default_input: Optional[str] = None,
          default_predict_root: Optional[str] = None,
+         default_pseudo_label_out: Optional[str] = None,
          kind_label: Optional[str] = None):
     """Engine entry. Called directly (cnn_predict.py CLI) or via thin wrappers
     (cnn_predict_chip.py / cnn_predict_wafer.py) that pre-set defaults via kwargs.
 
-    default_model_glob   : e.g. 'logs_chip/overall/best_model.pth'
-    default_input        : e.g. 'D:/project/data/wm-811k/classification_chips'
-    default_predict_root : e.g. 'logs_predict_chip' — auto-creates <root>/<TS>_<input_name>/
-                           and routes default --output, --report-out, --save-wrong-out into it
+    default_model_glob       : e.g. 'logs_chip/overall/best_model.pth'
+    default_input            : e.g. 'D:/project/data/wm-811k/classification_chips'
+    default_predict_root     : e.g. 'logs_predict_chip' — auto-creates <root>/<TS>_<input_name>/
+                               and routes default --output, --report-out, --save-wrong-out into it
+    default_pseudo_label_out : e.g. 'D:/project/data/wm-811k/classification_chips' — when
+                               --pseudo-label-threshold is set, copy high-conf inputs into
+                               <out>/<pred_class>/<basename>_PSEUDO.png. None = pseudo always off.
     """
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=(default_model_glob is None), default=None,
@@ -193,6 +197,17 @@ def main(default_model_glob: Optional[str] = None,
                     help=f"logs_predict_<kind> root for auto run dir (default: {default_predict_root or '— off'})")
     ap.add_argument("--no-run-dir", action="store_true",
                     help="--predict-root 무시, 자동 run dir 생성 안 함")
+    # ----- pseudo-label (opt-in) -----
+    ap.add_argument("--pseudo-label-threshold", type=float, default=None,
+                    help="max_prob ≥ threshold + not Normal 인 input 을 "
+                         "<--pseudo-label-out>/<pred_class>/<basename><suffix>.<ext> 로 복사. "
+                         "default None = 비활성. 권장 0.95+")
+    ap.add_argument("--pseudo-label-out", default=default_pseudo_label_out,
+                    help=f"pseudo crop 저장 root (default: {default_pseudo_label_out or '— required when threshold set'})")
+    ap.add_argument("--pseudo-label-suffix", default="_PSEUDO",
+                    help="pseudo 파일명 suffix (default _PSEUDO)")
+    ap.add_argument("--pseudo-label-cap-per-class", type=int, default=None,
+                    help="class 당 최대 pseudo 개수 (default None = 무제한)")
     args = ap.parse_args()
 
     if args.model is None:
@@ -255,6 +270,19 @@ def main(default_model_glob: Optional[str] = None,
     ld = DataLoader(ds, batch_size=args.batch, shuffle=False,
                     num_workers=args.workers, pin_memory=(device.type=="cuda"))
 
+    # ----- pseudo-label setup -----
+    use_pseudo = (args.pseudo_label_threshold is not None)
+    if use_pseudo and not args.pseudo_label_out:
+        raise SystemExit("--pseudo-label-threshold given but --pseudo-label-out not set "
+                         "(no engine default for this kind)")
+    pseudo_root = Path(args.pseudo_label_out) if use_pseudo else None
+    pseudo_count = {cls: 0 for cls in classes}
+    if use_pseudo:
+        print(f"[*] pseudo-label: thr={args.pseudo_label_threshold:.3f} "
+              f"out={pseudo_root} suffix={args.pseudo_label_suffix!r} "
+              f"cap_per_class={args.pseudo_label_cap_per_class}", file=sys.stderr)
+
+    import shutil as _shutil_psd
     results = []
     all_preds = []; all_labels = []; all_max_probs = []
     with torch.no_grad():
@@ -274,12 +302,29 @@ def main(default_model_glob: Optional[str] = None,
                     "is_normal": bool(is_normal),
                     "probs": {classes[k]: float(probs_np[i, k]) for k in range(len(classes))},
                 }
+                # pseudo-label: high-conf, non-normal, under cap
+                rec["is_pseudo"] = False
+                if (use_pseudo and not is_normal and mp >= args.pseudo_label_threshold
+                        and (args.pseudo_label_cap_per_class is None
+                             or pseudo_count[pcls] < args.pseudo_label_cap_per_class)):
+                    src = Path(pb[i])
+                    pdir = pseudo_root / pcls
+                    pdir.mkdir(parents=True, exist_ok=True)
+                    pname = src.stem + args.pseudo_label_suffix + src.suffix
+                    try:
+                        _shutil_psd.copy2(src, pdir / pname)
+                        pseudo_count[pcls] += 1
+                        rec["is_pseudo"] = True
+                    except Exception as e:
+                        print(f"[pseudo-err] {pname}: {e}", file=sys.stderr)
                 if has_labels:
                     rec["true_idx"] = int(lb[i])
                     rec["true_class"] = classes[int(lb[i])] if int(lb[i]) >= 0 else None
                 results.append(rec)
                 all_preds.append(pi); all_max_probs.append(mp)
                 if has_labels: all_labels.append(int(lb[i]))
+    if use_pseudo:
+        print(f"[*] pseudo saved: {pseudo_count}", file=sys.stderr)
 
     # === Output JSON ===
     if args.output:

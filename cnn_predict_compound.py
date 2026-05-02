@@ -23,12 +23,13 @@ obj_id .npy lookup: --obj-id-root 아래 모든 .npy 를 flat basename → path 
 (서브폴더 구조 무관: <wafer_class>/, <device>_<date>/ 등 어떤 layout 도 호환).
 """
 # ===================== CONFIG =====================
-DEFAULT_MODEL_GLOB   = "logs_compound/overall/best_model.pth"
-DEFAULT_INPUT        = "D:/project/data/wm-811k/unknown"
-DEFAULT_OBJ_ID_ROOT  = "D:/project/data/wm-811k/obj_id_maps"
-DEFAULT_PREDICT_ROOT = "logs_predict_compound"
-KIND_LABEL           = "compound"
-PALETTE_IDX_NORM     = 31  # palette idx 31 = invalid_fill — sample_gen 도메인 spec, 고정
+DEFAULT_MODEL_GLOB         = "logs_compound/overall/best_model.pth"
+DEFAULT_INPUT              = "D:/project/data/wm-811k/unknown"
+DEFAULT_OBJ_ID_ROOT        = "D:/project/data/wm-811k/obj_id_maps"
+DEFAULT_PREDICT_ROOT       = "logs_predict_compound"
+DEFAULT_PSEUDO_LABEL_OUT   = "D:/project/data/wm-811k/unknown"  # pseudo wafer 저장 root (옵션 켜야 활성)
+KIND_LABEL                 = "compound"
+PALETTE_IDX_NORM           = 31  # palette idx 31 = invalid_fill — sample_gen 도메인 spec, 고정
 # ==================================================
 
 import os, sys, json, argparse, glob, time
@@ -224,6 +225,17 @@ def main():
     ap.add_argument("--device", default=None)
     ap.add_argument("--save-wrong-out", default=None,
                     help="wrong tree DIR (default: <run_dir>/wrong)")
+    # ----- pseudo-label (opt-in) -----
+    ap.add_argument("--pseudo-label-threshold", type=float, default=None,
+                    help="max_prob ≥ threshold + not Normal 인 wafer 를 "
+                         "<--pseudo-label-out>/<pred_class>/<basename><suffix>.<ext> 로 복사. "
+                         "default None = 비활성. 권장 0.95+")
+    ap.add_argument("--pseudo-label-out", default=DEFAULT_PSEUDO_LABEL_OUT,
+                    help=f"pseudo wafer 저장 root (default: {DEFAULT_PSEUDO_LABEL_OUT})")
+    ap.add_argument("--pseudo-label-suffix", default="_PSEUDO",
+                    help="pseudo 파일명 suffix (default _PSEUDO)")
+    ap.add_argument("--pseudo-label-cap-per-class", type=int, default=None,
+                    help="class 당 최대 pseudo 개수 (default None = 무제한)")
     args = ap.parse_args()
 
     if args.model is None:
@@ -294,6 +306,18 @@ def main():
     ld = DataLoader(ds, batch_size=args.batch, shuffle=False,
                     num_workers=args.workers, pin_memory=(device.type == "cuda"))
 
+    # ----- pseudo-label setup -----
+    use_pseudo = (args.pseudo_label_threshold is not None)
+    if use_pseudo and not args.pseudo_label_out:
+        raise SystemExit("--pseudo-label-threshold given but --pseudo-label-out not set")
+    pseudo_root = Path(args.pseudo_label_out) if use_pseudo else None
+    pseudo_count = {cls: 0 for cls in classes}
+    if use_pseudo:
+        print(f"[*] pseudo-label: thr={args.pseudo_label_threshold:.3f} "
+              f"out={pseudo_root} suffix={args.pseudo_label_suffix!r} "
+              f"cap_per_class={args.pseudo_label_cap_per_class}", file=sys.stderr)
+    import shutil as _shutil_psd
+
     results: List[dict] = []
     all_preds: List[int] = []; all_labels: List[int] = []; all_max_probs: List[float] = []
 
@@ -315,12 +339,28 @@ def main():
                     "probs": {classes[k]: float(probs_np[i, k]) for k in range(len(classes))},
                     "obj_id_npy": str(npy_map[Path(pb[i]).stem]) if Path(pb[i]).stem in npy_map else None,
                 }
+                rec["is_pseudo"] = False
+                if (use_pseudo and not is_normal and mp >= args.pseudo_label_threshold
+                        and (args.pseudo_label_cap_per_class is None
+                             or pseudo_count[pcls] < args.pseudo_label_cap_per_class)):
+                    src = Path(pb[i])
+                    pdir = pseudo_root / pcls
+                    pdir.mkdir(parents=True, exist_ok=True)
+                    pname = src.stem + args.pseudo_label_suffix + src.suffix
+                    try:
+                        _shutil_psd.copy2(src, pdir / pname)
+                        pseudo_count[pcls] += 1
+                        rec["is_pseudo"] = True
+                    except Exception as e:
+                        print(f"[pseudo-err] {pname}: {e}", file=sys.stderr)
                 if has_labels:
                     rec["true_idx"] = int(lb[i])
                     rec["true_class"] = classes[int(lb[i])] if int(lb[i]) >= 0 else None
                 results.append(rec)
                 all_preds.append(pi); all_max_probs.append(mp)
                 if has_labels: all_labels.append(int(lb[i]))
+    if use_pseudo:
+        print(f"[*] pseudo saved: {pseudo_count}", file=sys.stderr)
 
     # === Output JSON ===
     if args.output:

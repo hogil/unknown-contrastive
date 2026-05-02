@@ -4,80 +4,172 @@
 
 ---
 
-## 1. 파이프라인 개요
+## 1. 파이프라인 한 눈에
 
 ```
-┌─────────────────────┐     ┌────────────────────┐     ┌─────────────────────┐
-│ _sample_gen.py      │     │ cnn_train.py       │     │ cnn_predict.py      │
-│ 또는 _sample_gen_gpu│ ──→ │ 33 class supervised│ ──→ │ threshold-based     │
-│                     │     │ ConvNeXtV2 base    │     │ Normal/unknown 분류 │
-│ 6400×6400 palette   │     │ + EMA + class      │     │                     │
-│ PNG + JSON          │     │ weight (effective) │     │ best_model.pth 사용 │
-└─────────────────────┘     └────────────────────┘     └─────────────────────┘
-        │                            │                          │
-        ↓                            ↓                          ↓
-  D:/project/data/             log/<run_dir>/             preds.json
-  wm-811k/unknown/             best_model.pth             per_class_report.txt
-  positions/unknown/           best_history.txt
-                               best_confusion_matrix.png
-                               curves.png
-                               history.json
+┌─────────────────────────┐    ┌──────────────────────────┐    ┌──────────────────────────┐
+│ Stage A: 데이터 합성     │    │ Stage B: 학습             │    │ Stage C: 추론             │
+│ _sample_gen.py          │ →  │ cnn_train_chip.py         │ →  │ cnn_predict_chip.py       │
+│ _sample_gen_gpu.py      │    │ cnn_train_wafer.py        │    │ cnn_predict_wafer.py      │
+│                         │    │ cnn_train_compound.py     │    │ cnn_predict_compound.py   │
+│ 36-class palette PNG +  │    │                           │    │                          │
+│ positions JSON +        │    │ ConvNeXtV2 base FCMAE     │    │ overall/best_model.pth   │
+│ chip 200x200 crops      │    │ 모두 supervised, EMA+CW   │    │ + threshold + sweep      │
+└─────────────────────────┘    └──────────────────────────┘    └──────────────────────────┘
+                                          ↓ logs_<kind>/<run>/                ↓ logs_predict_<kind>/<TS>/
+                                          best_model.pth                       preds.json
+                                          history.json                         per_class_report.txt
+                                          curves.png                           wrong/<true>/<pred>/*.png
+                                          + overall/ (val F1 best mirror)
 ```
 
 **1회성 사전 단계** (fresh clone 시):
 
 ```bash
-# backbone weight 한번 다운로드 (≈340 MB, models/ 에 mirror)
-python download_backbone.py
+python download_backbone.py     # ConvNeXtV2 FCMAE pretrain (~340 MB → models/)
+python _dist_learn.py           # WM-811K cca/* heatmap (~10s, → _dist_heatmaps/)
 ```
-
-heatmap (`_dist_heatmaps/`) 은 **repo에 포함되지 않음 (gitignored)**. 부재 시
-`python _dist_learn.py` 로 1회 재학습 (WM-811K `cca/<class>/*.png` 입력, ~10초).
-
-**chip-object crop dataset 동시 생성**: `_sample_gen.py` 가 wafer PNG 저장
-직후 chip별 true object 라벨로 200×200 crop을 `D:/project/data/wm-811k/classification_chips/<obj>/`
-에 자동 저장 (chip object 5종 × 폴더). 75% primary + 25% mixed 환경에서도
-chip별 라벨 정확. detail은 `.claude/skills/chip-object-dataset/SKILL.md`.
 
 ---
 
-## 3-Stage Failobj 학습 (advanced)
+## 2. 6 entry script — kind 별 학습 + 추론 (정식 진입점)
 
-기본 `cnn_train.py` (failbit only 단일 채널) 외에, chip 분류기 정보를 추가
-채널로 합쳐서 학습하는 3-stage fusion 파이프라인:
+| 분야 | 학습 entry | 추론 entry | data root | log root | predict root |
+|---|---|---|---|---|---|
+| **chip** 5-class object | `cnn_train_chip.py` | `cnn_predict_chip.py` | `data/wm-811k/classification_chips/` | `logs_chip/` | `logs_predict_chip/<TS>_<input>/` |
+| **wafer** 33-class R-only | `cnn_train_wafer.py` | `cnn_predict_wafer.py` | `data/wm-811k/unknown/` | `logs_wafer/` | `logs_predict_wafer/<TS>_<input>/` |
+| **compound** 33-class R+G | `cnn_train_compound.py` | `cnn_predict_compound.py` | `data/wm-811k/unknown/` + `obj_id_maps/` | `logs_compound/` | `logs_predict_compound/<TS>_<input>/` |
+
+각 wrapper 맨 위 `# === CONFIG ===` 섹션에 default 노출. 명시 인자 (`--data-dir`, `--model`, `--input` 등) 로 override 가능.
+
+**추론 자동 동작 (3 predict wrapper 공통):**
+- `--model` 생략 → `logs_<kind>/overall/best_model.pth` 자동 로드
+- 시작 시 `_overall_meta.json` 의 best_run / val_f1 / seeded_at stderr 출력
+- `logs_predict_<kind>/<TS>_<input_name>/` 폴더 자동 — `preds.json`, `per_class_report.txt`, `wrong/<true>/<pred>/*.png` 자동 배치 (`--no-run-dir` 로 끄기)
+
+---
+
+## 3. 파일 호출 관계 (어떤 entry 가 어떤 `_*` 파일 부르나)
 
 ```
-Stage 1: chip 5-class 분류기                       cnn_train.py --data-dir classification_chips
-Stage 2: chip CNN inference → 32×32 obj_id .npy    _build_obj_id_maps.py
-Stage 3: 3-channel wafer CNN                       cnn_train_failobj.py
-         (R=failbit, G=obj_id BICUBIC normalized, B=zero)
+cnn_train_chip.py         (CONFIG: chip default)
+    └── cnn_train.py      (engine — kwargs main())
+        └── _resource_guard.py   (assess_start, ResourceMonitor)
+
+cnn_train_wafer.py        (CONFIG: wafer default)
+    └── cnn_train.py      (engine, 동일)
+
+cnn_train_compound.py     (독립 — 3채널 dataset 자체 구현)
+    └── _resource_guard.py
+    └── (training 시) data/.../obj_id_maps/*.npy  +  _meta.json (n_chip_objects 분모)
+
+cnn_predict_chip.py       (CONFIG: chip default)
+    └── cnn_predict.py    (engine — kwargs main())
+
+cnn_predict_wafer.py      (CONFIG: wafer default)
+    └── cnn_predict.py    (engine, 동일)
+
+cnn_predict_compound.py   (독립 — 3채널 dataset)
+    └── (predict 시) data/.../obj_id_maps/*.npy  +  _meta.json
+
+_build_obj_id_maps.py     (preprocessing inference: chip CNN → wafer obj_id 맵)
+    └── logs_chip/.../best_model.pth   (학습된 chip 분류기 가중치)
+    └── 출력: data/wm-811k/obj_id_maps/<device>_<date>/<basename>.npy + .png + predictions.csv
+
+_orchestrator_compound_chain.py   (build → compound 학습 chain)
+    └── _orchestrator_resource_guard.py   (sibling watchdog)
+    └── cnn_train_compound.py             (build 끝나면 자동 dispatch)
+
+_sample_gen.py / _sample_gen_gpu.py   (데이터 생성)
+    └── _fq_metadata.py    (FTN/QTN keys / values)
+    └── _dist_heatmaps/    (WM-811K cca/* 학습 heatmap, _dist_learn.py 산출)
+    └── 출력: data/wm-811k/unknown/, classification_chips/, positions/unknown/
 ```
 
-명령어 예:
+→ **사용자가 직접 부르는 건 6 entry + `_sample_gen*` + `_verify.py` + `_build_obj_id_maps.py` 정도**. 나머지 `_*.py` 는 위 entry 가 import 하거나 orchestrator 가 sibling 으로 띄우는 helper.
+
+---
+
+## 4. 3-stage compound 파이프라인
+
+`cnn_train_compound.py` 는 chip 분류기 결과를 G 채널로 합쳐 학습한다. 3 단계:
+
+```
+Stage 1 │ chip 5-class 분류기 학습     │ python cnn_train_chip.py --epochs 30 --model-tag chip5
+        │                              │ → logs_chip/<run>/best_model.pth + overall/
+Stage 2 │ chip CNN inference →         │ python _build_obj_id_maps.py \
+        │ wafer 마다 obj_id .npy 생성  │     --chip-model logs_chip/overall/best_model.pth \
+        │                              │     --batch 128 --device cuda
+        │                              │ → data/wm-811k/obj_id_maps/<device>_<date>/*.npy + predictions.csv
+Stage 3 │ 3-channel compound CNN 학습  │ python cnn_train_compound.py --epochs 30 --model-tag compound33
+        │ R=failbit/31, G=obj_id/N,B=0 │ → logs_compound/<run>/best_model.pth + overall/
+```
+
+`stage3-compound` agent + `_orchestrator_compound_chain.py` 가 Stage 2→3 자동 chain. Stage 2 build 끝나면 chain 이 즉시 cnn_train_compound.py dispatch + run_dir 에 산출물 archive (`predictions.csv`, `obj_id_maps_meta.json`, `counts.txt`, `compound_dispatch.log`).
+
+---
+
+## 5. pseudo-label (opt-in)
+
+high-confidence prediction 결과를 다시 학습 데이터로 추가해서 다음 round 학습 시 self-improvement 시도. **default OFF**, 옵션 줘야 활성.
+
+**작동 원리:**
+1. 추론 시 각 입력의 max softmax prob (= confidence) 계산
+2. confidence ≥ `--pseudo-label-threshold` 이면 (그리고 Normal/unknown 이 아니면)
+3. 예측된 class 폴더에 입력 파일 복사: `<out>/<pred_class>/<basename><suffix>.<ext>`
+4. `<suffix>` 는 default `_PSEUDO` — 원본 학습 데이터와 grep 으로 구분 가능
+5. `--pseudo-label-cap-per-class N` 으로 class 당 최대 개수 제한 (불균형 방지)
+
+**3개 entry 에 다 박혀있음:**
 
 ```bash
-# Stage 1
-python cnn_train.py --data-dir D:/project/data/wm-811k/classification_chips \
-    --subset-config experiments/chip_object_n100.yaml \
-    --epochs 20 --batch 16 --img-size 384 --workers 0 --model-tag chip5_n100
+# chip — chip CNN 으로 chip crop 자기 라벨링 (build 단계에서)
+python _build_obj_id_maps.py --chip-model logs_chip/overall/best_model.pth \
+    --pseudo-label-threshold 0.97 --pseudo-label-cap-per-class 1000
 
-# Stage 2 (GPU 권장; 1024 wafer 학습 끝난 뒤)
-python _build_obj_id_maps.py \
-    --chip-model log/chip5_n100_w0_*/best_model.pth \
-    --batch 64 --overwrite
+# chip predict — 기존 chip 데이터셋 위에 high-conf 만 추가 라벨
+python cnn_predict_chip.py --pseudo-label-threshold 0.97 --pseudo-label-cap-per-class 500
 
-# Stage 3
-python cnn_train_failobj.py \
-    --obj-id-dir D:/project/data/wm-811k/obj_id_maps \
-    --init-from log/<wafer_best>/best_model.pth \
-    --epochs 30 --batch 16 --img-size 384 --model-tag failobj_v1
+# wafer R-only — high-conf wafer 추가 라벨링
+python cnn_predict_wafer.py --pseudo-label-threshold 0.95 --pseudo-label-cap-per-class 200
+
+# compound — 동일
+python cnn_predict_compound.py --pseudo-label-threshold 0.95 --pseudo-label-cap-per-class 200
 ```
 
-`/stage3-failobj` slash command + `stage3-failobj` agent 가 위 3단계를 순차
-dispatch + 자원 점검 + 산출 검증 + 실패 시 abort/보존 처리.
+**저장 결과:**
+```
+classification_chips/scratch/AAU220_..._X12_Y17_B286_PSEUDO.png    ← chip pseudo (build)
+classification_chips/scratch/AAU220_..._X12_Y17_B286_PSEUDO.png    ← chip pseudo (predict)
+unknown/Center_scratch/<wafer_basename>_PSEUDO.png                 ← wafer pseudo
+```
 
-OBJECT_TYPE_ID 매핑, BICUBIC G channel 근거, 검증 체크포인트 등 상세는
-`.claude/skills/stage3-failobj/SKILL.md`.
+CSV 에 `confidence`, `is_pseudo` 컬럼 추가됨 (`_build_obj_id_maps.py` 의 `predictions.csv`). predict scripts 도 `is_pseudo=true` 가 결과 JSON record 에 박힘.
+
+**주의:**
+- threshold 너무 낮으면 (e.g. 0.7) 모델이 자기 실수에 confidence 만 더 부여 → bias 누적. 권장 0.95+.
+- `--pseudo-label-cap-per-class` 안 주면 쉬운 class (e.g. bank_boundary) 만 폭증 → class imbalance 왜곡.
+- 다음 학습 round 시 `_PSEUDO` 만 골라 down-weight 하거나 별도 set 으로 분리 권장.
+
+---
+
+## 6. logs_obj/build_<TS>_<status>/ 컨벤션
+
+`_build_obj_id_maps.py` 산출물의 archive 폴더. status suffix 로 한눈에 결과 식별:
+
+```
+logs_obj/
+├─ build_260502_063934_ABORTED/    ← build 가 abort/사용자 kill 로 끝남
+├─ build_260502_070940_ABORTED/    ← 동일
+└─ build_260502_075725_OK/         ← 성공 — chain 이 _OK rename
+```
+
+각 폴더 내:
+- `_meta.json` (orchestration meta — chip_model / batch / started_at)
+- `build.log/err`, `guard.log/err`, `chain.log/err`
+- 성공 시 추가: `obj_id_maps_meta.json`, `predictions.csv` 사본, `counts.txt`, `compound_dispatch.log`
+
+`_orchestrator_compound_chain.py` 가 시작 시 status suffix 없는 옛 폴더 자동 sweep → `_ABORTED`.
 
 ---
 
