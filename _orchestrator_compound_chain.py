@@ -14,6 +14,13 @@ import argparse, json, os, shutil, subprocess, sys, time
 from collections import Counter
 from pathlib import Path
 
+# Windows cp949 환경에서 em-dash / 한글 print 깨짐 방지 (CLAUDE.md 동일 패턴)
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 import numpy as np
 
 OBJ_ID_DIR = Path("D:/project/data/wm-811k/obj_id_maps")
