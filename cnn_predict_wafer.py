@@ -19,7 +19,7 @@ KIND_LABEL                = "wafer"
 DEFAULT_BASENAME_SCHEMA   = ["prefix","kind","w_idx","date","time","yld","syp","tester","device"]
 # wafer 마다 sibling JSON 에서 읽을 추가 필드 (preds.csv 컬럼)
 DEFAULT_JSON_ROOT         = "D:/project/data/positions/unknown"
-DEFAULT_JSON_FIELDS       = ["partid","part_id","pgm","wafer","stime","step","yield","sys","tm","lt","netd","gd"]
+DEFAULT_JSON_FIELDS       = ["partid","pgm","wafer","stime","step","yield","sys","tm","lt","netd","gd"]   # part_id 는 partid 와 동일값이라 제외
 # ==================================================
 
 from cnn_predict import main as engine_main

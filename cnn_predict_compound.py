@@ -33,7 +33,7 @@ PALETTE_IDX_NORM           = 31  # palette idx 31 = invalid_fill — sample_gen 
 # wafer basename: prefix_kind_widx_date_time_yld_syp_tester_device  (9 token)
 DEFAULT_BASENAME_SCHEMA    = ["prefix","kind","w_idx","date","time","yld","syp","tester","device"]
 DEFAULT_JSON_ROOT          = "D:/project/data/positions/unknown"
-DEFAULT_JSON_FIELDS        = ["partid","part_id","pgm","wafer","stime","step","yield","sys","tm","lt","netd","gd"]
+DEFAULT_JSON_FIELDS        = ["partid","pgm","wafer","stime","step","yield","sys","tm","lt","netd","gd"]   # part_id 는 partid 와 동일값이라 제외
 # ==================================================
 
 import os, sys, json, argparse, glob, time, csv

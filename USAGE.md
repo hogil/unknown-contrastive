@@ -50,7 +50,7 @@ python _dist_learn.py           # WM-811K cca/* heatmap (~10s, → _dist_heatmap
   - **`preds.csv` — wide table** (한 row = 한 input). cols (왼→오):
     - `path, basename`
     - basename `_` split — wafer/compound: `prefix, kind, w_idx, date, time, yld, syp, tester, device` / chip: `prefix, kind, w_idx, date, time, tester, device, gx_token, gy_token, b_token`
-    - sibling JSON (wafer/compound 만): `partid, part_id, pgm, wafer, stime, step, yield, sys, tm, lt, netd, gd`
+    - sibling JSON (wafer/compound 만): `partid, pgm, wafer, stime, step, yield, sys, tm, lt, netd, gd`  (`part_id` 는 `partid` 와 동일값이라 제외)
     - pred meta: `pred_class, pred_idx, max_prob, is_normal, is_pseudo, [obj_id_npy]`
     - label (있으면): `true_class, true_idx, correct`
     - 클래스별 확률: `prob_<class1>, prob_<class2>, ...`
