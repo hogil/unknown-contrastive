@@ -162,6 +162,9 @@ def main(default_model_glob: Optional[str] = None,
          default_input: Optional[str] = None,
          default_predict_root: Optional[str] = None,
          default_pseudo_label_out: Optional[str] = None,
+         default_basename_schema: Optional[List[str]] = None,
+         default_json_root: Optional[str] = None,
+         default_json_fields: Optional[List[str]] = None,
          kind_label: Optional[str] = None):
     """Engine entry. Called directly (cnn_predict.py CLI) or via thin wrappers
     (cnn_predict_chip.py / cnn_predict_wafer.py) that pre-set defaults via kwargs.
@@ -344,17 +347,45 @@ def main(default_model_glob: Optional[str] = None,
     else:
         csv_path = None
     if csv_path is not None:
+        # basename split + sibling JSON read for richer metadata
+        bn_schema = default_basename_schema or []
+        json_root = Path(default_json_root) if default_json_root else None
+        json_fields = default_json_fields or []
         with csv_path.open("w", encoding="utf-8", newline="") as f:
             w = csv.writer(f)
-            cols = ["path", "basename", "pred_class", "pred_idx", "max_prob", "is_normal", "is_pseudo"]
+            cols = ["path", "basename"]
+            cols += list(bn_schema)
+            cols += list(json_fields)
+            cols += ["pred_class", "pred_idx", "max_prob", "is_normal", "is_pseudo"]
             if has_labels:
                 cols += ["true_class", "true_idx", "correct"]
             cols += [f"prob_{c}" for c in classes]
             w.writerow(cols)
             for rec in results:
-                row = [
-                    rec["path"],
-                    Path(rec["path"]).stem,
+                pth = Path(rec["path"])
+                basename = pth.stem
+                row = [rec["path"], basename]
+                # basename split
+                parts = basename.split("_")
+                for i, name in enumerate(bn_schema):
+                    row.append(parts[i] if i < len(parts) else "")
+                # JSON sibling read (wafer/compound only, json_root given)
+                jdoc = {}
+                if json_root is not None and json_fields:
+                    cls_dir = pth.parent.name
+                    jpath = json_root / cls_dir / f"{basename}.json"
+                    if jpath.exists():
+                        try:
+                            jdoc = json.loads(jpath.read_text(encoding="utf-8"))
+                        except Exception:
+                            jdoc = {}
+                for fld in json_fields:
+                    v = jdoc.get(fld, "")
+                    if isinstance(v, (list, dict)):
+                        v = ""
+                    row.append(v)
+                # pred metadata
+                row += [
                     rec["pred_class"],
                     rec["pred_idx"],
                     f"{rec['max_prob']:.6f}",
@@ -370,7 +401,7 @@ def main(default_model_glob: Optional[str] = None,
                     ]
                 row += [f"{rec['probs'][c]:.6f}" for c in classes]
                 w.writerow(row)
-        print(f"[*] preds.csv saved -> {csv_path}", file=sys.stderr)
+        print(f"[*] preds.csv saved -> {csv_path}  ({len(results)} rows)", file=sys.stderr)
 
     # === per_class_report ===
     if args.report_out and has_labels and HAVE_SKLEARN:

@@ -30,6 +30,10 @@ DEFAULT_PREDICT_ROOT       = "logs_predict_compound"
 DEFAULT_PSEUDO_LABEL_OUT   = "D:/project/data/wm-811k/unknown"  # pseudo wafer 저장 root (옵션 켜야 활성)
 KIND_LABEL                 = "compound"
 PALETTE_IDX_NORM           = 31  # palette idx 31 = invalid_fill — sample_gen 도메인 spec, 고정
+# wafer basename: prefix_kind_widx_date_time_yld_syp_tester_device  (9 token)
+DEFAULT_BASENAME_SCHEMA    = ["prefix","kind","w_idx","date","time","yld","syp","tester","device"]
+DEFAULT_JSON_ROOT          = "D:/project/data/positions/unknown"
+DEFAULT_JSON_FIELDS        = ["partid","part_id","pgm","wafer","stime","step","yield","sys","tm","lt","netd","gd"]
 # ==================================================
 
 import os, sys, json, argparse, glob, time, csv
@@ -372,29 +376,48 @@ def main():
         if len(results) > 10:
             print(f"... ({len(results) - 10} more) — use --output to save full", file=sys.stderr)
 
-    # === Output CSV (wide table: meta + obj_id_npy + prob_<class>) ===
+    # === Output CSV (wide table: basename split + JSON meta + pred + prob_<class>) ===
     csv_path = None
     if args.output:
         csv_path = Path(args.output).with_suffix(".csv")
-    elif args.predict_root and not args.no_run_dir:
-        # run_dir was created earlier; output paths point inside it. Derive run_dir from --output.
-        # If --output was auto, it's <run_dir>/preds.json.
-        out = args.output or ""
-        if out:
-            csv_path = Path(out).with_suffix(".csv")
     if csv_path is not None:
+        bn_schema = DEFAULT_BASENAME_SCHEMA
+        json_root = Path(DEFAULT_JSON_ROOT) if DEFAULT_JSON_ROOT else None
+        json_fields = DEFAULT_JSON_FIELDS
         with csv_path.open("w", encoding="utf-8", newline="") as f:
             w = csv.writer(f)
-            cols = ["path", "basename", "pred_class", "pred_idx", "max_prob",
-                    "is_normal", "is_pseudo", "obj_id_npy"]
+            cols = ["path", "basename"]
+            cols += list(bn_schema)
+            cols += list(json_fields)
+            cols += ["pred_class", "pred_idx", "max_prob", "is_normal", "is_pseudo", "obj_id_npy"]
             if has_labels:
                 cols += ["true_class", "true_idx", "correct"]
             cols += [f"prob_{c}" for c in classes]
             w.writerow(cols)
             for rec in results:
-                row = [
-                    rec["path"],
-                    Path(rec["path"]).stem,
+                pth = Path(rec["path"])
+                basename = pth.stem
+                row = [rec["path"], basename]
+                # basename split
+                parts = basename.split("_")
+                for i, name in enumerate(bn_schema):
+                    row.append(parts[i] if i < len(parts) else "")
+                # sibling JSON read
+                jdoc = {}
+                if json_root is not None and json_fields:
+                    cls_dir = pth.parent.name
+                    jpath = json_root / cls_dir / f"{basename}.json"
+                    if jpath.exists():
+                        try:
+                            jdoc = json.loads(jpath.read_text(encoding="utf-8"))
+                        except Exception:
+                            jdoc = {}
+                for fld in json_fields:
+                    v = jdoc.get(fld, "")
+                    if isinstance(v, (list, dict)): v = ""
+                    row.append(v)
+                # pred metadata
+                row += [
                     rec["pred_class"],
                     rec["pred_idx"],
                     f"{rec['max_prob']:.6f}",
@@ -411,7 +434,7 @@ def main():
                     ]
                 row += [f"{rec['probs'][c]:.6f}" for c in classes]
                 w.writerow(row)
-        print(f"[*] preds.csv saved -> {csv_path}", file=sys.stderr)
+        print(f"[*] preds.csv saved -> {csv_path}  ({len(results)} rows)", file=sys.stderr)
 
     # === per_class_report ===
     if args.report_out and has_labels and HAVE_SKLEARN:

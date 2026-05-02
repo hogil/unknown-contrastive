@@ -47,7 +47,13 @@ python _dist_learn.py           # WM-811K cca/* heatmap (~10s, → _dist_heatmap
 - 시작 시 `_overall_meta.json` 의 best_run / val_f1 / seeded_at stderr 출력
 - `logs_predict_<kind>/<TS>_<input_name>/` 폴더 자동 (`--no-run-dir` 로 끄기). 내부 산출물:
   - `preds.json` — record per input (path, pred_class, max_prob, probs dict, true_class, is_pseudo, ...)
-  - **`preds.csv` — wide table** (한 row = 한 input). cols: `path, basename, pred_class, pred_idx, max_prob, is_normal, is_pseudo, [true_class, true_idx, correct,] prob_<class1>, prob_<class2>, ...`. Excel/pandas 친화.
+  - **`preds.csv` — wide table** (한 row = 한 input). cols (왼→오):
+    - `path, basename`
+    - basename `_` split — wafer/compound: `prefix, kind, w_idx, date, time, yld, syp, tester, device` / chip: `prefix, kind, w_idx, date, time, tester, device, gx_token, gy_token, b_token`
+    - sibling JSON (wafer/compound 만): `partid, part_id, pgm, wafer, stime, step, yield, sys, tm, lt, netd, gd`
+    - pred meta: `pred_class, pred_idx, max_prob, is_normal, is_pseudo, [obj_id_npy]`
+    - label (있으면): `true_class, true_idx, correct`
+    - 클래스별 확률: `prob_<class1>, prob_<class2>, ...`
   - `per_class_report.txt` — sklearn classification_report (label 추정 가능 시)
   - `threshold_sweep.csv` — `--threshold-sweep` 줬을 때만. cols: `threshold, normal_rate, acc_kept, kept_n`
   - `wrong/<true>/<pred>/*.png` — 틀린 예측 갤러리

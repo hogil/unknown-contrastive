@@ -15,6 +15,11 @@ DEFAULT_INPUT             = "D:/project/data/wm-811k/unknown"
 DEFAULT_PREDICT_ROOT      = "logs_predict_wafer"
 DEFAULT_PSEUDO_LABEL_OUT  = "D:/project/data/wm-811k/unknown"  # pseudo wafer 저장 root (옵션 켜야 활성)
 KIND_LABEL                = "wafer"
+# wafer basename: prefix_kind_widx_date_time_yld_syp_tester_device  (9 token, _sample_gen.py:684)
+DEFAULT_BASENAME_SCHEMA   = ["prefix","kind","w_idx","date","time","yld","syp","tester","device"]
+# wafer 마다 sibling JSON 에서 읽을 추가 필드 (preds.csv 컬럼)
+DEFAULT_JSON_ROOT         = "D:/project/data/positions/unknown"
+DEFAULT_JSON_FIELDS       = ["partid","part_id","pgm","wafer","stime","step","yield","sys","tm","lt","netd","gd"]
 # ==================================================
 
 from cnn_predict import main as engine_main
@@ -26,5 +31,8 @@ if __name__ == "__main__":
         default_input=DEFAULT_INPUT,
         default_predict_root=DEFAULT_PREDICT_ROOT,
         default_pseudo_label_out=DEFAULT_PSEUDO_LABEL_OUT,
+        default_basename_schema=DEFAULT_BASENAME_SCHEMA,
+        default_json_root=DEFAULT_JSON_ROOT,
+        default_json_fields=DEFAULT_JSON_FIELDS,
         kind_label=KIND_LABEL,
     )
