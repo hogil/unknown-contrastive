@@ -19,7 +19,7 @@ CNN classifier prediction — best_model.pth (또는 legacy best.pt) 로드 → 
     # EMA shadow weights 사용 (체크포인트에 ema_state 있을 때)
     python cnn_predict.py --model best_model.pth --input <dir> --ema --output preds.json
 """
-import os, sys, json, argparse, glob
+import os, sys, json, argparse, glob, time
 from pathlib import Path
 from typing import List, Optional, Dict
 import numpy as np
@@ -123,10 +123,58 @@ def parse_threshold_sweep(s: Optional[str]):
         raise ValueError(f"Invalid --threshold-sweep '{s}'. Format: lo,hi,step (e.g. 0.1,0.9,0.05)") from e
 
 
-def main():
+def _resolve_default_model(default_model_glob: Optional[str]) -> Optional[str]:
+    if not default_model_glob:
+        return None
+    matches = sorted(glob.glob(default_model_glob))
+    return matches[-1] if matches else None
+
+
+def _print_overall_meta_if_any(model_path: str):
+    """If model_path is inside an `overall/` dir, print sourcing info from
+    `_overall_meta.json` so users see which run / val_f1 they're predicting with.
+    """
+    p = Path(model_path)
+    overall = p.parent
+    meta_path = overall / "_overall_meta.json"
+    if not meta_path.exists():
+        return
+    try:
+        m = json.loads(meta_path.read_text(encoding="utf-8"))
+        print(f"[*] using overall: {model_path}", file=sys.stderr)
+        print(f"[*]   sourced from run='{m.get('best_run')}'", file=sys.stderr)
+        print(f"[*]   val_f1={m.get('val_f1'):.4f}  seeded_at={m.get('seeded_at')}", file=sys.stderr)
+    except Exception as e:
+        print(f"[*] using overall: {model_path}  (meta read failed: {e})", file=sys.stderr)
+
+
+def _make_predict_run_dir(default_predict_root: Optional[str], input_path: str) -> Optional[Path]:
+    if not default_predict_root:
+        return None
+    ts = time.strftime("%y%m%d_%H%M%S")
+    tag = Path(input_path).name or "out"
+    run_dir = Path(default_predict_root) / f"{ts}_{tag}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
+def main(default_model_glob: Optional[str] = None,
+         default_input: Optional[str] = None,
+         default_predict_root: Optional[str] = None,
+         kind_label: Optional[str] = None):
+    """Engine entry. Called directly (cnn_predict.py CLI) or via thin wrappers
+    (cnn_predict_chip.py / cnn_predict_wafer.py) that pre-set defaults via kwargs.
+
+    default_model_glob   : e.g. 'logs_chip/overall/best_model.pth'
+    default_input        : e.g. 'D:/project/data/wm-811k/classification_chips'
+    default_predict_root : e.g. 'logs_predict_chip' — auto-creates <root>/<TS>_<input_name>/
+                           and routes default --output, --report-out, --save-wrong-out into it
+    """
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True, help="best_model.pth (또는 legacy best.pt)")
-    ap.add_argument("--input", required=True, help="이미지 또는 폴더")
+    ap.add_argument("--model", required=(default_model_glob is None), default=None,
+                    help=f"best_model.pth (default: {default_model_glob or '— required'})")
+    ap.add_argument("--input", required=(default_input is None), default=default_input,
+                    help=f"이미지 또는 폴더 (default: {default_input or '— required'})")
     ap.add_argument("--output", default=None, help="예측 결과 JSON")
     ap.add_argument("--report-out", default=None, help="입력이 {class}/img.png 구조면 per_class_report.txt 출력")
     ap.add_argument("--threshold", type=float, default=None,
@@ -141,7 +189,29 @@ def main():
     ap.add_argument("--device", default=None)
     ap.add_argument("--save-wrong-out", default=None,
                     help="틀린 예측을 <DIR>/<true_class>/<pred_class>/*.png 트리로 저장 (label 추정 가능 시)")
+    ap.add_argument("--predict-root", default=default_predict_root,
+                    help=f"logs_predict_<kind> root for auto run dir (default: {default_predict_root or '— off'})")
+    ap.add_argument("--no-run-dir", action="store_true",
+                    help="--predict-root 무시, 자동 run dir 생성 안 함")
     args = ap.parse_args()
+
+    if args.model is None:
+        args.model = _resolve_default_model(default_model_glob)
+        if not args.model:
+            raise SystemExit(f"--model not given and default not found: {default_model_glob}")
+    if kind_label:
+        print(f"[*] cnn_predict kind={kind_label}", file=sys.stderr)
+    _print_overall_meta_if_any(args.model)
+
+    # auto-create predict run dir + route default outputs into it
+    run_dir = None
+    if args.predict_root and not args.no_run_dir:
+        run_dir = _make_predict_run_dir(args.predict_root, args.input)
+        if run_dir is not None:
+            if args.output is None:      args.output = str(run_dir / "preds.json")
+            if args.report_out is None:  args.report_out = str(run_dir / "per_class_report.txt")
+            if args.save_wrong_out is None: args.save_wrong_out = str(run_dir / "wrong")
+            print(f"[*] predict run_dir: {run_dir}", file=sys.stderr)
 
     device = torch.device(args.device) if args.device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

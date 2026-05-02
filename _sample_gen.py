@@ -131,7 +131,7 @@ def save_chip_crops(img, chip_meta: dict, base: str, out_root: str = CHIP_OBJ_OU
         crop = img.crop((x0, y0, x1, y1))
         out_dir = os.path.join(out_root, obj)
         os.makedirs(out_dir, exist_ok=True)
-        crop_name = f"{wafer_key}_x{gx}_y{gy}_b{b}.png"
+        crop_name = f"{wafer_key}_X{gx}_Y{gy}_B{b}.png"                                    # uppercase X/Y/B for consistency
         crop.save(os.path.join(out_dir, crop_name))
         counts[obj] = counts.get(obj, 0) + 1
     return counts
@@ -189,7 +189,8 @@ DEFECT_BUDGET = {
 
 # ===== Random helpers =====
 def rand_prefix(rng):
-    letters = ''.join(chr(ord('a') + int(rng.integers(0, 26))) for _ in range(3))
+    """3-letter + 3-digit prefix, ALL UPPERCASE for filename consistency."""
+    letters = ''.join(chr(ord('A') + int(rng.integers(0, 26))) for _ in range(3))
     digits  = ''.join(str(int(rng.integers(0, 10)))             for _ in range(3))
     return letters + digits
 

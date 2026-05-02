@@ -91,8 +91,8 @@ BACKBONE         = "convnextv2_base.fcmae_ft_in22k_in1k_384"
 # - N (= n_chip_objects) 은 obj_id_maps/_meta.json 의 'n_chip_objects' 에서 읽음
 # - 새 class 추가 시 모든 stage 재학습 필요하므로 ID 안정성은 비목표
 NONE_ID = 0
-PALETTE_IDX_NORM = 31                                                               # 31 = invalid_fill, max palette idx (R channel norm)
-OBJ_ID_GRID = 32                                                                    # source obj_id map size
+PALETTE_IDX_NORM = 31                                                               # 31 = invalid_fill, max palette idx (R channel norm) — sample_gen spec, 고정.
+# OBJ_ID_GRID 는 .npy 의 실제 shape 에서 runtime 으로 derive (CLAUDE.md 절대 규칙: 그리드 hardcode 금지).
 
 CFG = {
     "data_dir": DEFAULT_DATA_DIR,
@@ -249,6 +249,14 @@ class FailObjImageFolder(FilteredImageFolder):
         self.train_aug = bool(train_aug)
         self.n_chip_objects = int(n_chip_objects)                                     # G normalization 분모
         self._missing_obj_id_warned: bool = False
+        # flat basename → npy_path map. Subfolder structure agnostic (supports both
+        # legacy `<wafer_class>/<basename>.npy` and new `<device>_<date>/<basename>.npy`,
+        # or any other layout). Built once at startup; no per-sample rglob.
+        self._npy_map: Dict[str, Path] = {}
+        if self.obj_id_root.exists():
+            for p in self.obj_id_root.rglob("*.npy"):
+                self._npy_map[p.stem] = p
+        print(f"[FailObjImageFolder] obj_id npy lookup: {len(self._npy_map)} files indexed under {self.obj_id_root}", flush=True)
 
     def _load_3ch(self, png_path: str) -> torch.Tensor:
         """Load palette PNG + obj_id .npy → [3, H, W] float32 ∈ [0, 1]."""
@@ -261,19 +269,18 @@ class FailObjImageFolder(FilteredImageFolder):
         idx_resized = idx_pil.resize((self.img_size, self.img_size), Image.BICUBIC)
         r = torch.from_numpy(np.asarray(idx_resized, dtype=np.float32) / float(PALETTE_IDX_NORM)).clamp_(0.0, 1.0).unsqueeze(0)
 
-        # G: obj_id 32x32 BICUBIC to img_size  (categorical 0-5, fractional values OK as boundary cue)
-        wafer_class = Path(png_path).parent.name
+        # G: obj_id (h, w) BICUBIC to img_size — flat basename lookup, subfolder-agnostic.
         basename = Path(png_path).stem
-        obj_path = self.obj_id_root / wafer_class / f"{basename}.npy"
-        if obj_path.exists():
-            obj_id = np.load(obj_path).astype(np.uint8)                                # (32, 32)
+        obj_path = self._npy_map.get(basename)
+        if obj_path is not None and obj_path.exists():
+            obj_id = np.load(obj_path).astype(np.uint8)                                # shape derived from .npy (no GRID hardcode)
             obj_pil = Image.fromarray(obj_id, mode="L")
             obj_resized = obj_pil.resize((self.img_size, self.img_size), Image.BICUBIC)
             g = torch.from_numpy(np.asarray(obj_resized, dtype=np.float32) / float(self.n_chip_objects)).clamp_(0.0, 1.0).unsqueeze(0)
         else:
             g = torch.zeros((1, self.img_size, self.img_size), dtype=torch.float32)
             if not self._missing_obj_id_warned:
-                print(f"[FailObjImageFolder] missing obj_id {obj_path} — G=zeros (warn once)", flush=True)
+                print(f"[FailObjImageFolder] missing obj_id for basename={basename!r} — G=zeros (warn once)", flush=True)
                 self._missing_obj_id_warned = True
 
         # B: zero dummy

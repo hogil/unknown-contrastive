@@ -782,10 +782,15 @@ class IndexPathSubset(Dataset):
         return img, lbl, path
 
 # ===================== Main =====================
-def main():
+def main(default_data_dir: Optional[str] = None,
+         default_log_root: Optional[str] = None,
+         kind_label: Optional[str] = None):
+    """Engine entry. Called directly (cnn_train.py CLI) or via thin wrappers
+    (cnn_train_chip.py / cnn_train_wafer.py) that pre-set defaults via kwargs.
+    """
     p = argparse.ArgumentParser()
-    p.add_argument("--data-dir", default=CFG["data_dir"])
-    p.add_argument("--log-root", default=CFG["log_root"])
+    p.add_argument("--data-dir", default=(default_data_dir or CFG["data_dir"]))
+    p.add_argument("--log-root", default=(default_log_root or CFG["log_root"]))
     p.add_argument("--model-tag", default=CFG["model_tag"])
     p.add_argument("--epochs", type=int, default=CFG["epochs"])
     p.add_argument("--batch", type=int, default=CFG["batch"])

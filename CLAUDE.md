@@ -35,7 +35,11 @@ docs/image-generation/ 와 .claude/ 에 기록**되어 있어 새 세션에서 �
 | `_sample_gen.py` | 메인 generator (multiprocessing). FTN/QTN + chip-object crop 자동 포함. |
 | `_sample_gen_gpu.py` | GPU 가속 generator (single-proc + ThreadPool). chip-object crop 동일 포함. |
 | `_fq_metadata.py` | synthetic `partid`/`part_id`/`pgm` + FTN/QTN key/value 생성 |
-| `cnn_train_failobj.py` | 3-channel feature CNN (R=failbit, G=object_type_id map, B=zero) |
+| `cnn_train.py` / `cnn_predict.py` | 통합 engine. 직접 호출 가능, 또는 kind 별 wrapper 가 호출. |
+| `cnn_train_chip.py` / `cnn_train_wafer.py` | engine 의 thin wrapper. config 맨 위에. |
+| `cnn_train_compound.py` | wafer 33-class 3-channel (R=failbit, G=obj_id, B=zero) compound 학습. logs_compound/. |
+| `cnn_predict_chip.py` / `cnn_predict_wafer.py` / `cnn_predict_compound.py` | kind 별 추론 entry. overall/ 자동 + run dir 자동. |
+| `_build_obj_id_maps.py` | chip CNN 으로 wafer 마다 obj_id 맵 inference 생성. incremental save. |
 | `_verify.py` | 데이터셋 검증 (filename/PNG/JSON 스키마/분포 sanity) |
 | `_dist_learn.py` | WM-811K cca/* heatmap 학습 (1회). gitignored heatmap 부재 시 재실행. |
 | `_dist_heatmaps/` | WM-811K cca/* 학습된 heatmap 8 클래스 (.npy + .png, **gitignored**). 부재 시 `python _dist_learn.py` 로 재생성. |
@@ -79,12 +83,20 @@ CNN 분류기 (open-set, Normal 제외 학습):
 | `chip-object-dataset` | `chip-object-dataset` | — | inline chip-object crop dataset 검증 (`_sample_gen.save_chip_crops`) |
 | `stage3-compound` | `stage3-compound` | `/stage3-compound` | 3-stage 학습 orchestrator: chip 5-class (logs_chip/) → obj_id_map cache → 3-channel compound CNN (logs_compound/) |
 
-학습 로그 root 분리 — `cnn_train.py` 가 `data_dir` 검사하여 자동 결정:
-| Root | 학습 종류 | script |
-|---|---|---|
-| `logs_chip/` | chip 5-class 분류기 (object 단위) | `cnn_train.py --data-dir classification_chips` |
-| `logs_wafer/` | wafer 33-class 분류기 (failbit only, R 채널) | `cnn_train.py --data-dir unknown` |
-| `logs_compound/` | wafer 33-class compound 분류기 (R+G obj_id) | `cnn_train_compound.py` |
+학습 / 추론 entry script — **kind 별로 분기된 6개**, 각자 default 박혀있음:
+
+| Kind | 학습 entry | 추론 entry | data root | log root | predict root |
+|---|---|---|---|---|---|
+| chip 5-class (object) | `cnn_train_chip.py` | `cnn_predict_chip.py` | `data/wm-811k/classification_chips/` | `logs_chip/` | `logs_predict_chip/<TS>_<input>/` |
+| wafer 33-class R-only | `cnn_train_wafer.py` | `cnn_predict_wafer.py` | `data/wm-811k/unknown/` | `logs_wafer/` | `logs_predict_wafer/<TS>_<input>/` |
+| wafer 33-class compound (R+G) | `cnn_train_compound.py` | `cnn_predict_compound.py` | `data/wm-811k/unknown/` + `obj_id_maps/` | `logs_compound/` | `logs_predict_compound/<TS>_<input>/` |
+
+`cnn_train_chip.py` / `cnn_train_wafer.py` / `cnn_predict_chip.py` / `cnn_predict_wafer.py` 는 **`cnn_train.py` / `cnn_predict.py` engine 의 thin wrapper** — config 만 맨 위에 박혀있음. engine 직접 호출도 backward compat.
+
+**predict 자동 동작:**
+- `--model` 생략 시 `logs_<kind>/overall/best_model.pth` 자동 로드
+- 시작 시 `_overall_meta.json` 의 best_run / val_f1 / seeded_at stderr 출력
+- `logs_predict_<kind>/<TS>_<input_name>/` 폴더 자동 생성 → `preds.json`, `per_class_report.txt`, `wrong/<true>/<pred>/*.png` 자동 배치 (`--no-run-dir` 로 끄기 가능)
 
 각 logs_*/ 안에 `overall/` 폴더 — 학습 종료 시 val F1 이 그 폴더 내 best 면 현재 run 폴더 통째 복사 교체. `_overall_meta.json` 에 source_run + val_f1 기록.
 
@@ -119,24 +131,30 @@ supervised 학습된 backbone을 init으로 써서 도메인 정렬된 mid-level
 데이터: `D:/project/data/wm-811k/unknown/<class>/*.png` (33 defect class). Normal class는
 **학습 제외**, inference 시 max_prob threshold로 분류.
 
-Quickstart:
+Quickstart (kind별 entry script — config 는 각 .py 파일 맨 위 `# === CONFIG ===` 섹션):
 
 ```bash
-# 1. smoke test (33 × 20 = 660 샘플, 2 epoch)
-python cnn_train.py --epochs 2 --subset-config experiments/quick.yaml --batch 8 --model-tag smoke
+# 학습 — 각 wrapper 가 default data_dir + log_root 박아둠
+python cnn_train_chip.py     --epochs 30 --batch 16 --model-tag chip5
+python cnn_train_wafer.py    --epochs 30 --batch 16 --model-tag wafer33
+python cnn_train_compound.py --epochs 30 --batch 16 --model-tag compound33
 
-# 2. baseline (effective class_weight, EMA on)
-python cnn_train.py --epochs 30 --batch 16 --model-tag baseline
+# smoke / subset
+python cnn_train_wafer.py --epochs 2 --subset-config experiments/quick.yaml --batch 8 --model-tag smoke
 
-# 3. predict + threshold
-python cnn_predict.py --model log/<run>/best_model.pth --input <dir> --threshold 0.7 --output preds.json
+# 추론 — --model 생략 시 logs_<kind>/overall/best_model.pth 자동 (+ _overall_meta.json 출력)
+python cnn_predict_chip.py     --input <chip_folder>
+python cnn_predict_wafer.py    --input <wafer_folder> --threshold 0.7
+python cnn_predict_compound.py --input <wafer_folder> --threshold-sweep 0.1,0.9,0.05
 
-# 4. threshold sweep (label inferable from folder)
-python cnn_predict.py --model log/<run>/best_model.pth --input val_dir --threshold-sweep 0.1,0.9,0.05
+# 명시적 모델 override 도 작동
+python cnn_predict_wafer.py --model logs_wafer/<특정_run>/best_model.pth --input <dir>
+
+# 추론 출력 폴더 자동 (logs_predict_<kind>/<TS>_<input_name>/) — 끄려면 --no-run-dir
 ```
 
-출력 컨벤션: `log/{model_tag}_{YYMMDD_HHMMSS}_{test_f1:.2f}_{val_f1:.2f}/` (3-way),
-또는 `log/{model_tag}_{YYMMDD_HHMMSS}_{val_f1:.2f}/` (`--train-val-only`).
+학습 출력 컨벤션: `logs_<kind>/{model_tag}_{YYMMDD_HHMMSS}_{test_f1:.2f}_{val_f1:.2f}/` (3-way),
+또는 `logs_<kind>/{model_tag}_{YYMMDD_HHMMSS}_{val_f1:.2f}/` (`--train-val-only`).
 default `model_tag` = backbone short name (`convnextv2_base`).
 
 산출:
@@ -151,7 +169,7 @@ default `model_tag` = backbone short name (`convnextv2_base`).
 폐지: `eval_summary.json`, `val_per_class_report.txt`, `test_per_class_report.txt`,
 `best_confusion_matrix_{val,test}.png` — 모두 `best_history.txt` + 통합 PNG에 흡수.
 
-도메인-safe augmentation (cnn_train.py / cnn_train_failobj.py::build_transforms):
+도메인-safe augmentation (cnn_train.py / cnn_train_compound.py::build_transforms):
 - ✅ ±15° rotation: 검사장비 stage 회전 오차 범위 내
 - ✅ 작은 translate/scale (±3%): alignment / magnification variability
 - ✅ Gaussian noise σ=0.01: sensor pixel noise
@@ -184,3 +202,24 @@ classes:
   `.claude/skills/pixel-design/SKILL.md` 누적 표 필수 업데이트.
 - `transparency=31` PNG save 금지 (모델 입력 픽셀 손실).
 - `D:/project/fail-map/`, `D:/project/mapviewer/` 수정 금지.
+
+## 절대 규칙: 클래스/그리드 크기 의존 상수 hardcode 금지
+
+코드 전반에서 **클래스 수 / 그리드 크기 / 카테고리 개수에 의존하는 상수는 hardcode 금지**.
+런타임에 source-of-truth (checkpoint, dataset meta, JSON coord 필드, .npy shape) 에서 derive.
+
+이유: 클래스/오브젝트가 늘어날 때마다 코드 여러 곳 손대야 하고, 빠뜨리면 silent bug.
+
+❌ 금지 예시:
+- 색 팔레트 `PALETTE_RGB = np.array([... 8 fixed colors ...])`
+- 격자 `GRID = 32`, `OBJ_ID_GRID = 32`
+- ID 매핑 `OBJECT_TYPE_ID = {"none": 0, "scratch": 2, ...}`
+- 서브폴더 가정 `obj_id_maps/<wafer_class>/<basename>.npy` (구조 바뀌면 깨짐)
+
+✅ 올바른 패턴:
+- `palette = make_palette(n_chip_objects)` — HSV 균등 분할 N 색
+- grid = JSON `coord.tiles_w_rot / tiles_h_rot` 에서 읽기, fallback `max(x_abs)+1`
+- ID 매핑 = ImageFolder classes 알파벳 + 1 offset (idx 0 = none)
+- npy lookup = flat basename → npy_path map (rglob) — 어떤 서브폴더든 호환
+
+새 코드 / 기존 코드 수정 시 hardcode 흔적 발견되면 사용자에게 즉시 보고하고 동시에 동적 derive 로 패치.

@@ -3,6 +3,10 @@ log/
 logs_chip/
 logs_wafer/
 logs_compound/
+logs_obj/
+logs_predict_chip/
+logs_predict_wafer/
+logs_predict_compound/
 models/
 _dist_heatmaps/
 _resize_compare/
