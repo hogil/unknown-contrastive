@@ -32,7 +32,7 @@ KIND_LABEL                 = "compound"
 PALETTE_IDX_NORM           = 31  # palette idx 31 = invalid_fill — sample_gen 도메인 spec, 고정
 # ==================================================
 
-import os, sys, json, argparse, glob, time
+import os, sys, json, argparse, glob, time, csv
 from pathlib import Path
 from typing import Dict, List, Optional
 import numpy as np
@@ -372,6 +372,47 @@ def main():
         if len(results) > 10:
             print(f"... ({len(results) - 10} more) — use --output to save full", file=sys.stderr)
 
+    # === Output CSV (wide table: meta + obj_id_npy + prob_<class>) ===
+    csv_path = None
+    if args.output:
+        csv_path = Path(args.output).with_suffix(".csv")
+    elif args.predict_root and not args.no_run_dir:
+        # run_dir was created earlier; output paths point inside it. Derive run_dir from --output.
+        # If --output was auto, it's <run_dir>/preds.json.
+        out = args.output or ""
+        if out:
+            csv_path = Path(out).with_suffix(".csv")
+    if csv_path is not None:
+        with csv_path.open("w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            cols = ["path", "basename", "pred_class", "pred_idx", "max_prob",
+                    "is_normal", "is_pseudo", "obj_id_npy"]
+            if has_labels:
+                cols += ["true_class", "true_idx", "correct"]
+            cols += [f"prob_{c}" for c in classes]
+            w.writerow(cols)
+            for rec in results:
+                row = [
+                    rec["path"],
+                    Path(rec["path"]).stem,
+                    rec["pred_class"],
+                    rec["pred_idx"],
+                    f"{rec['max_prob']:.6f}",
+                    int(rec["is_normal"]),
+                    int(rec.get("is_pseudo", False)),
+                    rec.get("obj_id_npy") or "",
+                ]
+                if has_labels:
+                    ti = rec.get("true_idx", -1)
+                    row += [
+                        rec.get("true_class") or "",
+                        ti,
+                        int(ti == rec["pred_idx"]) if ti >= 0 else "",
+                    ]
+                row += [f"{rec['probs'][c]:.6f}" for c in classes]
+                w.writerow(row)
+        print(f"[*] preds.csv saved -> {csv_path}", file=sys.stderr)
+
     # === per_class_report ===
     if args.report_out and has_labels and HAVE_SKLEARN:
         acc = float(accuracy_score(all_labels, all_preds))
@@ -398,20 +439,32 @@ def main():
                 pass
         print(f"[*] wrong tree: {n_wrong} files -> {out_root}", file=sys.stderr)
 
-    # === Threshold sweep ===
+    # === Threshold sweep (stderr table + CSV when run_dir active) ===
     sweep = parse_threshold_sweep(args.threshold_sweep)
     if sweep and has_labels and HAVE_SKLEARN:
         print(f"\n[Threshold sweep] (label_known={sum(l>=0 for l in all_labels)}/{len(all_labels)})",
               file=sys.stderr)
         print(f"{'thresh':>8} {'normal_rate':>12} {'acc_kept':>9} {'kept_n':>7}", file=sys.stderr)
+        sweep_rows = []
         for th in sweep:
             kept = [(p, l) for p, l, mp in zip(all_preds, all_labels, all_max_probs) if mp >= th]
             normal_rate = 1.0 - len(kept) / max(1, len(all_preds))
             if not kept:
-                print(f"{th:8.3f} {normal_rate:12.3f} {'-':>9} {0:7d}", file=sys.stderr); continue
+                print(f"{th:8.3f} {normal_rate:12.3f} {'-':>9} {0:7d}", file=sys.stderr)
+                sweep_rows.append((th, normal_rate, "", 0)); continue
             preds_k, lbls_k = zip(*kept)
             acc_k = float(accuracy_score(lbls_k, preds_k))
             print(f"{th:8.3f} {normal_rate:12.3f} {acc_k:9.3f} {len(kept):7d}", file=sys.stderr)
+            sweep_rows.append((th, normal_rate, acc_k, len(kept)))
+        # CSV — derive run_dir from --output if it lives inside one
+        if args.output:
+            sweep_csv = Path(args.output).parent / "threshold_sweep.csv"
+            with sweep_csv.open("w", encoding="utf-8", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["threshold", "normal_rate", "acc_kept", "kept_n"])
+                for th, nr, ak, kn in sweep_rows:
+                    w.writerow([f"{th:.4f}", f"{nr:.4f}", (f"{ak:.4f}" if ak != "" else ""), kn])
+            print(f"[*] threshold_sweep.csv saved -> {sweep_csv}", file=sys.stderr)
 
 
 if __name__ == "__main__":

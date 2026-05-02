@@ -45,7 +45,12 @@ python _dist_learn.py           # WM-811K cca/* heatmap (~10s, → _dist_heatmap
 **추론 자동 동작 (3 predict wrapper 공통):**
 - `--model` 생략 → `logs_<kind>/overall/best_model.pth` 자동 로드
 - 시작 시 `_overall_meta.json` 의 best_run / val_f1 / seeded_at stderr 출력
-- `logs_predict_<kind>/<TS>_<input_name>/` 폴더 자동 — `preds.json`, `per_class_report.txt`, `wrong/<true>/<pred>/*.png` 자동 배치 (`--no-run-dir` 로 끄기)
+- `logs_predict_<kind>/<TS>_<input_name>/` 폴더 자동 (`--no-run-dir` 로 끄기). 내부 산출물:
+  - `preds.json` — record per input (path, pred_class, max_prob, probs dict, true_class, is_pseudo, ...)
+  - **`preds.csv` — wide table** (한 row = 한 input). cols: `path, basename, pred_class, pred_idx, max_prob, is_normal, is_pseudo, [true_class, true_idx, correct,] prob_<class1>, prob_<class2>, ...`. Excel/pandas 친화.
+  - `per_class_report.txt` — sklearn classification_report (label 추정 가능 시)
+  - `threshold_sweep.csv` — `--threshold-sweep` 줬을 때만. cols: `threshold, normal_rate, acc_kept, kept_n`
+  - `wrong/<true>/<pred>/*.png` — 틀린 예측 갤러리
 
 ---
 

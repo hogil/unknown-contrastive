@@ -19,7 +19,7 @@ CNN classifier prediction — best_model.pth (또는 legacy best.pt) 로드 → 
     # EMA shadow weights 사용 (체크포인트에 ema_state 있을 때)
     python cnn_predict.py --model best_model.pth --input <dir> --ema --output preds.json
 """
-import os, sys, json, argparse, glob, time
+import os, sys, json, argparse, glob, time, csv
 from pathlib import Path
 from typing import List, Optional, Dict
 import numpy as np
@@ -336,6 +336,42 @@ def main(default_model_glob: Optional[str] = None,
         if len(results) > 10:
             print(f"... ({len(results) - 10} more) — use --output to save full", file=sys.stderr)
 
+    # === Output CSV (wide table: meta cols + prob_<class> cols, one row per input) ===
+    if args.output:
+        csv_path = Path(args.output).with_suffix(".csv")
+    elif run_dir is not None:
+        csv_path = run_dir / "preds.csv"
+    else:
+        csv_path = None
+    if csv_path is not None:
+        with csv_path.open("w", encoding="utf-8", newline="") as f:
+            w = csv.writer(f)
+            cols = ["path", "basename", "pred_class", "pred_idx", "max_prob", "is_normal", "is_pseudo"]
+            if has_labels:
+                cols += ["true_class", "true_idx", "correct"]
+            cols += [f"prob_{c}" for c in classes]
+            w.writerow(cols)
+            for rec in results:
+                row = [
+                    rec["path"],
+                    Path(rec["path"]).stem,
+                    rec["pred_class"],
+                    rec["pred_idx"],
+                    f"{rec['max_prob']:.6f}",
+                    int(rec["is_normal"]),
+                    int(rec.get("is_pseudo", False)),
+                ]
+                if has_labels:
+                    ti = rec.get("true_idx", -1)
+                    row += [
+                        rec.get("true_class") or "",
+                        ti,
+                        int(ti == rec["pred_idx"]) if ti >= 0 else "",
+                    ]
+                row += [f"{rec['probs'][c]:.6f}" for c in classes]
+                w.writerow(row)
+        print(f"[*] preds.csv saved -> {csv_path}", file=sys.stderr)
+
     # === per_class_report ===
     if args.report_out and has_labels and HAVE_SKLEARN:
         acc = float(accuracy_score(all_labels, all_preds))
@@ -368,19 +404,30 @@ def main(default_model_glob: Optional[str] = None,
     elif args.save_wrong_out and not has_labels:
         print("[!] --save-wrong-out: label 추정 불가 (입력이 {class}/img.png 구조 아님)", file=sys.stderr)
 
-    # === Threshold sweep ===
+    # === Threshold sweep (stderr table + CSV when run_dir active) ===
     sweep = parse_threshold_sweep(args.threshold_sweep)
     if sweep and has_labels and HAVE_SKLEARN:
         print(f"\n[Threshold sweep] (label_known={sum(l>=0 for l in all_labels)}/{len(all_labels)})", file=sys.stderr)
         print(f"{'thresh':>8} {'normal_rate':>12} {'acc_kept':>9} {'kept_n':>7}", file=sys.stderr)
+        sweep_rows = []
         for th in sweep:
             kept = [(p, l) for p, l, mp in zip(all_preds, all_labels, all_max_probs) if mp >= th]
             normal_rate = 1.0 - len(kept) / max(1, len(all_preds))
             if not kept:
-                print(f"{th:8.3f} {normal_rate:12.3f} {'-':>9} {0:7d}", file=sys.stderr); continue
+                print(f"{th:8.3f} {normal_rate:12.3f} {'-':>9} {0:7d}", file=sys.stderr)
+                sweep_rows.append((th, normal_rate, "", 0)); continue
             preds_k, lbls_k = zip(*kept)
             acc_k = float(accuracy_score(lbls_k, preds_k))
             print(f"{th:8.3f} {normal_rate:12.3f} {acc_k:9.3f} {len(kept):7d}", file=sys.stderr)
+            sweep_rows.append((th, normal_rate, acc_k, len(kept)))
+        if run_dir is not None:
+            sweep_csv = run_dir / "threshold_sweep.csv"
+            with sweep_csv.open("w", encoding="utf-8", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["threshold", "normal_rate", "acc_kept", "kept_n"])
+                for th, nr, ak, kn in sweep_rows:
+                    w.writerow([f"{th:.4f}", f"{nr:.4f}", (f"{ak:.4f}" if ak != "" else ""), kn])
+            print(f"[*] threshold_sweep.csv saved -> {sweep_csv}", file=sys.stderr)
 
 
 if __name__ == "__main__":
