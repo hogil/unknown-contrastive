@@ -10,6 +10,11 @@ logs_predict_compound/
 result_wafer/
 result_chip/
 result_compound/
+
+# multi-label ablation outputs (Stage 1+)
+_dist_heatmaps_per_class/
+plots/
+results/
 TEST_image_root/
 TEST_positions_root/
 TEST_result_*/
