@@ -164,7 +164,87 @@ CSV 에 `confidence`, `is_pseudo` 컬럼 추가됨 (`_build_obj_id_maps.py` 의 
 
 ---
 
-## 6. logs_obj/build_<TS>_<status>/ 컨벤션
+## 6. Production predict (실전용 — `cnn_predict_*_prod.py`)
+
+dev predict (`cnn_predict_chip.py`, `cnn_predict_wafer.py`, `cnn_predict_compound.py`) 와 별개 entry. 입력이 `<image_root>/<product>/<line>/<YYYYMMDD>/` 트리이고 출력이 mirror `result_<kind>/<product>/<line>/<YYYYMMDD>/preds.parquet` (사내 DB 자동 ingestion 타깃).
+
+**입력 트리:**
+```
+<image_root>/AB/K1AB/20260502/*.png            (failbit map wafer 이미지만)
+<positions_root>/AB/K1AB/20260502/*.json       (sibling positions JSON)
+```
+
+**출력 트리:**
+```
+result_wafer/AB/K1AB/20260502/preds.parquet      (1 row / wafer)
+result_chip/AB/K1AB/20260502/preds.parquet       (1 row / chip)
+result_compound/AB/K1AB/20260502/preds.parquet   (1 row / chip, wafer_class 반복)
+
+logs_predict_<kind>/<TS>_<product>_<line>_<date>/_meta.json    (operational tracking, 프로젝트 사이드)
+logs_predict_<kind>/<TS>_<product>_<line>_<date>/run.log
+```
+
+**호출:**
+```bash
+# wafer (1 row / wafer, 가벼움)
+python cnn_predict_wafer_prod.py \
+    --image-root D:/path/to/image_root \
+    --positions-root D:/path/to/positions_root
+
+# chip (1 row / chip, defect chips with b ≥ 200)
+python cnn_predict_chip_prod.py \
+    --image-root D:/path/to/image_root \
+    --positions-root D:/path/to/positions_root
+
+# compound (1 row / chip, chip CNN + compound CNN 둘 다 사용)
+python cnn_predict_compound_prod.py \
+    --image-root D:/path/to/image_root \
+    --positions-root D:/path/to/positions_root
+
+# 단일 batch 만 (smoke / 부분 재실행)
+python cnn_predict_wafer_prod.py --image-root ... --positions-root ... --batch AB/K1AB/20260502
+
+# 글로벌 모델 사용 (per-product 학습 안 됐을 때)
+python cnn_predict_wafer_prod.py --image-root ... --positions-root ... \
+    --model-glob "logs_wafer/overall/best_model.pth"
+
+# 학습 분석 위해 CSV 도 같이 떨굼 (default OFF)
+python cnn_predict_wafer_prod.py ... --csv
+
+# 이미 결과 있으면 default skip — 강제 재실행
+python cnn_predict_wafer_prod.py ... --overwrite
+```
+
+**Parquet 읽기:**
+```python
+import pandas as pd
+df = pd.read_parquet('result_chip/AB/K1AB/20260502/preds.parquet')
+print(df.columns.tolist(), df.shape)
+# 분석 예
+high = df[df['max_prob'] >= 0.95]
+per_class = df['chip_object_class'].value_counts()
+```
+
+또는 DuckDB CLI:
+```bash
+duckdb -c "SELECT chip_object_class, COUNT(*) FROM 'result_chip/AB/K1AB/20260502/preds.parquet' GROUP BY 1"
+```
+
+**Per-product 모델 resolve:**
+- default: `--model-glob "logs_<kind>/{line}/overall/best_model.pth"` — `{line}` 자리에 batch line dir 명 (e.g. `K1AB`) 자동 치환
+- 사용자 지정: `--model-glob "logs_<kind>/overall/best_model.pth"` (placeholder 없이) → 글로벌 단일 모델 사용
+- compound prod 는 `--chip-model-glob` 도 별도 지정 (default `logs_chip/{line}/overall/best_model.pth`)
+
+**Volume 추정** (사내 typical case 5,000 wafer × 700 chip / 일 / line product):
+- wafer prod: 5,000 row/일 → CSV 도 OK
+- chip prod: 3.5M row/일 → **parquet 권장**
+- compound prod: 3.5M row/일 → **parquet 권장**
+
+`preds.csv` 는 default OFF (`--csv` 로 켜기). parquet 가 1차 산출물.
+
+---
+
+## 7. logs_obj/build_<TS>_<status>/ 컨벤션
 
 `_build_obj_id_maps.py` 산출물의 archive 폴더. status suffix 로 한눈에 결과 식별:
 

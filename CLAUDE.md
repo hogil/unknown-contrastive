@@ -83,13 +83,27 @@ CNN 분류기 (open-set, Normal 제외 학습):
 | `chip-object-dataset` | `chip-object-dataset` | — | inline chip-object crop dataset 검증 (`_sample_gen.save_chip_crops`) |
 | `stage3-compound` | `stage3-compound` | `/stage3-compound` | 3-stage 학습 orchestrator: chip 5-class (logs_chip/) → obj_id_map cache → 3-channel compound CNN (logs_compound/) |
 
-학습 / 추론 entry script — **kind 별로 분기된 6개**, 각자 default 박혀있음:
+학습 / 추론 entry script — **kind 별로 분기된 9개** (학습 3 + dev predict 3 + prod predict 3):
 
-| Kind | 학습 entry | 추론 entry | data root | log root | predict root |
+**Dev (단일 입력 폴더, JSON record + wide CSV):**
+
+| Kind | 학습 entry | dev 추론 entry | data root | log root | predict root |
 |---|---|---|---|---|---|
 | chip 5-class (object) | `cnn_train_chip.py` | `cnn_predict_chip.py` | `data/wm-811k/classification_chips/` | `logs_chip/` | `logs_predict_chip/<TS>_<input>/` |
 | wafer 33-class R-only | `cnn_train_wafer.py` | `cnn_predict_wafer.py` | `data/wm-811k/unknown/` | `logs_wafer/` | `logs_predict_wafer/<TS>_<input>/` |
 | wafer 33-class compound (R+G) | `cnn_train_compound.py` | `cnn_predict_compound.py` | `data/wm-811k/unknown/` + `obj_id_maps/` | `logs_compound/` | `logs_predict_compound/<TS>_<input>/` |
+
+**Prod (`<image_root>/<product>/<line>/<date>/` 트리 walk, parquet 출력):**
+
+| Kind | prod 추론 entry | 입력 트리 | 결과 트리 (DB ingestion) | row 단위 |
+|---|---|---|---|---|
+| wafer | `cnn_predict_wafer_prod.py` | `<image_root>/AB/K1AB/<YYYYMMDD>/*.png` | `result_wafer/AB/K1AB/<YYYYMMDD>/preds.parquet` | 1 row / wafer |
+| chip | `cnn_predict_chip_prod.py` | 동일 + sibling `<positions_root>/AB/K1AB/<YYYYMMDD>/*.json` (chip rect inline crop) | `result_chip/.../preds.parquet` | 1 row / chip |
+| compound | `cnn_predict_compound_prod.py` | 동일 + chip CNN inference inline → obj_id_map → 3ch wafer 추론 | `result_compound/.../preds.parquet` | 1 row / chip (wafer_class 반복, chip_object_class per chip) |
+
+각 prod batch 마다 별도 `logs_predict_<kind>/<TS>_<product>_<line>_<date>/_meta.json` 작성 (model 경로, n_input, n_processed, started/finished_at, status). DB 트리 (`result_*`) 와 분리.
+
+prod 모델 resolve: `--model-glob "logs_<kind>/{line}/overall/best_model.pth"` default — `{line}` 가 batch 의 line dir 명 (e.g. K1AB) 으로 substitute. 글로벌 모델 사용 시 `--model-glob "logs_<kind>/overall/best_model.pth"` 로 override.
 
 `cnn_train_chip.py` / `cnn_train_wafer.py` / `cnn_predict_chip.py` / `cnn_predict_wafer.py` 는 **`cnn_train.py` / `cnn_predict.py` engine 의 thin wrapper** — config 만 맨 위에 박혀있음. engine 직접 호출도 backward compat.
 

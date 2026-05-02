@@ -7,6 +7,13 @@ logs_obj/
 logs_predict_chip/
 logs_predict_wafer/
 logs_predict_compound/
+result_wafer/
+result_chip/
+result_compound/
+TEST_image_root/
+TEST_positions_root/
+TEST_result_*/
+TEST_logs_predict_*/
 models/
 _dist_heatmaps/
 _resize_compare/
