@@ -146,6 +146,57 @@ production (label 0%): alignment + uniformity 만.
 
 ---
 
+---
+
+## D-12. HDBSCAN tuning 추가 X — embedding 개선 우선
+
+**시점**: Iter 0 cluster-analyzer 진단 (2026-05-05).
+
+**결과**: 현재 HDBSCAN cfg (mcs=12, ms=1, eom) 가 sweep 결과 ARI 최대 (0.7143) 와 일치.
+모든 hyperparameter 조합에서 같은 split 발생 (특히 Full_*** 4 class).
+
+**채택**: HDBSCAN tuning 추가 안 함. 학습 측 (encoder / loss / sampling) 변경으로 만 개선.
+
+**rationale**: cluster-analyzer Test 3 sweep (min_cs 8~30, ms 1/4, eps 0/0.1) 에서 Full_scratch_rot
+가 항상 [101, 97] split. encoding 자체가 두 sub-style 인지. HDBSCAN 은 정확히 두 cluster 산출.
+
+---
+
+## D-13. Normal sampling 비율 조정 — 1순위 (Iter 1 계획)
+
+**시점**: Iter 0 chain 분석 (2026-05-05).
+
+**문제**: cluster 37 (Normal_bank_boundary, size 691) 가 cluster 12, 17 (Edge-Top/Bottom_bank_boundary)
+와 boundary blur. Normal noise_pct 22.9% 의 직접 원인. cluster 36, 38 도 Normal split 으로 발견됨.
+
+**채택 (계획)**: Normal 1000 → 200~500 으로 줄이고, 또는 oversampling 정책 도입.
+
+**rationale**: 합성 baseline 의 Normal 비율 12% (1000/8357) 가 너무 높아 Edge × bank_boundary
+와 manifold 가 겹침. production (Normal 80%) 흉내 위해서라도 dedicated Normal anchor 또는
+class-balanced sampling 필요.
+
+---
+
+## D-14. Hard mining 진화 — Robinson 2021 → NV-Retriever / SCHaNe
+
+**시점**: Iter 0 performance-research (2026-05-05).
+
+**기존 (D-6)**: Robinson 2021 InfoNCE β param.
+
+**업데이트**:
+- **NV-Retriever** (arxiv 2407.15831, NVIDIA 2024) — positive-aware false-negative filter.
+  Full_*** sub-cluster repulsion 직격 가능 (image-analyzer 의 cluster_split pairs 와 일치).
+- **SCHaNe** (arxiv 2308.14893) — dissimilarity-weighted hard negative re-weight on SupCon.
+  +3.32% few-shot 입증.
+
+**채택 (계획)**: Iter 1 부터 NV-Retriever filter 우선 시도. 효과 부족 시 SCHaNe 추가.
+구현 베이스: `pytorch-metric-learning` (6.3k stars, v2.9.0) 의 miner API drop-in.
+
+**rationale**: D-5 (SupCon 주력 X) 정책 유지하면서 SSL InfoNCE 위 hard mining 만 추가.
+SupCon-style filter (positive-aware) 는 SSL 에서도 augmentation positive 활용 가능.
+
+---
+
 ## 참고
 
 - 모든 metric 정의 → `METRICS.md`

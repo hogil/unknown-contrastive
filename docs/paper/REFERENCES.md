@@ -9,7 +9,10 @@
 - **Caron et al. 2020** — *Unsupervised Learning of Visual Features by Contrasting Cluster Assignments* (SwAV). [arxiv 2006.09882](https://arxiv.org/abs/2006.09882). Multi-crop, online clustering.
 - **Khosla et al. 2020** — *Supervised Contrastive Learning* (SupCon). [NeurIPS](https://proceedings.neurips.cc/paper/2020/file/d89a66c7c80a29b1bdbab0f2a1a94af8-Paper.pdf). 거부 (D-5).
 - **Caron et al. 2021** — *Emerging Properties in Self-Supervised Vision Transformers* (DINO). [arxiv 2104.14294](https://arxiv.org/abs/2104.14294). k-NN benchmark.
-- **Robinson et al. 2021** — *Contrastive Learning with Hard Negative Samples*. [ICLR / arxiv 2010.04592](https://arxiv.org/abs/2010.04592). Hard mining (Iter 3 도입 예정).
+- **Robinson et al. 2021** — *Contrastive Learning with Hard Negative Samples*. [ICLR / arxiv 2010.04592](https://arxiv.org/abs/2010.04592). Hard mining baseline (D-6, 후속 NV-Retriever/SCHaNe 로 업데이트 — D-14).
+- **NV-Retriever** (NVIDIA 2024) — *Positive-aware Hard-Negative Mining*. [arxiv 2407.15831](https://arxiv.org/abs/2407.15831). False-negative filter, Iter 1 도입 예정 (D-14).
+- **SCHaNe** — *When hard negative sampling meets supervised contrastive learning*. [arxiv 2308.14893](https://arxiv.org/abs/2308.14893). SupCon + dissimilarity weight, +3.32% few-shot.
+- **ProNC** — *Progressive Neural Collapse / ETF prototype*. [arxiv 2505.24254](https://arxiv.org/abs/2505.24254). ICLR 2026.
 - **Wang & Isola 2020** — *Understanding Contrastive Representation Learning through Alignment and Uniformity on the Hypersphere*. [ICML / arxiv 2005.10242](https://arxiv.org/abs/2005.10242). Alignment + Uniformity metric.
 
 ## Clustering metrics
@@ -48,3 +51,5 @@
 - scikit-learn — Pedregosa et al. 2011, JMLR.
 - PyTorch — Paszke et al. 2019, NeurIPS.
 - timm — Wightman 2019. https://github.com/rwightman/pytorch-image-models
+- **pytorch-metric-learning** (Musgrave) — production miner + SupConLoss API. https://github.com/KevinMusgrave/pytorch-metric-learning (6.3k stars, v2.9.0)
+- HobbitLong/SupContrast — SupCon reference implementation. https://github.com/HobbitLong/SupContrast (3.4k stars)
