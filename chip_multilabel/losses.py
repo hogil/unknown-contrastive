@@ -82,13 +82,50 @@ class BCEThenASL(nn.Module):
         return self.asl(logits, target)
 
 
-def build_loss(loss_name: str):
+class FocalLoss(nn.Module):
+    """Focal loss (Lin 2017, RetinaNet) for multi-class classification.
+
+    L = -alpha_c * (1 - p_c)^gamma * log(p_c)  for true class c.
+    """
+
+    def __init__(self, gamma: float = 2.0, label_smoothing: float = 0.0):
+        super().__init__()
+        self.gamma = gamma
+        self.smoothing = label_smoothing
+
+    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        log_probs = F.log_softmax(logits, dim=-1)
+        with torch.no_grad():
+            probs = log_probs.exp()
+        target = target.long()
+        nll = F.nll_loss(log_probs, target, reduction="none")
+        pt = probs.gather(-1, target.unsqueeze(-1)).squeeze(-1)
+        focal_term = (1.0 - pt).clamp(min=0).pow(self.gamma)
+        loss = focal_term * nll
+        return loss.mean()
+
+
+def build_loss(loss_name: str, **kw):
     if loss_name == "ce_ls01":
-        return CEWithSmoothing(smoothing=0.1), "class_index"
+        return CEWithSmoothing(smoothing=kw.get("ls", 0.1)), "class_index"
+    if loss_name == "ce_ls":
+        return CEWithSmoothing(smoothing=kw.get("ls", 0.1)), "class_index"
+    if loss_name == "focal":
+        return FocalLoss(gamma=kw.get("gamma", 2.0),
+                         label_smoothing=kw.get("ls", 0.0)), "class_index"
     if loss_name == "asl":
-        return AsymmetricLoss(gamma_pos=1.0, gamma_neg=4.0, clip=0.05), "multi_hot"
+        return AsymmetricLoss(
+            gamma_pos=kw.get("gamma_pos", 1.0),
+            gamma_neg=kw.get("gamma_neg", 4.0),
+            clip=kw.get("clip", 0.05),
+        ), "multi_hot"
     if loss_name == "bce":
         return BCEMultiHot(), "multi_hot"
     if loss_name == "bce_then_asl":
-        return BCEThenASL(warmup_epochs=5), "multi_hot"
+        return BCEThenASL(warmup_epochs=kw.get("warmup_epochs", 5),
+                         asl_kwargs={
+                             "gamma_pos": kw.get("gamma_pos", 1.0),
+                             "gamma_neg": kw.get("gamma_neg", 4.0),
+                             "clip": kw.get("clip", 0.05),
+                         }), "multi_hot"
     raise ValueError(f"unknown loss: {loss_name}")

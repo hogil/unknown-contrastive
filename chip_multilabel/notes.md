@@ -210,6 +210,108 @@ Stage 2 main run (`outputs/stage2_260505_170121/`) 은 inference variants I0-I9 
 
 ---
 
+## Iter 5 — Phase A1 LS sweep — 260505_175105
+
+T1 (CE+LS) 의 LS 만 sweep, LR=1e-4, ep=8 fixed, 4 trains 각 ~350s sequential. inference I3/I7/I10 동시.
+
+### A1 + extension 풀 결과
+
+| LS | I3 | I7 | I10 |
+|---|---|---|---|
+| 0.05 | 0.7899 | 0.7964 | 0.7941 |
+| 0.10 | 0.8363 | 0.8220 | 0.8317 |
+| 0.15 | 0.8961 | 0.8959 | 0.8900 |
+| **0.20** | 0.9239 | **0.9268** ★ | 0.8841 |
+| 0.25 | 0.8663 | 0.8647 | 0.8398 |
+| 0.30 | 0.8185 | 0.8048 | 0.7680 |
+| 0.35 | 0.7279 | 0.7204 | 0.6719 |
+
+곡선 모양: 0.05→0.20 monotonic 상승 → 0.20 sharp peak → 0.20~0.35 monotonic 하락. **LS=0.20 = 명확한 peak**.
+
+best A1: **LS=0.20 + I7 = macro_f1 0.9268, top1_11 0.8449**.
+
+vs iter 4 baseline (LS=0.10 + I10 = 0.8634 / 0.7006): **+0.0634 macro_f1, +0.144 top1_11** — 엄청난 도약.
+
+### 진단
+
+1. **LS monotonic 상승** — 0.05→0.20 까지 macro_f1 가 0.79→0.93 로 단조 증가. 0.20 이 grid 최대값이라 **extension 필수**.
+2. **LS 0.10 (default 한 거) 가 진짜 sub-optimal 였음** — fork over-firing 의 근본 원인이 overconfidence 였고, LS 가 0.20 정도 강하게 가야 model 이 noise 영역에서 fork prob 안 띄움.
+3. **I10 (entropy → Normal) 이 LS=0.20 에서 후퇴** — LS 강하게 주면 logit 엔트로피 자연스럽게 높아져 entropy gate 가 너무 자주 발동 → Normal 오인 증가. 따라서 LS=0.20 + I7 (joint coord descent threshold) 이 최적.
+4. **+0.144 top1_11 가 macro_f1 (+0.063) 보다 큼** — 11-class single-equivalent 결정이 훨씬 정확해짐. Normal/Invalid 잡는 것도 좋아짐.
+
+### 다음
+
+- **A1 extension**: LS ∈ {0.25, 0.30, 0.35} 추가 sweep — LS 더 높여도 계속 좋아질 가능성. 3 trains × 6분 = ~18분
+- **A2**: LR sweep at LS* (0.20 또는 extension 결과)
+- **A3**: epochs sweep
+
+---
+
+## 참조 도입 — anomaly-detection BKM (사용자 directive 260505 18:55)
+
+`D:/project/anomaly-detection/train.py:1494-1530` + `:214-253` + `docs/summary.md` 의 검증된 기법:
+
+### LR scheduler: warmup + cosine
+
+현재 우리: 단일 LR, `CosineAnnealingLR(T_max=epochs)` 만, **warmup 없음**.
+검증된 형태:
+```python
+warmup = LinearLR(optimizer, start_factor=0.05, total_iters=warmup_epochs)
+cosine = CosineAnnealingLR(optimizer, T_max=epochs - warmup_epochs, eta_min=1e-6)
+scheduler = SequentialLR(optimizer, [warmup, cosine], milestones=[warmup_epochs])
+```
+`start_factor=0.05` 가 핵심 — **gradient spike 방지**. 0.1 도 일부 seed 에서 ep4-8 spike 발생 (anomaly-detection 보고).
+
+우리 LR=3e-4 가 epoch 1 부터 2.88e-4 peak 으로 들어가 collapse — warmup 1-2 ep 추가하면 LR 영역 더 넓힐 수 있음 (LR=3e-4 도 활용 가능 검토).
+
+### Two-LR group (backbone vs head)
+
+검증된 (anomaly-detection):
+- `lr_backbone = 2e-5`
+- `lr_head = 2e-4` (10x)
+
+우리는 단일 1e-4. backbone 은 TAPT 강하니 더 작게 (예 5e-5) + head 는 더 크게 (예 5e-4) 가 합리적.
+
+### EMA with dynamic decay warmup
+
+`ModelEMA(decay=0.95)` + `decay_t = min(target, (1 + step) / (10 + step))` — 초기엔 빠르게 model 따라가고 점차 0.95 수렴.
+small dataset (700 samples × 132 iter/ep × 20ep ≈ 2640 step) 에서 target=0.95 권장.
+
+### gradient clip
+
+검증된 (BKM): `grad_clip = 0.5`. 우리는 1.0 사용 중.
+
+### stochastic depth
+
+검증된 (BKM): `0.05`. 우리는 0.
+
+### Best Known Method (BKM) 테이블 — 도메인 다름 주의
+
+`docs/summary.md:159-172` 에서 binary anomaly chart 도메인 BKM:
+| axis | baseline | BKM | F1 |
+|---|---|---|---|
+| label_smoothing | 0 | **0.02** | 0.9981 |
+| focal_gamma | 0 | **2.0** | 0.9964 |
+| stochastic_depth | 0 | **0.05** | 0.9985 |
+| ema | off | **0.95** | 0.9964 |
+| grad_clip | 1.0 | **0.5** | 0.9964 |
+
+**우리 chip multi-label 도메인은 다름** — 우리는 LS=0.20 이 winner (anomaly LS=0.02 보다 10x 큼). 이는 task 차이 (multi-class chip 패턴 vs binary chart) 때문. 그러나 **warmup / EMA / stochastic_depth / two-LR group / grad_clip** 같은 구조적 기법은 도메인 무관하게 도움될 가능성.
+
+### Phase F (best-known-method) 후보
+
+Phase A3 끝나고 (사용자 승인 후) Phase F 에 다음 조합 시도:
+1. **Warmup 추가** (start_factor=0.05, warmup_epochs=2) + cosine eta_min=1e-6
+2. **Two-LR group**: backbone 5e-5, head 5e-4
+3. **EMA(0.95) + dynamic decay warmup**
+4. **Stochastic depth 0.05** (timm 의 ConvNeXtV2 drop_path_rate=0.05)
+5. **Grad clip 0.5** (현재 1.0)
+6. **(우리 winner 유지)** LS=0.20 + I7 inference
+
+이 5개 중 어떤 게 효과적일지는 새 sweep 필요. 모두 동시 도입하면 confound — coordinate descent 권장.
+
+---
+
 ## TODO — Stage 2 끝난 후 (사용자 directive 260505)
 
 1. **합성 난이도 조절** — 현재 combo 합성 (min-blend) 결과 라벨링이 너무 어려움 (eval 결과 macro_f1 ~0.85 근처 plateau). 보강:

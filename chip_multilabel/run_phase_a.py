@@ -188,6 +188,10 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--accum", type=int, default=4)
     ap.add_argument("--gpu-mem-threshold", type=float, default=90.0)
+    ap.add_argument("--ls-star", type=float, default=None,
+                    help="override LS* default (0.10) when running --phase a2 / a3 standalone")
+    ap.add_argument("--lr-star", type=float, default=None,
+                    help="override LR* default (1e-4) when running --phase a3 standalone")
     args = ap.parse_args()
 
     ls_grid = [float(x) for x in args.ls_grid.split(",")]
@@ -248,8 +252,8 @@ def main() -> None:
         print(f"[phase_a] {phase_label}  ls={ls} lr={lr} ep={epochs}  best_inf={b['inference_id']}  macro_f1={b['macro_f1']:.4f}  top1_11={b['top1_11']:.4f}")
         return b
 
-    ls_star = 0.10
-    lr_star = 1e-4
+    ls_star = args.ls_star if args.ls_star is not None else 0.10
+    lr_star = args.lr_star if args.lr_star is not None else 1e-4
     ep_star = 8
 
     if args.phase in ("a1", "all"):

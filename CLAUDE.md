@@ -50,8 +50,23 @@ CNN 분류기 (33 known + Normal=unknown). 본 repo 는 unsupervised side 만 �
 | `evaluation` | `evaluation` | val 이미지 + 학습된 모델 → 공식 metric (Tier 1+2 + class_fragmentation_summary) → `eval_summary.json`. **커스텀 metric 출력 금지** — `docs/contrastive-eval/` 정책 참조. |
 | `composite-map` | `composite-map` | cluster top-K medoid composite PNG. 공식 (자매 repo `mapviewer/`) 무수정. |
 | `contrastive-eval` (skill) | (skill only) | eval pipeline 적용 표준 — Tier 1+2 산출 / 콘솔 보고 / 커스텀 metric 금지. agent 가 evaluation 호출 시 자동 활용. |
+| `paper-recorder` | `paper-recorder` | ★ 연구 진행 자동 기록 — `docs/paper/` 8 section 누적 update. 매 milestone (학습 완료 / design 변경 / 분석 발견) 마다 invoke. ITERATIONS append-only. |
 
 세부는 `.claude/skills/<name>/SKILL.md`.
+
+### paper-recorder 사용 (★)
+
+연구 진행을 paper-friendly 누적 markdown 으로 기록. invocation:
+```
+"최신 학습 결과 paper 에 기록"   → ITERATIONS / RESULTS / EXPERIMENTS update
+"이 design 변경 반영"             → METHOD / DATASET update
+"abstract 갱신"                   → ABSTRACT v 번호 증가 + rewrite
+"iteration 시작"                  → ITERATIONS placeholder
+```
+
+산출 위치: `docs/paper/{README, ABSTRACT, METHOD, DATASET, EXPERIMENTS, RESULTS, ITERATIONS, REFERENCES, FIGURES}.md` 8 파일.
+
+ITERATIONS.md 는 append-only — 과거 iteration 결과 수정 금지.
 
 ## Contrastive 평가 정책 (★)
 

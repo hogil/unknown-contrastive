@@ -39,6 +39,7 @@ from .losses import BCEThenASL, build_loss
 
 VARIANT_TO_LOSS = {
     "T1": "ce_ls01",
+    "T3": "focal",
     "T4": "asl",
     "T5": "bce",
     "T6": "bce_then_asl",
