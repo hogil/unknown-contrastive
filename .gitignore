@@ -1,30 +1,7 @@
 # ===== large or per-run output (절대 commit 금지, 절대 삭제 금지) =====
+outputs/
+logs/
 log/
-logs_chip/
-logs_wafer/
-logs_compound/
-logs_obj/
-logs_predict_chip/
-logs_predict_wafer/
-logs_predict_compound/
-result_wafer/
-result_chip/
-result_compound/
-
-# multi-label ablation outputs (Stage 1+)
-_dist_heatmaps_per_class/
-plots/
-results/
-TEST_image_root/
-TEST_positions_root/
-TEST_result_*/
-TEST_logs_predict_*/
-models/
-_dist_heatmaps/
-_resize_compare/
-_resize_compare1024/
-_resize_compare4/
-_resize_compare512/
 
 # ===== python =====
 __pycache__/

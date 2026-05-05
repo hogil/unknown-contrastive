@@ -1,613 +1,107 @@
-# Usage Guide — wafer fail-bit synthesis · CNN classifier
+# Usage Guide — contrastive learning + unknown clustering
 
-전체 파이프라인 사용법. 한 번씩 따라하면 fresh clone에서도 처음부터 끝까지 돌아갑니다.
-
----
-
-## 1. 파이프라인 한 눈에
+전체 파이프라인 사용법.
 
 ```
 ┌─────────────────────────┐    ┌──────────────────────────┐    ┌──────────────────────────┐
-│ Stage A: 데이터 합성     │    │ Stage B: 학습             │    │ Stage C: 추론             │
-│ _sample_gen.py          │ →  │ cnn_train_chip.py         │ →  │ cnn_predict_chip.py       │
-│ _sample_gen_gpu.py      │    │ cnn_train_wafer.py        │    │ cnn_predict_wafer.py      │
-│                         │    │ cnn_train_compound.py     │    │ cnn_predict_compound.py   │
-│ 36-class palette PNG +  │    │                           │    │                          │
-│ positions JSON +        │    │ ConvNeXtV2 base FCMAE     │    │ overall/best_model.pth   │
-│ chip 200x200 crops      │    │ 모두 supervised, EMA+CW   │    │ + threshold + sweep      │
+│ 0. backbone 준비        │    │ 1. contrastive 학습       │    │ 2. embedding + cluster   │
+│ (sister repo known-cnn) │ →  │ run_contrastive.py        │ →  │ HDBSCAN → centroids       │
+│ cnn_train_*.py 결과      │    │ _contrastive_n50.py       │    │ medoid composite per      │
+│ best_model.pth          │    │ contrastive_unknown_n50.py│    │ cluster                   │
 └─────────────────────────┘    └──────────────────────────┘    └──────────────────────────┘
-                                          ↓ logs_<kind>/<run>/                ↓ logs_predict_<kind>/<TS>/
-                                          best_model.pth                       preds.json
-                                          history.json                         per_class_report.txt
-                                          curves.png                           wrong/<true>/<pred>/*.png
-                                          + overall/ (val F1 best mirror)
-```
-
-**1회성 사전 단계** (fresh clone 시):
-
-```bash
-python download_backbone.py     # ConvNeXtV2 FCMAE pretrain (~340 MB → models/)
-python _dist_learn.py           # WM-811K cca/* heatmap (~10s, → _dist_heatmaps/)
+                                          ↓ outputs/logs_contrastive/<tag>_<TS>/
+                                          best_model.pth
+                                          embeddings.npy + metadata.json
+                                          clusters.parquet
+                                          medoids/<cid>/*.png
+                                          composite_map_<cid>.png
+                                          eval_summary.json
 ```
 
 ---
 
-## 2. 6 entry script — kind 별 학습 + 추론 (정식 진입점)
+## 1. 학습 (Windows / smoke 기본)
 
-| 분야 | 학습 entry | 추론 entry | data root | log root | predict root |
-|---|---|---|---|---|---|
-| **chip** 5-class object | `cnn_train_chip.py` | `cnn_predict_chip.py` | `data/wm-811k/classification_chips/` | `logs_chip/` | `logs_predict_chip/<TS>_<input>/` |
-| **wafer** 33-class R-only | `cnn_train_wafer.py` | `cnn_predict_wafer.py` | `data/wm-811k/unknown/` | `logs_wafer/` | `logs_predict_wafer/<TS>_<input>/` |
-| **compound** 33-class R+G | `cnn_train_compound.py` | `cnn_predict_compound.py` | `data/wm-811k/unknown/` + `obj_id_maps/` | `logs_compound/` | `logs_predict_compound/<TS>_<input>/` |
+```bash
+# default smoke (epochs=2)
+python run_contrastive.py
 
-각 wrapper 맨 위 `# === CONFIG ===` 섹션에 default 노출. 명시 인자 (`--data-dir`, `--model`, `--input` 등) 로 override 가능.
+# 본 학습
+EPOCHS=20 BATCH=32 python run_contrastive.py
+BACKBONE_CKPT=D:/project/known-cnn/outputs/logs_wafer/overall/best_model.pth python run_contrastive.py
+```
 
-**추론 자동 동작 (3 predict wrapper 공통):**
-- `--model` 생략 → `logs_<kind>/overall/best_model.pth` 자동 로드
-- 시작 시 `_overall_meta.json` 의 best_run / val_f1 / seeded_at stderr 출력
-- `logs_predict_<kind>/<TS>_<input_name>/` 폴더 자동 (`--no-run-dir` 로 끄기). 내부 산출물:
-  - `preds.json` — record per input (path, pred_class, max_prob, probs dict, true_class, is_pseudo, ...)
-  - **`preds.csv` — wide meta + 단일 pred row per input** (multi-label 시 row 여러 개로 확장 예정 — `prob_<class>` 와이드 dummy 컬럼 안 씀). cols (왼→오):
-    - `path, basename`
-    - basename `_` split — wafer/compound: `prefix, kind, w_idx, date, time, yld, syp, tester, device` / chip: `prefix, kind, w_idx, date, time, tester, device, gx_token, gy_token, b_token`
-    - sibling JSON (wafer/compound 만): `partid, pgm, wafer, stime, step, yield, sys, tm, lt, netd, gd`
-    - pred meta: `pred_class, pred_idx, max_prob, is_normal, is_pseudo, [obj_id_npy]`
-    - label (있으면): `true_class, true_idx, correct`
-  - `per_class_report.txt` — sklearn classification_report (label 추정 가능 시)
-  - `threshold_sweep.csv` — `--threshold-sweep` 줬을 때만. cols: `threshold, normal_rate, acc_kept, kept_n`
-  - `wrong/<true>/<pred>/*.png` — 틀린 예측 갤러리
+`run_contrastive.py` 가 자매 repo `known-cnn` 의 `cnn_train` 산출물에서 state_dict 만
+추출해 임시 `.pth` 로 저장 후 `contrastive.py` 의 `LOCAL_BACKBONE_WEIGHTS` 로 inject.
+contrastive.py 자체 수정 X — env var / CFG override 만.
+
+## 2. small-budget 학습 (per-class 50, normal 200)
+
+```bash
+python _contrastive_n50.py \
+  --epochs 20 --batch 16 --per-class 50 --normal 200 \
+  --backbone D:/project/known-cnn/outputs/logs_wafer/overall/best_model.pth
+```
+
+subset hardlink builder 자동 포함 → 작은 학습용 mini-dataset 만들고 contrastive.py 호출.
+
+## 3. unknown 변종
+
+```bash
+python _contrastive_unknown_n50.py \
+  --epochs 20 --batch 16 --per-class 50 --normal 200
+```
+
+unknown class 강조한 sampling.
+
+## 4. 평가 (ARI / NMI / silhouette / purity)
+
+```bash
+python _eval_contrastive_n50.py \
+  --run outputs/logs_contrastive/<tag>_<TS>/
+
+python _eval_contrastive_unknown_n50.py \
+  --run outputs/logs_contrastive/<tag>_<TS>/
+```
+
+`eval_summary.json` 산출. silhouette는 cosine 기반.
+
+## 5. Production daily inference
+
+```bash
+python predict_contrastive_daily.py \
+  --image-root <image_root> \
+  --output-root <output_root> \
+  --model outputs/logs_contrastive/<tag>_<TS>/best_model.pth \
+  --device <product> --processid <line> --date <YYYYMMDD>
+```
+
+입력: `<image_root>/<device>/<processid>/<yyyymmdd>/*.png`
+출력: `<output_root>/<device>/<processid>/<yyyymmdd>/`
+- `manifest.json`, `run.log`
+- `preds.parquet`, `clusters.parquet`, `cluster_members.parquet`
+- `medoids/<cid>/*.png`, `review/`, `embeddings/`
 
 ---
 
-## 3. 파일 호출 관계 (어떤 entry 가 어떤 `_*` 파일 부르나)
+## 6. 외부 dependency (자매 repo)
 
-```
-cnn_train_chip.py         (CONFIG: chip default)
-    └── cnn_train.py      (engine — kwargs main())
-        └── _resource_guard.py   (assess_start, ResourceMonitor)
-
-cnn_train_wafer.py        (CONFIG: wafer default)
-    └── cnn_train.py      (engine, 동일)
-
-cnn_train_compound.py     (독립 — 3채널 dataset 자체 구현)
-    └── _resource_guard.py
-    └── (training 시) data/.../obj_id_maps/*.npy  +  _meta.json (n_chip_objects 분모)
-
-cnn_predict_chip.py       (CONFIG: chip default)
-    └── cnn_predict.py    (engine — kwargs main())
-
-cnn_predict_wafer.py      (CONFIG: wafer default)
-    └── cnn_predict.py    (engine, 동일)
-
-cnn_predict_compound.py   (독립 — 3채널 dataset)
-    └── (predict 시) data/.../obj_id_maps/*.npy  +  _meta.json
-
-_build_obj_id_maps.py     (preprocessing inference: chip CNN → wafer obj_id 맵)
-    └── logs_chip/.../best_model.pth   (학습된 chip 분류기 가중치)
-    └── 출력: data/wm-811k/obj_id_maps/<device>_<date>/<basename>.npy + .png + predictions.csv
-
-_orchestrator_compound_chain.py   (build → compound 학습 chain)
-    └── _orchestrator_resource_guard.py   (sibling watchdog)
-    └── cnn_train_compound.py             (build 끝나면 자동 dispatch)
-
-_sample_gen.py / _sample_gen_gpu.py   (데이터 생성)
-    └── _fq_metadata.py    (FTN/QTN keys / values)
-    └── _dist_heatmaps/    (WM-811K cca/* 학습 heatmap, _dist_learn.py 산출)
-    └── 출력: data/wm-811k/unknown/, classification_chips/, positions/unknown/
-```
-
-→ **사용자가 직접 부르는 건 6 entry + `_sample_gen*` + `_verify.py` + `_build_obj_id_maps.py` 정도**. 나머지 `_*.py` 는 위 entry 가 import 하거나 orchestrator 가 sibling 으로 띄우는 helper.
-
----
-
-## 4. 3-stage compound 파이프라인
-
-`cnn_train_compound.py` 는 chip 분류기 결과를 G 채널로 합쳐 학습한다. 3 단계:
-
-```
-Stage 1 │ chip 5-class 분류기 학습     │ python cnn_train_chip.py --epochs 30 --model-tag chip5
-        │                              │ → logs_chip/<run>/best_model.pth + overall/
-Stage 2 │ chip CNN inference →         │ python _build_obj_id_maps.py \
-        │ wafer 마다 obj_id .npy 생성  │     --chip-model logs_chip/overall/best_model.pth \
-        │                              │     --batch 128 --device cuda
-        │                              │ → data/wm-811k/obj_id_maps/<device>_<date>/*.npy + predictions.csv
-Stage 3 │ 3-channel compound CNN 학습  │ python cnn_train_compound.py --epochs 30 --model-tag compound33
-        │ R=failbit/31, G=obj_id/N,B=0 │ → logs_compound/<run>/best_model.pth + overall/
-```
-
-`stage3-compound` agent + `_orchestrator_compound_chain.py` 가 Stage 2→3 자동 chain. Stage 2 build 끝나면 chain 이 즉시 cnn_train_compound.py dispatch + run_dir 에 산출물 archive (`predictions.csv`, `obj_id_maps_meta.json`, `counts.txt`, `compound_dispatch.log`).
-
----
-
-## 5. pseudo-label (opt-in)
-
-high-confidence prediction 결과를 다시 학습 데이터로 추가해서 다음 round 학습 시 self-improvement 시도. **default OFF**, 옵션 줘야 활성.
-
-**작동 원리:**
-1. 추론 시 각 입력의 max softmax prob (= confidence) 계산
-2. confidence ≥ `--pseudo-label-threshold` 이면 (그리고 Normal/unknown 이 아니면)
-3. 예측된 class 폴더에 입력 파일 복사: `<out>/<pred_class>/<basename><suffix>.<ext>`
-4. `<suffix>` 는 default `_PSEUDO` — 원본 학습 데이터와 grep 으로 구분 가능
-5. `--pseudo-label-cap-per-class N` 으로 class 당 최대 개수 제한 (불균형 방지)
-
-**3개 entry 에 다 박혀있음:**
+backbone, 합성 데이터는 자매 repo `known-cnn` 가 담당:
 
 ```bash
-# chip — chip CNN 으로 chip crop 자기 라벨링 (build 단계에서)
-python _build_obj_id_maps.py --chip-model logs_chip/overall/best_model.pth \
-    --pseudo-label-threshold 0.97 --pseudo-label-cap-per-class 1000
+# 합성 데이터 생성 (known-cnn)
+cd D:/project/known-cnn
+python dist_apply/_sample_gen.py
+python dist_apply/_sample_canvas_gen.py
 
-# chip predict — 기존 chip 데이터셋 위에 high-conf 만 추가 라벨
-python cnn_predict_chip.py --pseudo-label-threshold 0.97 --pseudo-label-cap-per-class 500
-
-# wafer R-only — high-conf wafer 추가 라벨링
-python cnn_predict_wafer.py --pseudo-label-threshold 0.95 --pseudo-label-cap-per-class 200
-
-# compound — 동일
-python cnn_predict_compound.py --pseudo-label-threshold 0.95 --pseudo-label-cap-per-class 200
+# CNN supervised 학습 → backbone 산출 (known-cnn)
+python wafer_train/cnn_train_wafer.py
+# → outputs/logs_wafer/<run>/best_model.pth
 ```
 
-**저장 결과:**
-```
-classification_chips/scratch/AAU220_..._X12_Y17_B286_PSEUDO.png    ← chip pseudo (build)
-classification_chips/scratch/AAU220_..._X12_Y17_B286_PSEUDO.png    ← chip pseudo (predict)
-unknown/Center_scratch/<wafer_basename>_PSEUDO.png                 ← wafer pseudo
-```
+이 산출 backbone 을 본 repo 가 `BACKBONE_CKPT` 로 받는다.
 
-CSV 에 `confidence`, `is_pseudo` 컬럼 추가됨 (`_build_obj_id_maps.py` 의 `predictions.csv`). predict scripts 도 `is_pseudo=true` 가 결과 JSON record 에 박힘.
+## 7. 절대 금기
 
-**주의:**
-- threshold 너무 낮으면 (e.g. 0.7) 모델이 자기 실수에 confidence 만 더 부여 → bias 누적. 권장 0.95+.
-- `--pseudo-label-cap-per-class` 안 주면 쉬운 class (e.g. bank_boundary) 만 폭증 → class imbalance 왜곡.
-- 다음 학습 round 시 `_PSEUDO` 만 골라 down-weight 하거나 별도 set 으로 분리 권장.
-
----
-
-## 6. Production predict (실전용 — `cnn_predict_*_prod.py`)
-
-dev predict (`cnn_predict_chip.py`, `cnn_predict_wafer.py`, `cnn_predict_compound.py`) 와 별개 entry. 입력이 `<image_root>/<product>/<line>/<YYYYMMDD>/` 트리이고 출력이 mirror `result_<kind>/<product>/<line>/<YYYYMMDD>/preds.parquet` (사내 DB 자동 ingestion 타깃).
-
-**입력 트리:**
-```
-<image_root>/AB/K1AB/20260502/*.png            (failbit map wafer 이미지만)
-<positions_root>/AB/K1AB/20260502/*.json       (sibling positions JSON)
-```
-
-**출력 트리:**
-```
-result_wafer/AB/K1AB/20260502/preds.parquet      (1 row / wafer)
-result_chip/AB/K1AB/20260502/preds.parquet       (1 row / chip)
-result_compound/AB/K1AB/20260502/preds.parquet   (1 row / chip, wafer_class 반복)
-
-logs_predict_<kind>/<TS>_<product>_<line>_<date>/_meta.json    (operational tracking, 프로젝트 사이드)
-logs_predict_<kind>/<TS>_<product>_<line>_<date>/run.log
-```
-
-**호출:**
-```bash
-# wafer (1 row / wafer, 가벼움)
-python cnn_predict_wafer_prod.py \
-    --image-root D:/path/to/image_root \
-    --positions-root D:/path/to/positions_root
-
-# chip (1 row / chip, defect chips with b ≥ 200)
-python cnn_predict_chip_prod.py \
-    --image-root D:/path/to/image_root \
-    --positions-root D:/path/to/positions_root
-
-# compound (1 row / chip, chip CNN + compound CNN 둘 다 사용)
-python cnn_predict_compound_prod.py \
-    --image-root D:/path/to/image_root \
-    --positions-root D:/path/to/positions_root
-
-# 단일 batch 만 (smoke / 부분 재실행)
-python cnn_predict_wafer_prod.py --image-root ... --positions-root ... --batch AB/K1AB/20260502
-
-# 글로벌 모델 사용 (per-product 학습 안 됐을 때)
-python cnn_predict_wafer_prod.py --image-root ... --positions-root ... \
-    --model-glob "logs_wafer/overall/best_model.pth"
-
-# 학습 분석 위해 CSV 도 같이 떨굼 (default OFF)
-python cnn_predict_wafer_prod.py ... --csv
-
-# 이미 결과 있으면 default skip — 강제 재실행
-python cnn_predict_wafer_prod.py ... --overwrite
-```
-
-**Parquet 읽기:**
-```python
-import pandas as pd
-df = pd.read_parquet('result_chip/AB/K1AB/20260502/preds.parquet')
-print(df.columns.tolist(), df.shape)
-# 분석 예
-high = df[df['max_prob'] >= 0.95]
-per_class = df['chip_object_class'].value_counts()
-```
-
-또는 DuckDB CLI:
-```bash
-duckdb -c "SELECT chip_object_class, COUNT(*) FROM 'result_chip/AB/K1AB/20260502/preds.parquet' GROUP BY 1"
-```
-
-**Per-product 모델 resolve:**
-- default: `--model-glob "logs_<kind>/{line}/overall/best_model.pth"` — `{line}` 자리에 batch line dir 명 (e.g. `K1AB`) 자동 치환
-- 사용자 지정: `--model-glob "logs_<kind>/overall/best_model.pth"` (placeholder 없이) → 글로벌 단일 모델 사용
-- compound prod 는 `--chip-model-glob` 도 별도 지정 (default `logs_chip/{line}/overall/best_model.pth`)
-
-**Volume 추정** (사내 typical case 5,000 wafer × 700 chip / 일 / line product):
-- wafer prod: 5,000 row/일 → CSV 도 OK
-- chip prod: 3.5M row/일 → **parquet 권장**
-- compound prod: 3.5M row/일 → **parquet 권장**
-
-`preds.csv` 는 default OFF (`--csv` 로 켜기). parquet 가 1차 산출물.
-
----
-
-## 7. logs_obj/build_<TS>_<status>/ 컨벤션
-
-`_build_obj_id_maps.py` 산출물의 archive 폴더. status suffix 로 한눈에 결과 식별:
-
-```
-logs_obj/
-├─ build_260502_063934_ABORTED/    ← build 가 abort/사용자 kill 로 끝남
-├─ build_260502_070940_ABORTED/    ← 동일
-└─ build_260502_075725_OK/         ← 성공 — chain 이 _OK rename
-```
-
-각 폴더 내:
-- `_meta.json` (orchestration meta — chip_model / batch / started_at)
-- `build.log/err`, `guard.log/err`, `chain.log/err`
-- 성공 시 추가: `obj_id_maps_meta.json`, `predictions.csv` 사본, `counts.txt`, `compound_dispatch.log`
-
-`_orchestrator_compound_chain.py` 가 시작 시 status suffix 없는 옛 폴더 자동 sweep → `_ABORTED`.
-
----
-
-## 2. 이미지 생성
-
-### 2.1. 기본 (multiprocessing CPU)
-
-```bash
-# 클래스당 1장 (smoke 36장, 약 2분)
-python _sample_gen.py --n 1 --workers 4
-
-# 본 생성 (클래스당 200장 = 약 6800장, 약 30-40분, --workers 8)
-python _sample_gen.py --n 200 --workers 8
-```
-
-옵션:
-- `--n N`: 클래스당 샘플 수 (default 200)
-- `--workers W`: 병렬 worker (default 4)
-
-### 2.2. GPU 가속 (single-process + ThreadPool)
-
-```bash
-# 클래스당 200장 (CPU 대비 GPU에서 약 3-4배 빠름)
-python _sample_gen_gpu.py --n 200 --save-workers 8
-
-# 특정 distribution만 (예: Normal class만 5000장)
-python _sample_gen_gpu.py --n 5000 --only-class Normal --save-workers 12
-
-# seed offset — 기존 파일과 충돌 안 나게 추가 생성
-python _sample_gen_gpu.py --n 100 --seed-offset 100000
-```
-
-옵션:
-- `--n N`: 클래스당 샘플 수
-- `--save-workers W`: PNG/JSON 저장 thread pool (default 8)
-- `--only-class CLS`: 한 distribution만 생성 (Center / Donut / Edge-Ring / Edge-Bottom / Edge-Top / Full / Thick-Edge / Normal / Starburst / CommaCluster)
-- `--seed-offset N`: seed 시작 오프셋 (filename collision 회피)
-
-### 2.3. 출력 위치
-
-```
-D:/project/data/wm-811k/unknown/<class>/<filename>.png
-D:/project/data/positions/unknown/<class>/<filename>.json
-```
-
-각 JSON 자동 포함: `partid`/`part_id`/`pgm`/`ftn_keys`(128)/`qtn_keys`(128) + chip별 `f`/`q` (128 dense).
-
-### 2.4. 검증
-
-```bash
-# 클래스당 5장 random sampling 검증 (구조 + JSON 스키마 + bin pool + cross-validation)
-python _verify.py --sample 5
-
-# strict 모드 — FTN/QTN 분석성 (defect chip hot ratio ≥3x) 추가 검증
-python _verify.py --sample 10 --strict
-
-# 특정 클래스만
-python _verify.py --class Center_bank_boundary --sample 20
-
-# 전체 (11600장 모두) — 시간 걸림
-python _verify.py --sample 0
-```
-
-출력에는 클래스별 **defect chip 개수 분포** 표가 포함돼서 generation sanity 체크 가능.
-
----
-
-## 3. CNN 분류기 학습
-
-### 3.1. Quickstart
-
-```bash
-# smoke test — 33 class × 20 sample = 660 (약 5분)
-python cnn_train.py \
-    --epochs 2 \
-    --subset-config experiments/quick.yaml \
-    --batch 8 \
-    --model-tag smoke
-
-# baseline — 전체 데이터, 30 epoch
-python cnn_train.py \
-    --epochs 30 \
-    --batch 16 \
-    --model-tag baseline
-```
-
-### 3.2. Subset YAML 활용 (class imbalance 시뮬, 데이터 절약)
-
-`experiments/<plan>.yaml`:
-```yaml
-classes:
-  default: 50                 # 모든 클래스 50장 cap
-  Donut_scratch: 30           # 특정 클래스만 30 (override)
-  Edge-Bottom_scratch: 30
-```
-
-```bash
-python cnn_train.py \
-    --epochs 30 \
-    --subset-config experiments/ablation_size_n50.yaml \
-    --img-size 512 \
-    --batch 8 \
-    --model-tag sz512_n50
-```
-
-기존 yaml들:
-- `experiments/quick.yaml` — 클래스당 20 (smoke)
-- `experiments/ablation_size_n50.yaml` — 클래스당 50 (size ablation)
-- `experiments/imbalance_minor3.yaml` — 3 minor class만 30, 나머지 200
-
-### 3.3. 사이즈 ablation (PowerShell runner)
-
-```powershell
-# 384 / 512 / 1024 순차 실행 (배치 자동 조절)
-.\experiments\run_size_ablation_trainval.ps1
-```
-
-### 3.4. 주요 학습 인자
-
-| 인자 | default | 설명 |
-|---|---|---|
-| `--epochs` | 30 | epoch 수 |
-| `--batch` | 16 | batch size (1024×1024는 batch 2 권장) |
-| `--img-size` | 384 | 입력 해상도 (BICUBIC resize) |
-| `--model-tag` | `convnextv2_base` | 결과 폴더 prefix |
-| `--subset-config` | None | YAML subset 경로 |
-| `--lr-backbone` / `--lr-head` | 1e-5 / 1e-3 | learning rate |
-| `--class-weight` | `effective` | `none` / `inverse` / `effective` |
-| `--ema` / `--no-ema` | on | EMA shadow weights |
-| `--ema-decay` | 0.95 | EMA decay |
-| `--patience` | 7 | early stop |
-| `--train-val-only` | off | val/test 미분리 (test 평가 없음) |
-| `--save-pred-samples` | off | 끝에 TP/FP/FN 샘플 저장 |
-| `--ram-limit` / `--gpu-mem-limit` | 80 / 90 | watchdog 한계 (%) |
-
-### 3.5. 출력 구조
-
-```
-log/<model_tag>_<YYMMDD_HHMMSS>_<test_f1>_<val_f1>/
-├─ best_history.txt              ← 통합 결과 (4 sections, 아래 참고)
-├─ best_confusion_matrix.png     ← test(위)+val(아래) combined, 셀 숫자
-├─ best_model.pth                ← state_dict + classes + ema_state
-├─ history.json                  ← 모든 epoch metrics (매 epoch 갱신)
-├─ curves.png                    ← train_loss/val_loss/val_macro_f1 (매 epoch 갱신)
-├─ hparams.{yaml,txt}
-├─ run.log
-└─ wrong/{val,test}/<true>/<pred>/*.png   ← 오분류 샘플
-```
-
-`best_history.txt` 4-section 구조:
-```
-[0] ★ BEST OVERALL          ← 맨 윗줄 한 줄 요약 (TEST + VAL)
-[1] FINAL BEST per-class    ← 최종 best의 TEST(위) + VAL(아래) 33-class 표
-[2] BEST UPDATES SUMMARY    ← best 갱신 epoch별 한 줄 요약 표
-[3] PER-EPOCH PER-CLASS     ← best #1 → #N 시간순 per-class 상세
-```
-
-폴더명에 `_<test_f1>_<val_f1>` suffix는 학습 종료 시 rename 적용.
-`--train-val-only` 모드는 test 없이 `_<val_f1>` 한 개만.
-
----
-
-## 4. CNN 예측 (inference)
-
-### 4.1. 기본 — 폴더 분류
-
-```bash
-# 폴더 내 모든 PNG 예측 → JSON 출력
-python cnn_predict.py \
-    --model log/<run>/best_model.pth \
-    --input D:/project/data/wm-811k/unknown/Center_bank_boundary \
-    --output preds.json
-
-# 단일 이미지
-python cnn_predict.py \
-    --model log/<run>/best_model.pth \
-    --input D:/project/data/wm-811k/unknown/Donut_scratch/abc123_00C_05_..._PE_NORMAL.png \
-    --output single_pred.json
-```
-
-### 4.2. Threshold 기반 Normal/unknown 분류
-
-`max_prob < threshold` 인 샘플은 `Normal/unknown` 으로 분류.
-
-```bash
-# threshold 0.7 — 모델 신뢰도 70% 미만이면 Normal
-python cnn_predict.py \
-    --model log/<run>/best_model.pth \
-    --input <test_dir> \
-    --threshold 0.7 \
-    --output preds.json
-```
-
-### 4.3. Threshold sweep
-
-입력이 `{class}/img.png` 구조면 ground-truth label 추정 가능 → threshold별 metric 계산.
-
-```bash
-# 0.1 ~ 0.9 까지 0.05 step 으로 sweep
-python cnn_predict.py \
-    --model log/<run>/best_model.pth \
-    --input D:/project/data/wm-811k/unknown \
-    --threshold-sweep 0.1,0.9,0.05 \
-    --output preds.json
-```
-
-### 4.4. per-class report 동시 생성
-
-```bash
-python cnn_predict.py \
-    --model log/<run>/best_model.pth \
-    --input D:/project/data/wm-811k/unknown \
-    --report-out per_class_report.txt \
-    --output preds.json
-```
-
-### 4.5. EMA shadow weights 사용
-
-```bash
-python cnn_predict.py \
-    --model log/<run>/best_model.pth \
-    --input <dir> \
-    --ema \
-    --output preds_ema.json
-```
-
-### 4.6. 오분류 샘플 폴더 별도 저장
-
-```bash
-python cnn_predict.py \
-    --model log/<run>/best_model.pth \
-    --input D:/project/data/wm-811k/unknown \
-    --save-wrong-out wrong_predict/ \
-    --output preds.json
-```
-
-### 4.7. 주요 추론 인자
-
-| 인자 | 설명 |
-|---|---|
-| `--model` | best_model.pth 경로 (필수) |
-| `--input` | 단일 이미지 또는 폴더 (필수) |
-| `--output` | 예측 결과 JSON (생략 시 stdout) |
-| `--threshold T` | max_prob < T 이면 Normal/unknown |
-| `--threshold-sweep "lo,hi,step"` | threshold 그리드 sweep |
-| `--report-out PATH` | `{class}/img.png` 구조면 per-class report 출력 |
-| `--ema` | checkpoint의 ema_state로 모델 가중 swap |
-| `--batch` | inference batch (default 16) |
-| `--workers` | DataLoader worker (default 4) |
-| `--save-wrong-out DIR` | 오분류 샘플 폴더 트리 저장 |
-| `--no-recursive` | 폴더 입력 시 하위 폴더 탐색 안 함 |
-| `--device` | `cuda` / `cpu` 지정 (default auto) |
-
----
-
-## 5. 전형적 워크플로우
-
-### A. Fresh clone → 첫 결과까지
-
-```bash
-# 0. 사전 (1회성)
-python download_backbone.py
-
-# 1. 합성 데이터 생성 (예: 클래스당 200장)
-python _sample_gen.py --n 200 --workers 8
-
-# 2. 검증
-python _verify.py --sample 5
-
-# 3. CNN 학습
-python cnn_train.py --epochs 30 --batch 16 --model-tag baseline
-
-# 4. 결과 확인
-cat log/baseline_*/best_history.txt | head -60
-
-# 5. inference (운영 threshold 결정용)
-python cnn_predict.py \
-    --model log/baseline_*/best_model.pth \
-    --input D:/project/data/wm-811k/unknown \
-    --threshold-sweep 0.1,0.9,0.05 \
-    --report-out sweep_report.txt \
-    --output preds_sweep.json
-```
-
-### B. 입력 사이즈 ablation
-
-```bash
-# subset YAML (클래스당 50)
-# experiments/ablation_size_n50.yaml — default: 50
-
-# PowerShell runner: 384/512/1024 순차
-.\experiments\run_size_ablation_trainval.ps1
-
-# 결과 폴더 비교
-ls log/sz*_n50_*/best_history.txt | foreach { head -5 $_ }
-```
-
-### C. Class imbalance 효과 비교
-
-```bash
-# 같은 subset, class_weight 옵션만 다르게 두 run 돌려 비교
-python cnn_train.py --epochs 30 \
-    --subset-config experiments/imbalance_minor3.yaml \
-    --class-weight effective \
-    --model-tag imbal_eff_cw
-
-python cnn_train.py --epochs 30 \
-    --subset-config experiments/imbalance_minor3.yaml \
-    --class-weight none \
-    --model-tag imbal_no_cw
-```
-
-### D. 운영 threshold 선택
-
-```bash
-# 1) Normal pool 별도 생성 (또는 inference 전용 분리 데이터)
-# 2) sweep 으로 max_prob 분포 확인
-
-python cnn_predict.py \
-    --model log/<chosen_run>/best_model.pth \
-    --input D:/project/data/wm-811k/unknown/Normal \
-    --threshold-sweep 0.5,0.95,0.05 \
-    --output normal_pool_preds.json
-```
-
-threshold 추천: Normal pool 에서 `max_prob` 90 percentile + ε 정도가 starting point.
-
----
-
-## 6. 트러블슈팅
-
-| 증상 | 원인 / 해결 |
-|---|---|
-| OOM at `--img-size 1024` | batch 2 또는 1로 낮추기. 4060 Ti 16GB 기준 batch 4 가 한계 |
-| heatmap 못 찾음 | `_dist_heatmaps/` 가 repo 에 있는지 확인. fresh clone 후 `git pull` |
-| backbone weight 다운로드 실패 | `python download_backbone.py` 재시도, 폐쇄망이면 `models/` 폴더 직접 복사 |
-| CRLF / utf-8 경고 | Windows 정상. 무시 가능. |
-| `_running` suffix 폴더 남음 | 학습 중간에 죽음 — 결과 일부 보존됨 (`history.json`, `curves.png`, `best_history.txt`). 절대 삭제 금지 |
-| `eval_summary.json` 없음 | 의도된 변경 — 모든 결과는 `best_history.txt` 에 통합 |
-| FTN/QTN 누락 | 신규 generation은 자동 포함. 다른 데서 들여온 옛 JSON은 git history `441c532..fed8c24` 의 `_backfill_fq_positions.py` 참고 |
-
----
-
-## 7. 절대 금지
-
-- `log/<run>/` 폴더 무단 삭제 (실험 결과 손실)
-- `models/<backbone>.pth` 무단 삭제 (재다운로드 필요)
-- `D:/project/data/wm-811k/unknown/`, `D:/project/data/positions/unknown/` 무단 삭제
-- 생성된 JSON에 `transparency=31` PNG save (모델 입력 픽셀 손실)
-
-상세 설계 사양은 `docs/image-generation/` 참고.
+- `outputs/logs_contrastive/` 사용자 명시 요청 전 무단 삭제 금지
+- `contrastive.py` 직접 수정 금지 — wrapper 의 CFG override 만 사용
