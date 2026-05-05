@@ -47,10 +47,54 @@ CNN 분류기 (33 known + Normal=unknown). 본 repo 는 unsupervised side 만 �
 | Skill | Agent | 용도 |
 |---|---|---|
 | `model-training` | `model-training` | `contrastive.py` / `_contrastive_n50.py` wrapper. CFG override 정책, 결과 폴더 삭제 금지. |
-| `evaluation` | `evaluation` | val 이미지 + 학습된 모델 → ARI/NMI/purity/silhouette → `eval_summary.json`. cosine silhouette. |
+| `evaluation` | `evaluation` | val 이미지 + 학습된 모델 → 공식 metric (Tier 1+2 + class_fragmentation_summary) → `eval_summary.json`. **커스텀 metric 출력 금지** — `docs/contrastive-eval/` 정책 참조. |
 | `composite-map` | `composite-map` | cluster top-K medoid composite PNG. 공식 (자매 repo `mapviewer/`) 무수정. |
+| `contrastive-eval` (skill) | (skill only) | eval pipeline 적용 표준 — Tier 1+2 산출 / 콘솔 보고 / 커스텀 metric 금지. agent 가 evaluation 호출 시 자동 활용. |
 
 세부는 `.claude/skills/<name>/SKILL.md`.
+
+## Contrastive 평가 정책 (★)
+
+contrastive 학습 결과 보고 / 평가 시 다음 정책 강제. 자세히는 `docs/contrastive-eval/`.
+
+### 우선순위 (P1 → P4)
+1. **class_capture_rate** — 모든 defect class 가 ≥1 group 으로 잡힘 (recall 느낌)
+2. **noise_pct (defect only)** — defect 격리 실패 비율 (precision 느낌)
+3. **Completeness** — 같은 class 가 같은 group 에
+4. **Homogeneity** — group 안에 한 class 만
+보조: AMI / Silhouette (cosine) / ARI
+
+### Tier 1 (필수 발표 표 1행, 4 + class_fragmentation_summary)
+- **Completeness** (Rosenberg-Hirschberg 2007)
+- **AMI** (Vinh et al. 2010)
+- **noise_pct (defect only)** (HDBSCAN 표준)
+- **class_capture_rate** (`class_fragmentation.parquet` aggregate)
+
+### Tier 2 (보조)
+- Homogeneity, Silhouette (cosine), ARI
+
+### 절대 금지 — 커스텀 metric (사용자 명시 거부)
+- `weighted_isolation`, `pure_rate`, `mixed_rate`, `isolation`, `contamination_rate`
+- `binary_*` (binary_ari / binary_nmi / binary_homogeneity 등 모두)
+- precision / recall / F1 / FPR / accuracy / TP/FP/FN/TN — 분류기 style 일체
+
+### Tier 3 — skip (디버그만, 발표 X)
+- NMI, V-measure, Fowlkes-Mallows, Davies-Bouldin, Calinski-Harabasz
+
+### 거부한 학습 측 옵션
+- **Multi-crop (SwAV)** X — wafer 위치 정보 손상 (D-4)
+- **SupCon 주력** X — unknown defect generalization 위험 (D-5)
+- USE_LOCAL=True (grid spatial contrast) + Hard Negative Mining (β param) 만 채택
+
+### 학습 monitoring (label 무관)
+- 매 epoch: alignment + uniformity (Wang & Isola 2020)
+- 옵션 (label 있을 때): k-NN top-1, periodic HDBSCAN
+
+### 다음 학습 dispatch 시
+- BATCH=16, IMAGE_SIZE=384 (사용자 명시 GPU 작게)
+- per-class sample 수 random (50~200+, 200 일률 X)
+
+세부 결정 history: `docs/contrastive-eval/DECISIONS.md` D-1 ~ D-11.
 
 ## 외부 참조 (read-only)
 

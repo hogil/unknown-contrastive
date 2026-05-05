@@ -9,9 +9,11 @@ Output layout:
     <output_root>/<device>/<processid>/<yyyymmdd>/
       manifest.json
       run.log
+      file_list.parquet
       preds.parquet
       clusters.parquet
       cluster_members.parquet
+      groups/group_001/*.png
       medoids/
       review/
       embeddings/
@@ -21,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import shutil
 import sys
 import time
@@ -257,6 +260,74 @@ def cluster_tables(ids, probs, image_paths, decisions):
     return cluster_records, member_records
 
 
+def group_map(cluster_ids) -> dict[int, tuple[str, int]]:
+    ids = sorted(int(x) for x in set(cluster_ids) if int(x) >= 0)
+    out = {-1: ("group_noise", 0)}
+    for i, cid in enumerate(ids, start=1):
+        out[cid] = (f"group_{i:03d}", i)
+    return out
+
+
+def split_wafer_basename(stem: str) -> dict:
+    schema = ["prefix", "kind", "w_idx", "date", "time",
+              "yld", "syp", "tester", "device"]
+    parts = stem.split("_")
+    return {name: (parts[i] if i < len(parts) else "")
+            for i, name in enumerate(schema)}
+
+
+def link_or_copy(src: Path, dst: Path):
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if dst.exists():
+            dst.unlink()
+        os.link(src, dst)
+    except Exception:
+        shutil.copy2(src, dst)
+
+
+def write_group_outputs(out_dir: Path, image_paths: list[Path], ids,
+                        pred_rows: list[dict], logger):
+    groups_dir = out_dir / "groups"
+    if groups_dir.exists():
+        shutil.rmtree(groups_dir)
+    groups_dir.mkdir(parents=True, exist_ok=True)
+
+    gmap = group_map(ids)
+    size_map = Counter(int(x) for x in ids)
+    file_rows = []
+    for i, (src, cid_raw) in enumerate(zip(image_paths, ids)):
+        cid = int(cid_raw)
+        group_name, group_idx = gmap[cid]
+        dst = groups_dir / group_name / f"{i:06d}__{src.name}"
+        link_or_copy(src, dst)
+
+        pred_rows[i]["wafer_group"] = group_name
+        pred_rows[i]["wafer_group_idx"] = group_idx
+        pred_rows[i]["group_path"] = str(dst)
+
+        row = {
+            "path": str(src),
+            "group_path": str(dst),
+            "wafer_basename": src.stem,
+            "batch_device": pred_rows[i]["device"],
+            "batch_processid": pred_rows[i]["processid"],
+            "batch_date": pred_rows[i]["yyyymmdd"],
+            "wafer_group": group_name,
+            "wafer_group_idx": group_idx,
+            "cluster_id": cid,
+            "group_size": int(size_map[cid]),
+            "cluster_prob": pred_rows[i]["cluster_prob"],
+            "decision": pred_rows[i]["decision"],
+        }
+        row.update(split_wafer_basename(src.stem))
+        file_rows.append(row)
+
+    pd.DataFrame(file_rows).to_parquet(out_dir / "file_list.parquet", index=False)
+    logger.info(f"[write] {out_dir / 'file_list.parquet'} rows={len(file_rows)}")
+    logger.info(f"[write] groups images -> {groups_dir}")
+
+
 def copy_medoids(out_dir, emb, ids, image_paths, review_indices, review_copy_limit):
     medoid_dir = out_dir / "medoids"; medoid_dir.mkdir(exist_ok=True)
     for cid in sorted(set(int(x) for x in ids if x >= 0)):
@@ -318,6 +389,8 @@ def predict_one(date_dir_info, args, run_dir, cfg, model, ref_emb, ref_labels, d
             "wafer_id": p.stem,
             "embedding_id": i,
             "cluster_id": cid,
+            "wafer_group": "",
+            "wafer_group_idx": -1,
             "cluster_prob": float(probs[i]),
             "cluster_size": int(size_map[cid]),
             "nearest_normal_dist": s["nearest_normal_dist"],
@@ -330,6 +403,7 @@ def predict_one(date_dir_info, args, run_dir, cfg, model, ref_emb, ref_labels, d
         })
 
     cluster_rows, member_rows = cluster_tables(ids, probs, image_paths, decisions)
+    write_group_outputs(out_dir, image_paths, ids, pred_rows, logger)
     pd.DataFrame(pred_rows).to_parquet(out_dir / "preds.parquet", index=False)
     pd.DataFrame(cluster_rows).to_parquet(out_dir / "clusters.parquet", index=False)
     pd.DataFrame(member_rows).to_parquet(out_dir / "cluster_members.parquet", index=False)

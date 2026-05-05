@@ -9,7 +9,7 @@ Compute: ARI / NMI / cluster purity / silhouette + per-class noise %
          Normal is excluded from the primary class metric.
 Write: <run_dir>/eval/{eval_summary.json, per_class_report.txt,
        cluster_report.parquet, class_fragmentation.parquet,
-       retrieval_report.parquet, plots/, embeddings/}
+       retrieval_report.parquet, file_list.parquet, groups/, plots/, embeddings/}
 After eval:
   - rename run_dir → <prev_name>_ari{:.2f}_nmi{:.2f} using without-Normal metrics
   - update <output_root>/overall/ if best without-Normal ARI
@@ -19,6 +19,7 @@ contrastive_unknown_n50.py 기반 — import only.
 import argparse
 import json
 import logging
+import os
 import re
 import shutil
 import sys
@@ -36,6 +37,8 @@ from torchvision.datasets import ImageFolder
 from sklearn.metrics import (
     adjusted_rand_score,
     normalized_mutual_info_score,
+    adjusted_mutual_info_score,
+    homogeneity_completeness_v_measure,
     silhouette_score,
     silhouette_samples,
 )
@@ -205,6 +208,67 @@ def _write_table(records: list[dict], path: Path, logger):
     logger.info(f"[write] {path.name} rows={len(df)}")
 
 
+def _group_map(cluster_ids: np.ndarray) -> dict[int, tuple[str, int]]:
+    ids = sorted(int(x) for x in set(cluster_ids) if int(x) >= 0)
+    out = {-1: ("group_noise", 0)}
+    for i, cid in enumerate(ids, start=1):
+        out[cid] = (f"group_{i:03d}", i)
+    return out
+
+
+def _split_wafer_basename(stem: str) -> dict:
+    schema = ["prefix", "kind", "w_idx", "date", "time",
+              "yld", "syp", "tester", "device"]
+    parts = stem.split("_")
+    return {name: (parts[i] if i < len(parts) else "")
+            for i, name in enumerate(schema)}
+
+
+def _link_or_copy(src: Path, dst: Path):
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if dst.exists():
+            dst.unlink()
+        os.link(src, dst)
+    except Exception:
+        shutil.copy2(src, dst)
+
+
+def write_group_outputs(files: list[str], classes: list[str], cluster_ids: np.ndarray,
+                        out_dir: Path, logger):
+    """Write group folders and DB-friendly file_list.parquet."""
+    groups_dir = out_dir / "groups"
+    if groups_dir.exists():
+        shutil.rmtree(groups_dir)
+    groups_dir.mkdir(parents=True, exist_ok=True)
+
+    group_map = _group_map(cluster_ids)
+    size_map = {int(cid): int((cluster_ids == cid).sum())
+                for cid in set(int(x) for x in cluster_ids)}
+    rows = []
+    for i, (file_s, cid_raw) in enumerate(zip(files, cluster_ids)):
+        src = Path(file_s)
+        cid = int(cid_raw)
+        group_name, group_idx = group_map[cid]
+        dst = groups_dir / group_name / f"{i:06d}__{src.name}"
+        _link_or_copy(src, dst)
+
+        row = {
+            "path": str(src),
+            "group_path": str(dst),
+            "wafer_basename": src.stem,
+            "wafer_group": group_name,
+            "wafer_group_idx": group_idx,
+            "cluster_id": cid,
+            "group_size": int(size_map[cid]),
+        }
+        row.update(_split_wafer_basename(src.stem))
+        rows.append(row)
+
+    _write_table(rows, out_dir / "file_list.parquet", logger)
+    logger.info(f"[write] groups images -> {groups_dir}")
+
+
 def cluster_report_records(cluster_ids: np.ndarray, classes: list[str],
                            normal_class: str) -> tuple[list[dict], dict[int, str]]:
     cls_arr = np.array(classes)
@@ -266,6 +330,41 @@ def class_fragmentation_records(cluster_ids: np.ndarray, classes: list[str],
             "cluster_coverage": float(len(non_noise) / max(1, n)),
         })
     return records
+
+
+def class_fragmentation_summary(class_records: list[dict]) -> dict:
+    """Aggregate class_fragmentation_records → 사용자 criteria A/B/C 의 단일 dict.
+
+    docs/contrastive-eval/METRICS.md 의 spec 그대로:
+      A — class_capture_rate (모든 class 가 ≥1 cluster 에 잡힘)
+      B — weighted_cluster_coverage (sample-weighted, 1 - defect noise rate)
+      C — frac_single_cluster (n_clusters == 1 인 class 비율, 1 best)
+    """
+    if not class_records:
+        return {"n_defect_classes": 0}
+    n_total = len(class_records)
+    n_captured = sum(1 for r in class_records if r["n_clusters"] >= 1)
+    n_single = sum(1 for r in class_records if r["n_clusters"] == 1)
+    n_split_2 = sum(1 for r in class_records if r["n_clusters"] == 2)
+    n_split_3plus = sum(1 for r in class_records if r["n_clusters"] >= 3)
+    total_n = sum(r["n"] for r in class_records)
+    weighted_cov = (sum(r["cluster_coverage"] * r["n"] for r in class_records) /
+                    max(1, total_n))
+    mean_cov = sum(r["cluster_coverage"] for r in class_records) / n_total
+    mean_n_clu = sum(r["n_clusters"] for r in class_records) / n_total
+    return {
+        "n_defect_classes": n_total,
+        "n_classes_captured": n_captured,
+        "n_classes_uncaptured": n_total - n_captured,
+        "class_capture_rate": round(n_captured / n_total, 4),                            # P1
+        "mean_cluster_coverage": round(mean_cov, 4),
+        "weighted_cluster_coverage": round(weighted_cov, 4),                             # B
+        "mean_n_clusters_per_class": round(mean_n_clu, 4),
+        "n_classes_single_cluster": n_single,
+        "n_classes_split_2": n_split_2,
+        "n_classes_split_3plus": n_split_3plus,
+        "frac_single_cluster": round(n_single / n_total, 4),                             # C
+    }
 
 
 def _ap_at_k(matches: np.ndarray, k: int) -> float:
@@ -357,6 +456,9 @@ def metrics_on_set(emb_sub, gt_str_sub, cluster_ids_sub, label, logger):
     n_clusters = len(set(int(x) for x in cluster_ids_sub if x >= 0))
     ari = float(adjusted_rand_score(gt_idx, cluster_ids_sub))
     nmi = float(normalized_mutual_info_score(gt_idx, cluster_ids_sub))
+    ami = float(adjusted_mutual_info_score(gt_idx, cluster_ids_sub))
+    hom, com, vmeas = homogeneity_completeness_v_measure(gt_idx, cluster_ids_sub)
+    hom = float(hom); com = float(com); vmeas = float(vmeas)
     purity = cluster_purity(gt_idx, cluster_ids_sub)
     sil = None
     nn_mask = cluster_ids_sub != -1
@@ -371,7 +473,12 @@ def metrics_on_set(emb_sub, gt_str_sub, cluster_ids_sub, label, logger):
     return {
         "n": n, "n_clusters": n_clusters, "n_noise": n_noise,
         "noise_pct": float(100.0*n_noise/max(1, n)),
-        "ari": ari, "nmi": nmi, "cluster_purity": purity,
+        "ari": ari, "nmi": nmi,
+        "ami": ami,                                                                      # Vinh et al. 2010, chance-corrected (Tier 1)
+        "homogeneity": hom,                                                              # Rosenberg & Hirschberg 2007 (Tier 2)
+        "completeness": com,                                                             # Rosenberg & Hirschberg 2007 (Tier 1, P3)
+        "v_measure": vmeas,                                                              # Rosenberg & Hirschberg 2007 (Tier 3, 디버그만)
+        "cluster_purity": purity,
         "silhouette_cosine": sil, "per_class_noise": pcn,
     }
 
@@ -635,11 +742,13 @@ def main():
         cluster_ids, list(classes), args.normal_class, dominant_by_cluster)
     class_records = class_fragmentation_records(
         cluster_ids, list(classes), args.normal_class)
+    class_frag_summary = class_fragmentation_summary(class_records)                       # docs/contrastive-eval/METRICS.md
     retrieval_records = retrieval_report_records(
         emb, list(classes), args.normal_class)
     _write_table(cluster_records, eval_dir / "cluster_report.parquet", logger)
     _write_table(class_records, eval_dir / "class_fragmentation.parquet", logger)
     _write_table(retrieval_records, eval_dir / "retrieval_report.parquet", logger)
+    write_group_outputs(files, list(classes), cluster_ids, eval_dir, logger)
 
     logger.info("[eval] === Set 1: with-Normal ===")
     m_with = metrics_on_set(emb, list(classes), cluster_ids,
@@ -702,6 +811,7 @@ def main():
         "primary_metric_value": (m_without or m_with)["ari"],
         "with_normal": m_with, "without_normal": m_without,
         "normal_metrics": normal_metrics,
+        "class_fragmentation_summary": class_frag_summary,                                # 사용자 criteria A/B/C aggregate
         "hdbscan_cfg": {
             "MIN_CLUSTER_SIZE": cfg.get("MIN_CLUSTER_SIZE"),
             "MIN_SAMPLES": cfg.get("MIN_SAMPLES"),
@@ -720,6 +830,27 @@ def main():
     (eval_dir / "eval_summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info(f"[write] eval_summary.json")
+
+    # Tier 1 1-2 줄 보고 (docs/contrastive-eval/METRICS.md spec)
+    _m = m_without or m_with
+    _def_noise = (normal_metrics.get("defect_noise_pct")
+                  if isinstance(normal_metrics, dict) else None)
+    _def_noise = _def_noise if _def_noise is not None else _m.get("noise_pct", 0.0)
+    logger.info(
+        f"[Tier 1] Completeness={_m.get('completeness', 0):.4f} "
+        f"AMI={_m.get('ami', 0):.4f} "
+        f"noise_def={_def_noise:.2f}% "
+        f"capture={class_frag_summary.get('n_classes_captured', 0)}/"
+        f"{class_frag_summary.get('n_defect_classes', 0)}"
+        f"({class_frag_summary.get('class_capture_rate', 0):.4f})"
+    )
+    logger.info(
+        f"[Class frag] coverage={class_frag_summary.get('weighted_cluster_coverage', 0):.4f} "
+        f"single_cluster={class_frag_summary.get('n_classes_single_cluster', 0)}/"
+        f"{class_frag_summary.get('n_defect_classes', 0)}"
+        f"({class_frag_summary.get('frac_single_cluster', 0):.4f}) "
+        f"mean_n_clusters={class_frag_summary.get('mean_n_clusters_per_class', 0):.2f}"
+    )
 
     report_dict = {"with-Normal": m_with}
     if m_without is not None: report_dict["without-Normal"] = m_without

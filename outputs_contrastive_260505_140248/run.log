@@ -1,0 +1,79 @@
+2026-05-05 14:02:48,605 - INFO - ===== RUN START =====
+2026-05-05 14:02:48,608 - INFO - Device: cuda
+2026-05-05 14:02:48,608 - INFO - CFG:
+2026-05-05 14:02:48,609 - INFO - {
+  "TRAIN_DIR": "D:/project/data/wm-811k/unknown",
+  "UNKNOWN_DIR": "D:/project/data/wm-811k/unknown",
+  "OVERLAY_DIR": "D:/project/data/wm-811k/unknown",
+  "OUTPUT_DIR": "D:/project/unknown-contrastive/outputs_contrastive",
+  "IMAGE_SIZE": 384,
+  "BACKBONE_NAME": "convnextv2_base.fcmae_ft_in22k_in1k_384",
+  "LOCAL_BACKBONE_WEIGHTS": "C:\\Users\\hgcho\\AppData\\Local\\Temp\\contrastive_init_best_model.pth",
+  "PROJ_DIM": 128,
+  "FREEZE_BACKBONE": true,
+  "EPOCHS": 20,
+  "WARMUP_EPOCHS": 1,
+  "BATCH": 32,
+  "LR_HEAD": 0.001,
+  "WD": 1e-06,
+  "TEMP": 0.07,
+  "SEED": 42,
+  "TRAIN_SAMPLING_RATIO": 0.25,
+  "NUM_WORKERS": 0,
+  "PIN_MEMORY": false,
+  "PREFETCH_FACTOR": 4,
+  "PERSISTENT": false,
+  "DROP_LAST": false,
+  "USE_QUEUE": true,
+  "QUEUE_SIZE": 16384,
+  "QUEUE_WEIGHT": 1.0,
+  "IGNORE_NEG_SIM": 0.72,
+  "USE_LOCAL": true,
+  "LOCAL_WEIGHT": 0.5,
+  "LOCAL_ANCHORS": "grid36_full",
+  "LOCAL_SEARCH": "window",
+  "LOCAL_WINDOW": 4,
+  "LOCAL_POS_TOPK": 12,
+  "LOCAL_POS_MIN_SIM": 0.7,
+  "LOCAL_SUBBATCH": 32,
+  "LOCAL_EVERY_N": 1,
+  "HDBSCAN_METRIC": "euclidean",
+  "MIN_CLUSTER_SIZE": 12,
+  "MIN_SAMPLES": 1,
+  "CLUSTER_SELECTION_METHOD": "leaf",
+  "CLUSTER_SELECTION_EPSILON": 0.06,
+  "ALLOW_SINGLE_CLUSTER": false,
+  "EMBED_LOG_EVERY_BATCH": true,
+  "EMBED_LOG_TICKS": 20
+}
+2026-05-05 14:02:48,652 - INFO - [TRAIN_DIR classes] ['BrokenRing', 'CenterDonut', 'Center_bank_boundary', 'Center_fork', 'Center_invalid_main', 'Center_scratch', 'Center_scratch_rot', 'CrescentArc', 'CrossScratch', 'DiagonalSmear', 'Donut_bank_boundary', 'Donut_fork', 'Donut_invalid_main', 'Donut_scratch', 'Donut_scratch_rot', 'Edge-Bottom_bank_boundary', 'Edge-Bottom_fork', 'Edge-Bottom_invalid_main', 'Edge-Bottom_scratch', 'Edge-Bottom_scratch_rot', 'Edge-Ring_bank_boundary', 'Edge-Ring_fork', 'Edge-Ring_invalid_main', 'Edge-Ring_scratch', 'Edge-Ring_scratch_rot', 'Edge-Top_bank_boundary', 'Edge-Top_fork', 'Edge-Top_invalid_main', 'Edge-Top_scratch', 'Edge-Top_scratch_rot', 'Full_bank_boundary', 'Full_fork', 'Full_invalid_main', 'Full_scratch', 'Full_scratch_rot', 'Normal_bank_boundary', 'ParallelScratches', 'RingDots', 'Row', 'Thick-Edge_fork', 'Thick-Edge_invalid_main']
+2026-05-05 14:02:48,652 - INFO - [UNKNOWN_DIR classes] ['BrokenRing', 'CenterDonut', 'Center_bank_boundary', 'Center_fork', 'Center_invalid_main', 'Center_scratch', 'Center_scratch_rot', 'CrescentArc', 'CrossScratch', 'DiagonalSmear', 'Donut_bank_boundary', 'Donut_fork', 'Donut_invalid_main', 'Donut_scratch', 'Donut_scratch_rot', 'Edge-Bottom_bank_boundary', 'Edge-Bottom_fork', 'Edge-Bottom_invalid_main', 'Edge-Bottom_scratch', 'Edge-Bottom_scratch_rot', 'Edge-Ring_bank_boundary', 'Edge-Ring_fork', 'Edge-Ring_invalid_main', 'Edge-Ring_scratch', 'Edge-Ring_scratch_rot', 'Edge-Top_bank_boundary', 'Edge-Top_fork', 'Edge-Top_invalid_main', 'Edge-Top_scratch', 'Edge-Top_scratch_rot', 'Full_bank_boundary', 'Full_fork', 'Full_invalid_main', 'Full_scratch', 'Full_scratch_rot', 'Normal_bank_boundary', 'ParallelScratches', 'RingDots', 'Row', 'Thick-Edge_fork', 'Thick-Edge_invalid_main']
+2026-05-05 14:02:48,659 - INFO - [Train from TRAIN_DIR] full_items=8580
+2026-05-05 14:02:49,801 - INFO - [Overlay coverage] missing=0 / total=8580
+2026-05-05 14:02:49,801 - INFO - [Eval set] unknown_only=8580
+2026-05-05 14:02:51,200 - INFO - [학습 시작]
+2026-05-05 14:02:51,200 - INFO - [LR warmup] epoch 1 lr=1.00e-03
+2026-05-05 14:02:51,201 - INFO - [Train sampling@epoch1] ratio=0.25 -> 2145 items
+2026-05-05 14:03:04,114 - INFO - [Train DataLoader warmup@epoch1] 12.9s (batches=68, imgs=2145)
+2026-05-05 14:03:48,610 - INFO -   Epoch 1/20 |   4.4% (3/68) | G=1.0324 Q=0.0430 L=0.0686
+2026-05-05 14:04:30,448 - INFO -   Epoch 1/20 |   8.8% (6/68) | G=0.9848 Q=0.0809 L=0.0679
+2026-05-05 14:05:10,814 - INFO -   Epoch 1/20 |  13.2% (9/68) | G=1.0510 Q=0.0913 L=0.0692
+2026-05-05 14:05:50,956 - INFO -   Epoch 1/20 |  17.6% (12/68) | G=1.0638 Q=0.0928 L=0.0700
+2026-05-05 14:06:30,546 - INFO -   Epoch 1/20 |  22.1% (15/68) | G=1.0560 Q=0.0977 L=0.0677
+2026-05-05 14:07:11,764 - INFO -   Epoch 1/20 |  26.5% (18/68) | G=1.0495 Q=0.1008 L=0.0678
+2026-05-05 14:07:53,557 - INFO -   Epoch 1/20 |  30.9% (21/68) | G=1.0624 Q=0.1125 L=0.0682
+2026-05-05 14:08:34,123 - INFO -   Epoch 1/20 |  35.3% (24/68) | G=1.0737 Q=0.1173 L=0.0682
+2026-05-05 14:09:14,516 - INFO -   Epoch 1/20 |  39.7% (27/68) | G=1.0717 Q=0.1205 L=0.0682
+2026-05-05 14:09:55,096 - INFO -   Epoch 1/20 |  44.1% (30/68) | G=1.0738 Q=0.1283 L=0.0687
+2026-05-05 14:10:35,082 - INFO -   Epoch 1/20 |  48.5% (33/68) | G=1.0756 Q=0.1317 L=0.0686
+2026-05-05 14:11:13,873 - INFO -   Epoch 1/20 |  52.9% (36/68) | G=1.0718 Q=0.1333 L=0.0690
+2026-05-05 14:11:52,871 - INFO -   Epoch 1/20 |  57.4% (39/68) | G=1.0699 Q=0.1354 L=0.0687
+2026-05-05 14:12:33,067 - INFO -   Epoch 1/20 |  61.8% (42/68) | G=1.0788 Q=0.1377 L=0.0689
+2026-05-05 14:13:13,862 - INFO -   Epoch 1/20 |  66.2% (45/68) | G=1.0774 Q=0.1403 L=0.0688
+2026-05-05 14:13:54,636 - INFO -   Epoch 1/20 |  70.6% (48/68) | G=1.0774 Q=0.1443 L=0.0690
+2026-05-05 14:14:34,235 - INFO -   Epoch 1/20 |  75.0% (51/68) | G=1.0747 Q=0.1474 L=0.0686
+2026-05-05 14:15:14,851 - INFO -   Epoch 1/20 |  79.4% (54/68) | G=1.0767 Q=0.1520 L=0.0688
+2026-05-05 14:15:55,801 - INFO -   Epoch 1/20 |  83.8% (57/68) | G=1.0749 Q=0.1539 L=0.0686
+2026-05-05 14:16:37,402 - INFO -   Epoch 1/20 |  88.2% (60/68) | G=1.0735 Q=0.1551 L=0.0687
+2026-05-05 14:17:20,119 - INFO -   Epoch 1/20 |  92.6% (63/68) | G=1.0751 Q=0.1571 L=0.0689
+2026-05-05 14:18:01,364 - INFO -   Epoch 1/20 |  97.1% (66/68) | G=1.0755 Q=0.1608 L=0.0690
