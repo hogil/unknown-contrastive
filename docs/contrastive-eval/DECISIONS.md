@@ -162,18 +162,27 @@ production (label 0%): alignment + uniformity 만.
 
 ---
 
-## D-13. Normal sampling 비율 조정 — 1순위 (Iter 1 계획)
+## D-13. Normal sampling 비율 조정 — Method iter 에서 제외, data ablation 별도 track
 
-**시점**: Iter 0 chain 분석 (2026-05-05).
+**시점**: Iter 0 chain 분석 (2026-05-05). 사용자 정정.
 
-**문제**: cluster 37 (Normal_bank_boundary, size 691) 가 cluster 12, 17 (Edge-Top/Bottom_bank_boundary)
-와 boundary blur. Normal noise_pct 22.9% 의 직접 원인. cluster 36, 38 도 Normal split 으로 발견됨.
+**원래 의도**: cluster 37 (Normal mega) ↔ cluster 12, 17 (Edge × bank_boundary) boundary blur 해결.
 
-**채택 (계획)**: Normal 1000 → 200~500 으로 줄이고, 또는 oversampling 정책 도입.
+**★ 사용자 정정 (methodology lock-in)**: 데이터 갯수 / 비율 변경은 **method iteration 의 비교
+대상 아님**. 동일 데이터 / 동일 조건에서 method (loss, hparam, arch) 만 변경한 경우만 atomic
+ablation 으로 의미 있음.
 
-**rationale**: 합성 baseline 의 Normal 비율 12% (1000/8357) 가 너무 높아 Edge × bank_boundary
-와 manifold 가 겹침. production (Normal 80%) 흉내 위해서라도 dedicated Normal anchor 또는
-class-balanced sampling 필요.
+**채택**:
+- Method iteration 에서 Normal sampling 변경 금지 (same data 유지).
+- Data ablation 은 **별도 track (Iter D1, D2, ...)** 에서 진행. method ablation Iter 1, 2, ... 와
+  분리.
+- Iter 1 부터는 same 8357 wafer (Normal 1000 + defect 200×38) 유지.
+
+**Iter 1 의 진짜 1순위로 변경**: D-14 의 `IGNORE_NEG_SIM 0.72 → 0.65` (CFG override only,
+same data, same condition).
+
+**rationale**: 사용자 명시 "동일 데이터 갯수 동일 조건에서 계속 증가하는 모델 새로운 방식
+적용하는거지". 데이터 비율 손대면 성능 향상 자명 — apples-to-apples 비교 안 됨.
 
 ---
 

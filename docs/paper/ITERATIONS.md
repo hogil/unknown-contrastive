@@ -75,24 +75,39 @@ performance-research (a63a299550584d293), resource-monitor (a2e25e2a2343bef29) �
 
 ### 다음 (Iter 1) 업데이트 — 3 chain 통합 plan
 
-위 분석 통합 후 우선순위 재정렬:
+★ **Methodology lock-in (사용자 명시)**: ablation 은 **same data, same condition, method 만 변경**.
+데이터 갯수 / 비율 변경은 method iteration 아님 (data ablation 별도 track).
 
-1. **Normal sampling 비율 조정** (cluster 37 boundary blur 해결 1순위) — Normal 1000 → 200~500 으로 줄이거나 oversample policy 변경
-2. **NV-Retriever positive-aware false-negative filter** 도입 — Full_×3 + Normal split 직격
-3. **SCHaNe dissimilarity-weighted hard mining** — Edge-Top × 4-obj merge (cluster 12/17) 분리
-4. **합성 데이터 검토**:
-   - Full_*** sub-style 4 pair 통일 또는 split label
-   - Thick-Edge_fork 안에 Full_fork 와 비슷한 sample 5장 검토 (mislabel 의심)
-   - cluster 35 `CMY389` 합성 anomaly 검토
+따라서 Iter 1 의 D-13 (Normal sampling 1000→300) 은 method iter 에서 **제외**. 별도 data
+ablation track 에서 진행 (Iter D1, D2, ... 로 명명 — 추후).
 
-**HDBSCAN tuning 은 더 이상 안 함** (이미 sweep optimum).
-**Hard negative mining (Robinson 2021) → 더 진보된 NV-Retriever / SCHaNe 로 update**.
+**Method-only iteration 후보** (same 8357 wafer, same Normal 1000, same defect 200×38):
+1. **IGNORE_NEG_SIM 0.72 → 0.65** (CFG override) — `contrastive.py` 의 NV-Retriever 풍 false-negative
+   filter primitive 강화. Iter 0 분석의 cluster 12/17/35/37 issue 직격
+2. **USE_LOCAL=True** (CFG override) — 현재 OFF. grid 기반 spatial contrast 추가 신호
+3. **TEMP 0.07 → 0.05** — sharper boundary
+4. **EPOCHS 10 → 20** — 학습 더 길게 (uniformity -2.50 → -3.0+ 목표)
+5. **QUEUE_SIZE 4096 → 16384** — 더 많은 negative
+6. **LR_HEAD 1e-3 → 3e-4** — stable 학습
+7. **합성 데이터 검토** (data 변경, separate track) — Full_*** sub-style 통일 / Thick-Edge_fork mislabel
+
+**HDBSCAN tuning 은 더 이상 안 함** (이미 sweep optimum, D-12).
 
 ---
 
-## Iter 1 — (계획) Normal sampling 조정 + NV-Retriever filter 도입
+## Iter 1 — (계획) IGNORE_NEG_SIM 0.65 (method-only)
 
 (미진행. 도입 시 paper-recorder 가 entry 추가)
+
+**Same condition** (Iter 0 와 정확 동일):
+- BATCH=16, IMAGE_SIZE=384, EPOCHS=10, TEMP=0.07, LR_HEAD=1e-3
+- QUEUE_SIZE=4096, USE_LOCAL=False
+- Normal 1000 + defect 200×38 = 8357 wafer
+- HDBSCAN mcs=12, ms=1, eom, ε=0.06
+
+**유일 변경**: `IGNORE_NEG_SIM 0.72 → 0.65` (CFG override via wrapper).
+
+이렇게 atomic 비교 가능 → method 효과 측정.
 
 ---
 
