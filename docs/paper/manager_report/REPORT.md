@@ -120,14 +120,26 @@ P4 Hom ≥ 0.9         한 group 안에 다른 결함이 섞이지 않은 정도
 
 ## 3. embedding 공간 시각화 — t-SNE
 
-128-dim contrastive embedding 을 2D 로 투영 (cosine metric, perplexity=30). 같은 색 = 같은 GT class / HDBSCAN cluster.
+### 3-1. contrastive 학습 효과 (BEFORE vs AFTER)
 
-![](figs/fig_tsne_iter14.png)
+같은 GT class 색으로 표시. label 은 시각화 색 매핑에만 쓰고 학습엔 안 줬음.
 
-**왼쪽 (GT class)**: 43 결함 종이 embedding 공간에서 자연스럽게 분리된 군집 형성 — label 안 줬는데도 contrastive 가 시각적/위치적 특징으로 알아서 나눔.
-**오른쪽 (HDBSCAN)**: 자동으로 발견된 44 cluster (+ 76 noise 회색). 좌/우 색 분포 비슷 = HDBSCAN 결과가 GT 와 거의 일치 (Comp 0.952, AMI 0.913).
+![](figs/fig_tsne_before_after.png)
 
-→ **embedding 자체가 GT 정보를 암묵적으로 학습** 했음을 시각적으로 확인.
+- **BEFORE** (raw pixel 32×32 → PCA 64 → t-SNE) — 같은 결함 종 (= 같은 색) 이 공간 전체에 흩어짐. raw 픽셀만으로는 결함 의미 추출 X.
+- **AFTER** (Iter 14 contrastive 128-dim → t-SNE) — 같은 색끼리 자연스럽게 모임. 동그라미 = 각 GT class 의 95% confidence ellipse → 군집 영역 가시화.
+
+→ contrastive learning 이 **label 없이도** wafer 결함 의미를 embedding 공간에 정렬시킴.
+
+### 3-2. HDBSCAN 자동 group 발견 (noise 검정 ✗)
+
+학습 끝난 embedding 위에서 HDBSCAN 이 cluster 자동 발견. noise (= group 못 들어간 wafer) 는 검정 ✗.
+
+![](figs/fig_tsne_hdbscan_noise.png)
+
+- 동그라미 = 자동 발견된 44 HDBSCAN cluster
+- ✗ 검정 = noise 76 wafer (group 어디에도 못 들어감, P2 noise 6.63%)
+- Section 3-1 의 GT 군집 영역과 거의 일치 → HDBSCAN ≈ GT (Comp 0.952 / AMI 0.913 시각 검증)
 
 ---
 
