@@ -40,8 +40,8 @@ self-supervised contrastive learning — 라벨 없이 augment 두 view 사이 �
 P1 capture = 1.000   결함 종류 한 개도 누락 X
                      ✓ ✓ ✓ ✓ ✓ ... ✓   (43 종 모두 group ≥1)
 
-P2 noise ≤ 6%        wafer 한 장 한 장 자동 분류
-                     ●●●●●●●●●●●●●●●●●●●○   (20 중 19 group, 1 noise)
+P2 noise ≤ 6%        전체 결함 wafer 중 group 에 못 들어간 비율
+                     ●●●●●●●●●●●●●●●●●●●○   (20 중 19 group ●, 1 noise ○)
 
 P3 Comp ≥ 0.9        같은 결함 한 group 으로
                      [● ● ● ● ●]   (한 group)   vs   [●●][●●][●]   (split, Comp ↓)
