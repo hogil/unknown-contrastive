@@ -68,7 +68,7 @@ wafer ──► CNN ──► 128-dim emb ──► HDBSCAN ──► group A, B
 <table>
 <tr>
 <td align="center" valign="top" width="33%"><img src="figs/wafer_01_CenterCircle.png" width="260" height="260"><br><b>CenterCircle</b><br>canvas pattern</td>
-<td align="center" valign="top" width="33%"><img src="figs/wafer_02_ParallelScratches.png" width="260" height="260"><br><b>ParallelScratches</b><br>canvas pattern</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_02_EdgeBottom_scratch_rot.png" width="260" height="260"><br><b>Edge-Bottom_scratch_rot</b><br>site×chip object</td>
 <td align="center" valign="top" width="33%"><img src="figs/wafer_03_RingDots.png" width="260" height="260"><br><b>RingDots</b><br>canvas pattern</td>
 </tr>
 <tr>
@@ -78,7 +78,7 @@ wafer ──► CNN ──► 128-dim emb ──► HDBSCAN ──► group A, B
 </tr>
 </table>
 
-4 canvas (CenterCircle / ParallelScratches / RingDots / BrokenRing) + 2 site×chip (Center_fork / Edge-Ring_scratch). 학습 anchor = 42 defect class × 평균 30 + Normal 1000 = 2,146 wafer.
+3 canvas (CenterCircle / RingDots / BrokenRing) + 3 site×chip (Edge-Bottom_scratch_rot / Center_fork / Edge-Ring_scratch). 학습 anchor = 42 defect class × 평균 30 + Normal 1000 = 2,146 wafer.
 
 ### 합성 방식 (sister repo `known-cnn/dist_apply/_sample_gen.py`)
 
@@ -98,7 +98,7 @@ wafer ──► CNN ──► 128-dim emb ──► HDBSCAN ──► group A, B
 <table>
 <tr>
 <td align="center" valign="top" width="50%"><img src="figs/group_01_CenterCircle.png" width="380" height="380"><br><b>CenterCircle group</b><br>41 wafer 자동 묶음 (9 sample)</td>
-<td align="center" valign="top" width="50%"><img src="figs/group_02_ParallelScratches.png" width="380" height="380"><br><b>ParallelScratches group</b><br>40 wafer 자동 묶음 (9 sample)</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_02_EdgeBottom_scratch_rot.png" width="380" height="380"><br><b>Edge-Bottom_scratch_rot group</b><br>13 wafer 자동 묶음 (9 sample, FPS distinct)</td>
 </tr>
 <tr>
 <td align="center" valign="top" width="50%"><img src="figs/group_03_RingDots.png" width="380" height="380"><br><b>RingDots group</b><br>27 wafer 자동 묶음 (9 sample)</td>
