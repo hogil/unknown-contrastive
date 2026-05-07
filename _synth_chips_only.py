@@ -80,11 +80,11 @@ def render_chip(obj: str, rng: np.random.Generator,
             grades_base = np.searchsorted(sg.CUM_BASE, u_base).astype(np.uint8)
             u1 = rng.random((CHIP, CHIP))
             is_defect = u1 < alpha
-            # 260507 v5: per-obj smoothstep — peak grade 2 미세 ↑ (사용자 "전체 미세하게 좀만 높게").
-            # fork:              0.55/0.90 → 0.50/0.88   (peak 라인 grade 2 약간 ↑)
-            # scratch / scr_rot: 0.65/0.93 → 0.60/0.91   (peak window 살짝 넓힘)
+            # 260507 v5.1: fork 만 미세 dial — peak grade 2 살짝 ↓
+            # fork:              0.50/0.88 → 0.53/0.90   (미세하게 grade 1 쪽으로)
+            # scratch / scr_rot: 0.60/0.91   (변경 없음)
             if obj == 'fork':
-                lo_t2, hi_t2 = 0.50, 0.88
+                lo_t2, hi_t2 = 0.53, 0.90
             else:  # scratch / scratch_rot
                 lo_t2, hi_t2 = 0.60, 0.91
             t2 = np.clip((alpha - lo_t2) / (hi_t2 - lo_t2), 0.0, 1.0).astype(np.float32)

@@ -1022,8 +1022,9 @@ def render(class_name, object_name, seed):
         pink_baseline = np.where(is_chip_bg, chip_bg_grade, np.uint8(0)).astype(np.uint8)
 
         if obj in ('fork', 'scratch', 'scratch_rot'):
+            # 260507 v5.1: fork 미세 dial down — 0.50/0.88 → 0.53/0.90 (grade 2 살짝 ↓)
             if obj == 'fork':
-                lo_t2, hi_t2 = 0.50, 0.88
+                lo_t2, hi_t2 = 0.53, 0.90
             else:
                 lo_t2, hi_t2 = 0.60, 0.91
             u1 = rng.random((CHIP, CHIP))

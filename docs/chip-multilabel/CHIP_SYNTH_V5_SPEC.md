@@ -97,7 +97,8 @@ bank_boundary `OBJECT_DISTS` = `[0.003, 0.10, 0.85, 0.11, 0.004, 0.002, 0.001, 0
 | v1 (chip pink) | 260507 | pink noise inline cap 0.50 | 사용자 "정상 영역 noise 다양화" |
 | v2-v3 | 260507 | floor 0.10/cap 0.50, cap 0.35 | 사용자 visual 조정 |
 | v4 (wafer pink) | 260507 | wafer-level pink field + chip slice | chip 경계 seam 제거 |
-| **v5** (현재) | 260507 | per-obj smoothstep + bank 0.45/0.55 | 사용자 visual 통과 |
+| v5 | 260507 | per-obj smoothstep (fork 0.50/0.88, sc/sr 0.60/0.91) + bank 0.45/0.55 | 사용자 visual 통과 |
+| **v5.1** (현재) | 260507 | fork 만 미세 dial down: 0.50/0.88 → 0.53/0.90 | 사용자 "fork 진짜 미세하게 pixel 2 줄여보자" |
 
 ## 절대 영구 원칙
 

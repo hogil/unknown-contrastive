@@ -767,9 +767,9 @@ def render_gpu(class_name, object_name, seed):
         pink_baseline = torch.where(is_chip_bg, chip_bg_grade, _U8_0)
 
         if obj in ('fork', 'scratch', 'scratch_rot'):
-            # 2-stage
+            # 260507 v5.1: fork 미세 dial down — 0.50/0.88 → 0.53/0.90
             if obj == 'fork':
-                lo_t2, hi_t2 = 0.50, 0.88
+                lo_t2, hi_t2 = 0.53, 0.90
             else:
                 lo_t2, hi_t2 = 0.60, 0.91
             u1 = torch.rand((CHIP, CHIP), generator=g, device=DEVICE)
