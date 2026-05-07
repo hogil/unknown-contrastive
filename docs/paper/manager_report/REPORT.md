@@ -2,9 +2,9 @@
 
 ## 프로젝트
 
-WM-811K wafer 결함 패턴을 **label 없이** group 으로 자동 묶는다.
-- 학습 데이터 = 42 defect class 평균 30 + Normal 1000 = **2,146 wafer** (label 안 씀)
-- 학습 후 embedding → HDBSCAN → group 자동 발견
+wafer 결함 패턴을 **label 없이** group 으로 자동 묶는다.
+- 학습 데이터 = 결함 43 종 × 평균 30 + Normal 1,000 = **2,146 wafer** (label 안 씀)
+- **self-supervised contrastive learning** 으로 wafer → 128-dim embedding → HDBSCAN → group 자동 발견
 - 평가는 학습 끝난 뒤 GT 라벨로 group 품질만 채점
 
 ## 기본 골격
