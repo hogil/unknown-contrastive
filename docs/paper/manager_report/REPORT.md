@@ -58,10 +58,6 @@ self-supervised contrastive learning — 라벨 없이 augment 두 view 사이 �
 | **14 ★★** | + TEMP 0.07→0.05 | **0.952** | **0.913** | 6.63% | 1.000 | **0.763** | **Quality King** |
 | 17 | WARMUP 1→2 | 0.944 | 0.890 | 7.94% | **0.976 ❌** | 0.698 | reject (P1 violation) |
 
-기타 22 iter 는 LW 사촌 / TEMP 사촌 / LR 사촌 / TOPK / QUEUE / BATCH / multi-axis combo — 모두 reject 또는 == Iter 1/14. 자세한 묶음은 `docs/paper/ITERATIONS.md`.
-
-진짜 lever 4 axis: **LW**, **LR_HEAD**, **NEG_SIM**, **NCE_TEMP**. 나머지 axis 모두 dead.
-
 ---
 
 ## 1. 학습 데이터 — 결함 43 종 중 6 종 미리 보기
