@@ -2,6 +2,44 @@
 
 이 파일은 Claude Code(claude.ai/code) 새 세션에 프로젝트 진입점을 알려준다.
 
+---
+
+## ★ 절대 규칙 (Absolute Rules) — 매 turn 끝에 검사
+
+### 규칙 #1 — 모든 turn 종료 시 변경 / 생성 파일 리스트 출력
+
+**언제**: tool 사용으로 파일이 1 개라도 수정 / 생성된 turn 의 마지막
+**무엇을**: 다음 형식의 출력 1 회
+
+```
+## 이 turn 결과물
+
+### 수정된 파일
+- D:\절대경로\file1.md  (수정 — 한 줄 요약)
+- D:\절대경로\file2.py  (수정 — 한 줄 요약)
+
+### 새로 생성된 파일
+- D:\절대경로\new_dir\file3.md  (신규 — 한 줄 요약)
+- D:\절대경로\figs\image1.png    (신규 — 한 줄 요약)
+```
+
+**대상 종류**:
+- `.md` `.py` `.json` `.yaml` `.txt` 등 source / config 파일
+- `.png` `.jpg` `.svg` 등 image
+- `parquet` `.npy` 등 데이터 산출물
+- 새 디렉토리 생성도 명시
+
+**제외 대상**:
+- `outputs_contrastive_*/` 학습 자동 산출물 (run_dir 만 한 줄 언급)
+- `_dispatch_logs/` boot log
+- 조회 / Read 만 한 파일 (수정 X)
+- tool 호출 결과로만 잠시 받은 임시 변수
+
+**왜**: 사용자가 conversation 끝에 변경 사항을 한 눈에 추적 가능 + 빠진 파일 (image, .md 보고서 등) 누락 방지.
+**위반**: 파일을 수정 / 생성하고도 마지막에 리스트 안 보여주면 절대 규칙 위반 — 즉시 추가 출력.
+
+---
+
 ## 이 repo가 하는 일
 
 **Self-supervised contrastive learning + HDBSCAN unknown wafer-defect clustering.**
@@ -107,9 +145,11 @@ contrastive 학습 결과 보고 / 평가 시 다음 정책 강제. 자세히는
 
 ### 다음 학습 dispatch 시
 - BATCH=16, IMAGE_SIZE=384 (사용자 명시 GPU 작게)
-- per-class sample 수 random (50~200+, 200 일률 X)
+- **Data anchor (★ 전제)**: defect class 별 평균 30 (random 분포, 일률 X) + Normal 전체
+  - 첫 dispatch 시 file_list.parquet 자동 저장 → 재현 보장
+  - 이후 모든 method ablation 은 same subset 디렉터리 재사용 (data anchor 변경 금지)
 
-세부 결정 history: `docs/contrastive-eval/DECISIONS.md` D-1 ~ D-11.
+세부 결정 history: `docs/contrastive-eval/DECISIONS.md` D-1 ~ D-15.
 
 ## 외부 참조 (read-only)
 
