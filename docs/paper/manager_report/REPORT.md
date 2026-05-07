@@ -70,31 +70,62 @@ cfg 차이 4 axis: `LR_HEAD 1e-3↔5e-4`, `NEG_SIM 0.72↔0.65`, `NCE_TEMP 0.07�
 
 <table>
 <tr>
-<td align="center"><img src="figs/wafer_01_CrescentArc.png" width="260"><br><b>CrescentArc</b><br>canvas (호형 패턴)</td>
-<td align="center"><img src="figs/wafer_02_BrokenRing.png" width="260"><br><b>BrokenRing</b><br>canvas (끊어진 ring)</td>
-<td align="center"><img src="figs/wafer_03_RingDots.png" width="260"><br><b>RingDots</b><br>canvas (점 분포 ring)</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_01_CrescentArc.png" width="260" height="260"><br><b>CrescentArc</b><br>canvas pattern</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_02_BrokenRing.png" width="260" height="260"><br><b>BrokenRing</b><br>canvas pattern</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_03_RingDots.png" width="260" height="260"><br><b>RingDots</b><br>canvas pattern</td>
 </tr>
 <tr>
-<td align="center"><img src="figs/wafer_04_EdgeTop_fork.png" width="260"><br><b>Edge-Top_fork</b><br>site=Edge-Top, chip=fork</td>
-<td align="center"><img src="figs/wafer_05_EdgeBottom_scratch_rot.png" width="260"><br><b>Edge-Bottom_scratch_rot</b><br>site=Edge-Bottom, chip=scratch_rot (-21°)</td>
-<td align="center"><img src="figs/wafer_06_EdgeRing_scratch.png" width="260"><br><b>Edge-Ring_scratch</b><br>site=Edge-Ring, chip=scratch</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_04_Center_fork.png" width="260" height="260"><br><b>Center_fork</b><br>site×chip object</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_05_EdgeBottom_scratch_rot.png" width="260" height="260"><br><b>Edge-Bottom_scratch_rot</b><br>site×chip object</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_06_EdgeRing_scratch.png" width="260" height="260"><br><b>Edge-Ring_scratch</b><br>site×chip object</td>
 </tr>
 </table>
 
-다양성: **canvas 외형만** 3 종 (CrescentArc / BrokenRing / RingDots) + **site×chip-defect** 3 종 (Edge-Top fork / Edge-Bottom scratch_rot / Edge-Ring scratch). 학습 anchor 는 이런 종류 42 class × 평균 30 + Normal 1000 = 2,146 wafer.
+3 canvas (CrescentArc / BrokenRing / RingDots) + 3 site×chip (Center fork / Edge-Bottom scratch_rot / Edge-Ring scratch). 학습 anchor 는 이런 종류 42 class × 평균 30 + Normal 1000 = 2,146 wafer.
+
+### 합성 방식 (sister repo `known-cnn/dist_apply/_sample_gen.py`)
+
+```
+1) wafer canvas 선택  (8 distribution: Center / Donut / Edge-Ring / Edge-Bottom /
+                                       Edge-Top / Full / Thick-Edge / Normal)
+
+2) chip-object 합성  (5 object: bank_boundary / fork / scratch / scratch_rot / invalid_main)
+                    (object 가 들어갈 chip 위치 = canvas 의 DEFECT_BUDGET 픽셀 비율)
+
+3) chip 안 grade 픽셀 확률적 채움 (8-color palette PNG)
+```
+
+**DEFECT_BUDGET** — wafer canvas 별로 chip-defect 발생 분포 (260507 v5.1):
+
+| canvas | chip 갯수 | 의미 |
+|---|---:|---|
+| Center | 18 | 가운데 모임 |
+| Donut | 30 | ring 안쪽 모임 |
+| Edge-Ring | 70 | 가장자리 ring |
+| Edge-Bottom / Edge-Top | 20 | 위/아래 strip (260507 v5.1: 6 → 20) |
+| Full | 250 | wafer 전체 흩어짐 |
+| Thick-Edge | 400 | 두꺼운 ring 가장자리 |
+| Normal | 0 | 결함 없음 |
+
+**chip alpha** — 각 chip object 의 모양 함수 (BG 변경 X, 불량 영역만):
+- `alpha_fork`: 세로선 fork 패턴 (cy_h 30~130 random, sigma 1.8~2.3)
+- `alpha_scratch`: 가로 scratch 라인
+- `alpha_scratch_rot`: -21° 고정 회전 scratch
+- `alpha_bank_boundary`: chip 끝선 두꺼운 라인 + halo
+- `alpha_invalid_main`: chip 텍스트 (bin number) 표기
 
 ## 2. grouping 결과 — 여러 wafer → 한 group
 
-학습 후 embedding → HDBSCAN. 각 panel 은 **같은 group 안의 9 wafer** (medoid 1 + 가까운 8). 4 group sample (Iter 14 결과):
+학습 후 embedding → HDBSCAN. 각 panel = **같은 group 안 9 wafer 3×3 grid** (raw single wafer 9 장 직접 합성). 4 group sample (Iter 14 결과):
 
 <table>
 <tr>
-<td align="center"><img src="figs/group_01_CrescentArc.png" width="260"><br><b>group #10 — CrescentArc</b><br>43 wafer 한 group (canvas 같은 호형)</td>
-<td align="center"><img src="figs/group_02_BrokenRing.png" width="260"><br><b>group #9 — BrokenRing</b><br>17 wafer 한 group (canvas)</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_01_CrescentArc.png" width="380" height="380"><br><b>CrescentArc group</b><br>43 wafer 자동 묶음 (9 sample)</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_02_BrokenRing.png" width="380" height="380"><br><b>BrokenRing group</b><br>17 wafer 자동 묶음 (9 sample)</td>
 </tr>
 <tr>
-<td align="center"><img src="figs/group_03_EdgeBottom_scratch_rot.png" width="260"><br><b>group #36 — Edge-Bottom_scratch_rot</b><br>13 wafer 한 group (chip object)</td>
-<td align="center"><img src="figs/group_04_EdgeRing_scratch.png" width="260"><br><b>group #25 — Edge-Ring_scratch</b><br>20 wafer 한 group (chip object)</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_03_EdgeBottom_scratch_rot.png" width="380" height="380"><br><b>Edge-Bottom_scratch_rot group</b><br>13 wafer 자동 묶음 (9 sample)</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_04_EdgeRing_scratch.png" width="380" height="380"><br><b>Edge-Ring_scratch group</b><br>20 wafer 자동 묶음 (9 sample)</td>
 </tr>
 </table>
 
