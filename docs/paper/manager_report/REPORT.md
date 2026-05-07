@@ -4,6 +4,7 @@
 
 wafer 결함 패턴을 **label 없이** group 으로 자동 묶는다.
 - 학습 데이터 = 결함 43 종 × 평균 30 + Normal 1,000 = **2,146 wafer** (label 안 씀)
+- **Normal 1,000** = 실제 라인 환경 모방. 현업에서는 대부분이 정상 wafer (noise) 이고 소수의 결함만 섞여 들어오는데, 그 노이즈 풀 안에서도 결함 group 이 정확히 분리되는지 검증하기 위해 정상 wafer 를 압도적 다수로 포함.
 - **self-supervised contrastive learning** 으로 wafer → 128-dim embedding → HDBSCAN → group 자동 발견
 - 평가는 학습 끝난 뒤 GT 라벨로 group 품질만 채점
 
