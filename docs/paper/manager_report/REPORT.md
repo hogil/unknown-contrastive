@@ -93,22 +93,24 @@ wafer ──► CNN ──► 128-dim emb ──► HDBSCAN ──► group A, B
 
 ## 2. grouping 결과 — 여러 wafer → 한 group
 
-같은 class 의 wafer 들이 시각적으로 다양해도 (밝/어두움, defect 영역 넓/좁) 모델이 한 group 으로 묶음. 각 panel = **같은 class 의 10 wafer 중 9 FPS distinct sample** (3×3 grid). 4 site×chip group:
+같은 class 의 wafer 들이 시각적으로 다양해도 (밝/어두움, defect 영역 넓/좁) 모델이 한 group 으로 묶음. 각 panel = **같은 class 의 wafer 중 9 FPS distinct sample** (3×3 grid). 5 group (3 site×chip + 2 canvas):
 
 <table>
 <tr>
-<td align="center" valign="top" width="50%"><img src="figs/group_01_Center_fork.png" width="380" height="380"><br><b>Center_fork group</b><br>site=Center + chip=fork</td>
-<td align="center" valign="top" width="50%"><img src="figs/group_02_EdgeTop_scratch.png" width="380" height="380"><br><b>Edge-Top_scratch group</b><br>site=Edge-Top + chip=scratch</td>
+<td align="center" valign="top" width="33%"><img src="figs/group_01_Center_fork.png" width="280" height="280"><br><b>Center_fork group</b><br>site=Center + chip=fork</td>
+<td align="center" valign="top" width="33%"><img src="figs/group_02_EdgeTop_scratch.png" width="280" height="280"><br><b>Edge-Top_scratch group</b><br>site=Edge-Top + chip=scratch</td>
+<td align="center" valign="top" width="33%"><img src="figs/group_03_Edge-Ring_scratch.png" width="280" height="280"><br><b>Edge-Ring_scratch group</b><br>site=Edge-Ring + chip=scratch</td>
 </tr>
 <tr>
-<td align="center" valign="top" width="50%"><img src="figs/group_03_EdgeBottom_scratch_rot.png" width="380" height="380"><br><b>Edge-Bottom_scratch_rot group</b><br>site=Edge-Bottom + chip=scratch_rot</td>
-<td align="center" valign="top" width="50%"><img src="figs/group_04_EdgeRing_scratch.png" width="380" height="380"><br><b>Edge-Ring_scratch group</b><br>site=Edge-Ring + chip=scratch</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_04_BrokenRing.png" width="380" height="380"><br><b>BrokenRing group</b><br>canvas pattern</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_05_RingDots.png" width="380" height="380"><br><b>RingDots group</b><br>canvas pattern</td>
 </tr>
 </table>
 
-4 site (Center / Edge-Top / Edge-Bottom / Edge-Ring) × 3 chip (fork / scratch / scratch_rot) — 같은 site 라도 chip 결함이 다르고, 같은 chip 결함이라도 site 가 다르면 다른 group 으로 분리.
+3 site×chip (Center fork / Edge-Top scratch / Edge-Ring scratch) — 같은 chip 결함 (scratch) 라도 wafer 위치 (site) 다르면 다른 group + 같은 site (Center) 라도 chip 결함 다르면 다른 group.
+2 canvas (BrokenRing / RingDots) — chip object 없는 wafer 외형 패턴도 별도 group 으로 인식.
 
-→ 같은 group 안 9 wafer 가 **밝기 / 결함 영역 / dot 분포 다양** 해도 묶임 (FPS pair-dist 0.19~0.53). 모델이 **site × chip-object** 2 축 모두 인식.
+→ 같은 group 안 9 wafer 가 **밝기 / 결함 영역 / dot 분포 다양** 해도 묶임 (FPS pair-dist 0.19~0.66). 모델이 **site × chip-object × wafer-canvas** 3 축 모두 인식.
 
 ---
 
