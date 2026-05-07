@@ -55,6 +55,12 @@ def main() -> int:
                    help="NV-Retriever PercPos α (only used when --neg-filter=perc_pos, default 0.95)")
     p.add_argument("--freeze-backbone", default="true", choices=["true", "false"],
                    help="FREEZE_BACKBONE: true=head only, false=joint training")
+    p.add_argument("--backbone-unfreeze-last-n", type=int, default=0,
+                   help="Unfreeze last N stages of ConvNeXtV2 backbone (default 0). "
+                        "Combined with --freeze-backbone=true, enables partial fine-tuning: "
+                        "head + last N stages trainable, earlier stages frozen.")
+    p.add_argument("--neco-weight", type=float, default=0.0,
+                   help="NeCo (arXiv:2408.11054) patch ordering loss weight (default 0 = off)")
     args = p.parse_args()
 
     if not Path(args.data).exists():
@@ -92,6 +98,8 @@ def main() -> int:
         "NEG_FILTER": args.neg_filter,
         "NEG_FILTER_ALPHA": str(args.neg_filter_alpha),
         "FREEZE_BACKBONE": args.freeze_backbone,
+        "BACKBONE_UNFREEZE_LAST_N": str(args.backbone_unfreeze_last_n),
+        "NECO_WEIGHT": str(args.neco_weight),
         "PYTHONUNBUFFERED": "1",
     })
 

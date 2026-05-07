@@ -62,6 +62,52 @@ def install_nv_retriever_perc_pos(alpha: float = 0.95) -> None:
     print(f"[NV-Retriever] TopK-PercPos active: thr_i = pos[i] × {alpha}  (ignore_sim ignored)")
 
 
+def install_partial_unfreeze(n: int) -> None:
+    """Backbone partial unfreeze — last `n` ConvNeXtV2 stages trainable, rest frozen.
+
+    ConvNeXtV2-base has 4 stages (`backbone.stages[0..3]`). With n=2, stages[2] and stages[3]
+    become trainable (mid+high-level feature blocks); stages[0..1] + stem stay frozen
+    (low-level patterns inherited from supervised TAPT). Motivation: unlock backbone
+    capacity without catastrophic forgetting — Iter 31 full unfreeze at LR=5e-5 collapsed
+    to noise=62%, suggesting last-layer-only fine-tuning preserves the learned feature
+    hierarchy while still allowing task-specific high-level adaptation.
+
+    Implementation: monkey-patch `contrastive.CL.__init__` so that after original init
+    completes (which sets `requires_grad=False` for all backbone params when
+    FREEZE_BACKBONE=True), we override `requires_grad` per stage. Stem and head are
+    untouched — only `stages[i]` parameters are flipped on for i ∈ [n_stages - n, n_stages).
+
+    The optimizer in contrastive.py main() already filters
+    `[p for p in model.parameters() if p.requires_grad]`, so flipped stages auto-include.
+
+    Usage: set env BACKBONE_UNFREEZE_LAST_N=2 (default 0 = no-op, full freeze behaviour).
+    """
+    if n <= 0:
+        return
+    import contrastive
+
+    _orig_init = contrastive.CL.__init__
+
+    def patched_init(self, *args, **kwargs):
+        _orig_init(self, *args, **kwargs)
+        stages = self.backbone.stages
+        n_stages = len(stages)
+        n_unfreeze = min(n, n_stages)
+        for i, stage in enumerate(stages):
+            req = (i >= n_stages - n_unfreeze)
+            for p in stage.parameters():
+                p.requires_grad = req
+        n_train = sum(p.numel() for p in self.backbone.parameters() if p.requires_grad)
+        n_total = sum(p.numel() for p in self.backbone.parameters())
+        unfrozen_idx = list(range(n_stages - n_unfreeze, n_stages))
+        print(f"[partial-unfreeze] last {n_unfreeze}/{n_stages} stages trainable "
+              f"(idx={unfrozen_idx}); backbone trainable params "
+              f"{n_train:,} / {n_total:,} ({100.0 * n_train / n_total:.1f}%)")
+
+    contrastive.CL.__init__ = patched_init
+    print(f"[patch] install_partial_unfreeze(n={n}) registered")
+
+
 def install_gpu_throttle(throttle_ms: float) -> None:
     """Inject sleep after each optimizer.step() to throttle GPU compute utilization.
 
@@ -126,6 +172,10 @@ def main():
     # NV-Retriever monkey-patch (env NEG_FILTER=perc_pos to enable, must be after import contrastive)
     if os.environ.get("NEG_FILTER", "fixed") == "perc_pos":
         install_nv_retriever_perc_pos(alpha=float(os.environ.get("NEG_FILTER_ALPHA", 0.95)))
+
+    # Backbone partial unfreeze (env BACKBONE_UNFREEZE_LAST_N, default 0 = no-op).
+    # Must run before CL() is instantiated in contrastive.main(). Patches CL.__init__.
+    install_partial_unfreeze(int(os.environ.get("BACKBONE_UNFREEZE_LAST_N", 0)))
 
     # Monkey-patch ImageFolder:
     # 1. classification/classification_chips 빈 폴더 제외 (cnn_train EXCLUDE_CLASSES 동일 정책)
