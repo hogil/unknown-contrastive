@@ -108,6 +108,81 @@ def install_partial_unfreeze(n: int) -> None:
     print(f"[patch] install_partial_unfreeze(n={n}) registered")
 
 
+def install_neco_loss(weight: float, tau: float = 0.1) -> None:
+    """NeCo (Pariza et al. 2024, arXiv:2408.11054) — soft patch-neighbor consistency.
+
+    NeCo = "Neighborhood-aware Cluster Order". Original paper uses Sinkhorn-Knopp
+    differentiable sorting to enforce that, for each patch, the *rank order* of its
+    k-nearest neighbors among other patches is consistent across two augmented views.
+    This regularizes dense feature maps to maintain stable spatial relations under
+    photometric augmentation, complementary to global InfoNCE which only constrains
+    pooled features.
+
+    Implementation here uses the soft-rank approximation noted in the paper's appendix
+    (and in concurrent work — DenseCL, VICReg-Local): replace explicit ranking with
+    row-softmax over patch-pairwise cosine similarities, yielding distributions
+    `P_v[i, :] = softmax(sim(p_i, p_j) / τ)_j` per view v ∈ {1, 2}. Loss is
+    symmetric KL between P_1 and P_2 (rows = anchor patches, cols = candidate
+    neighbors). This preserves the spirit (relative neighbor ordering should match)
+    without the Sinkhorn machinery, keeping the patch into a single forward+matmul pass.
+
+    Why this fits our setup:
+    - We already have L2-normed local feature maps `f1, f2 ∈ [B, C, H, W]` from
+      `CL.forward(return_local=True)` — no extra forward needed.
+    - At 384px input on ConvNeXtV2-base, H=W=12 → N=144 patches per sample, so
+      per-sample S ∈ [144, 144] (~80 KB fp16) — cheap.
+    - Adds dense regularization on top of Iter 14's frozen backbone (and Iter 32's
+      partial unfreeze): exact spatial sister-class boundaries (Edge-Top vs
+      Edge-Bottom variants) should benefit from neighbor-order consistency.
+
+    Hook: monkey-patch `contrastive.info_nce_local_multi`. The wrapper calls original
+    local loss, then adds `weight * neco_term`. Because contrastive.main() invokes
+    info_nce_local_multi only when `CFG["USE_LOCAL"]=True` and `it % LOCAL_EVERY_N == 0`,
+    NeCo only fires on those same iterations — same compute pattern as L term.
+
+    Args:
+        weight: NeCo loss weight added to local loss term (default 0 = no-op).
+        tau: temperature for row-softmax over patch sim. Lower = peakier, more rank-like.
+             Paper uses 0.1 with DINOv2 ViT-S; we keep same default.
+    """
+    if weight <= 0:
+        return
+    import torch.nn.functional as F
+    import contrastive
+
+    _orig_local = contrastive.info_nce_local_multi
+
+    def neco_wrapped(f1: torch.Tensor, f2: torch.Tensor, **kwargs):
+        # Original local InfoNCE (multi-positive, anchor-based)
+        local_loss = _orig_local(f1, f2, **kwargs)
+
+        # NeCo soft-rank consistency on the same patch maps
+        B, C, H, W = f1.shape
+        N = H * W
+        # CL.forward already L2-normalized along C dim
+        p1 = f1.reshape(B, C, N).transpose(1, 2)            # [B, N, C]
+        p2 = f2.reshape(B, C, N).transpose(1, 2)
+        # Per-sample patch-pairwise similarity
+        S1 = torch.bmm(p1, p1.transpose(1, 2))              # [B, N, N]
+        S2 = torch.bmm(p2, p2.transpose(1, 2))
+        # Drop self-sim from softmax denominator
+        eye = torch.eye(N, device=f1.device, dtype=torch.bool).unsqueeze(0)
+        S1 = S1.masked_fill(eye, -1e4)
+        S2 = S2.masked_fill(eye, -1e4)
+        log_P1 = F.log_softmax(S1 / tau, dim=-1)            # [B, N, N]
+        log_P2 = F.log_softmax(S2 / tau, dim=-1)
+        P1 = log_P1.exp()
+        P2 = log_P2.exp()
+        # Symmetric KL (KL(P1||P2) + KL(P2||P1)) / 2, mean over patches and batch
+        kl_12 = (P1 * (log_P1 - log_P2)).sum(dim=-1).mean()
+        kl_21 = (P2 * (log_P2 - log_P1)).sum(dim=-1).mean()
+        neco_term = 0.5 * (kl_12 + kl_21)
+        return local_loss + weight * neco_term
+
+    contrastive.info_nce_local_multi = neco_wrapped
+    print(f"[NeCo] patch-neighbor consistency active: weight={weight} tau={tau}")
+
+
 def install_gpu_throttle(throttle_ms: float) -> None:
     """Inject sleep after each optimizer.step() to throttle GPU compute utilization.
 
@@ -176,6 +251,13 @@ def main():
     # Backbone partial unfreeze (env BACKBONE_UNFREEZE_LAST_N, default 0 = no-op).
     # Must run before CL() is instantiated in contrastive.main(). Patches CL.__init__.
     install_partial_unfreeze(int(os.environ.get("BACKBONE_UNFREEZE_LAST_N", 0)))
+
+    # NeCo patch-neighbor consistency (env NECO_WEIGHT, default 0.0 = no-op).
+    # Patches contrastive.info_nce_local_multi. Adds soft-rank KL term to local loss.
+    install_neco_loss(
+        weight=float(os.environ.get("NECO_WEIGHT", 0.0)),
+        tau=float(os.environ.get("NECO_TAU", 0.1)),
+    )
 
     # Monkey-patch ImageFolder:
     # 1. classification/classification_chips 빈 폴더 제외 (cnn_train EXCLUDE_CLASSES 동일 정책)
