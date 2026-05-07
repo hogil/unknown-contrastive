@@ -97,13 +97,12 @@ wafer ──► CNN ──► 128-dim emb ──► HDBSCAN ──► group A, B
 
 <table>
 <tr>
-<td align="center" valign="top" width="33%"><img src="figs/group_01_Center_fork.png" width="280" height="280"><br><b>Center_fork group</b><br>site=Center + chip=fork</td>
-<td align="center" valign="top" width="33%"><img src="figs/group_02_EdgeTop_scratch.png" width="280" height="280"><br><b>Edge-Top_scratch group</b><br>site=Edge-Top + chip=scratch</td>
-<td align="center" valign="top" width="33%"><img src="figs/group_03_Edge-Ring_scratch.png" width="280" height="280"><br><b>Edge-Ring_scratch group</b><br>site=Edge-Ring + chip=scratch</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_04_RingDots.png" width="380" height="380"><br><b>RingDots group</b><br>canvas pattern</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_03_BrokenRing.png" width="380" height="380"><br><b>BrokenRing group</b><br>canvas pattern</td>
 </tr>
 <tr>
-<td align="center" valign="top" width="50%"><img src="figs/group_04_BrokenRing.png" width="380" height="380"><br><b>BrokenRing group</b><br>canvas pattern</td>
-<td align="center" valign="top" width="50%"><img src="figs/group_05_RingDots.png" width="380" height="380"><br><b>RingDots group</b><br>canvas pattern</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_02_EdgeTop_scratch.png" width="380" height="380"><br><b>Edge-Top_scratch group</b><br>site=Edge-Top + chip=scratch</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_01_Center_fork.png" width="380" height="380"><br><b>Center_fork group</b><br>site=Center + chip=fork</td>
 </tr>
 </table>
 
