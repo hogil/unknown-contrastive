@@ -13,8 +13,75 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 import torch
+
+
+def install_nv_retriever_perc_pos(alpha: float = 0.95) -> None:
+    """NV-Retriever TopK-PercPos α — replace fixed IGNORE_NEG_SIM with per-anchor adaptive threshold.
+
+    Reference: Moreira et al. 2024, "NV-Retriever: Improving Text Embedding Models with Effective
+    Hard-Negative Mining" (arXiv:2407.15831), Sec. 4 (TopK-PercPos), Sec. 5 ablation (α=0.95 best).
+
+    Mechanism: thr_i = pos[i] * α (per-anchor). Negatives with sim ≥ thr_i are dropped as suspected
+    false-negatives. Replaces uniform `ignore_sim` with per-row mask. Anchors with strong positive
+    (clean view) tolerate near-positive negatives; anchors with weak positive tighten threshold
+    automatically — directly fits sister-class collapse where some anchors have weak positive
+    and need stricter neg filtering.
+
+    Usage: set env NEG_FILTER=perc_pos NEG_FILTER_ALPHA=0.95.
+    Effect on Iter 1 weak point (Edge-Bottom_*** family centroid 0.007): per-anchor adaptive
+    threshold should keep family-boundary negatives as negatives only when truly close.
+    """
+    import torch
+    import torch.nn.functional as F
+    import contrastive  # already imported in main; rebind
+
+    _orig_info_nce = contrastive.info_nce_with_queue
+
+    def info_nce_perc_pos(z1, z2, bank, t=0.2, ignore_sim=None):
+        B, D = z1.size()
+        pos = (z1 * z2).sum(1, keepdim=True)                 # [B,1]
+        thr = pos * alpha                                    # [B,1] — per-anchor threshold
+        neg_ib = z1 @ z2.T                                   # [B,B]
+        neg_ib.fill_diagonal_(-1e9)
+        neg_ib = torch.where(neg_ib >= thr, torch.full_like(neg_ib, -1e9), neg_ib)
+
+        if bank is not None:
+            neg_bank = z1 @ bank.T                           # [B,N]
+            neg_bank = torch.where(neg_bank >= thr, torch.full_like(neg_bank, -1e9), neg_bank)
+            logits = torch.cat([pos, neg_ib, neg_bank], dim=1) / t
+        else:
+            logits = torch.cat([pos, neg_ib], dim=1) / t
+
+        labels = torch.zeros(B, dtype=torch.long, device=z1.device)
+        return F.cross_entropy(logits, labels)
+
+    contrastive.info_nce_with_queue = info_nce_perc_pos
+    print(f"[NV-Retriever] TopK-PercPos active: thr_i = pos[i] × {alpha}  (ignore_sim ignored)")
+
+
+def install_gpu_throttle(throttle_ms: float) -> None:
+    """Inject sleep after each optimizer.step() to throttle GPU compute utilization.
+
+    Use case: target ~30% GPU util when training shares the GPU with other apps.
+    Approach: torch.cuda.synchronize() forces flush, then time.sleep yields.
+    """
+    if throttle_ms <= 0:
+        return
+    _orig = torch.optim.Optimizer.step
+    sleep_s = throttle_ms / 1000.0
+
+    def _throttled(self, *a, **kw):
+        out = _orig(self, *a, **kw)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        time.sleep(sleep_s)
+        return out
+
+    torch.optim.Optimizer.step = _throttled
+    print(f"[throttle] GPU compute throttle: {throttle_ms} ms sleep after each optimizer.step")
 
 
 def extract_state_dict(ckpt_path: str | Path) -> str:
@@ -42,6 +109,9 @@ def extract_state_dict(ckpt_path: str | Path) -> str:
 
 
 def main():
+    # GPU compute throttle (env GPU_THROTTLE_MS, default 0 = no throttle)
+    install_gpu_throttle(float(os.environ.get("GPU_THROTTLE_MS", 0)))
+
     # Resolve backbone init (TAPT — wafer best_model.pth)
     backbone_ckpt = os.environ.get(
         "BACKBONE_CKPT",
@@ -52,6 +122,10 @@ def main():
     # Import contrastive (executes top-level CFG dict)
     sys.path.insert(0, str(Path(__file__).parent))
     import contrastive  # noqa: E402
+
+    # NV-Retriever monkey-patch (env NEG_FILTER=perc_pos to enable, must be after import contrastive)
+    if os.environ.get("NEG_FILTER", "fixed") == "perc_pos":
+        install_nv_retriever_perc_pos(alpha=float(os.environ.get("NEG_FILTER_ALPHA", 0.95)))
 
     # Monkey-patch ImageFolder:
     # 1. classification/classification_chips 빈 폴더 제외 (cnn_train EXCLUDE_CLASSES 동일 정책)
@@ -106,6 +180,16 @@ def main():
         "TRAIN_SAMPLING_RATIO": float(os.environ.get("TRAIN_SAMPLING_RATIO", 0.25)),
         "USE_LOCAL":   os.environ.get("USE_LOCAL", "true").lower() == "true",
         "USE_QUEUE":   os.environ.get("USE_QUEUE", "true").lower() == "true",
+        "QUEUE_SIZE":  int(os.environ.get("QUEUE_SIZE", contrastive.CFG.get("QUEUE_SIZE", 4096))),
+        "LOCAL_WEIGHT": float(os.environ.get("LOCAL_WEIGHT", contrastive.CFG.get("LOCAL_WEIGHT", 0.5))),
+        "LOCAL_POS_TOPK": int(os.environ.get("LOCAL_POS_TOPK", contrastive.CFG.get("LOCAL_POS_TOPK", 12))),
+        # NOTE: NCE_TEMP not TEMP — Windows TEMP is system temp dir env
+        "TEMP":        float(os.environ.get("NCE_TEMP",  contrastive.CFG.get("TEMP", 0.07))),
+        "IGNORE_NEG_SIM": float(os.environ.get("IGNORE_NEG_SIM",
+                                              contrastive.CFG.get("IGNORE_NEG_SIM", 0.72))),
+        "LR_HEAD":     float(os.environ.get("LR_HEAD", contrastive.CFG.get("LR_HEAD", 1e-3))),
+        "FREEZE_BACKBONE": os.environ.get("FREEZE_BACKBONE", "true").lower() == "true",
+        "SEED":        int(os.environ.get("SEED",   contrastive.CFG.get("SEED", 42))),
         "CLUSTER_SELECTION_METHOD": os.environ.get("CLUSTER_SELECTION_METHOD", "leaf"),
         "CLUSTER_SELECTION_EPSILON": float(os.environ.get("CLUSTER_SELECTION_EPSILON", 0.06)),
         "MIN_CLUSTER_SIZE": int(os.environ.get("MIN_CLUSTER_SIZE", 12)),
