@@ -13,7 +13,8 @@
 | **v2-3** | 260507 | `f12c135` | (n/a) | 0.65/0.92 | 0.65/0.92 | 3-way 0.5/0.5 | pink noise FFT 1/f^1.5 | tier searchsorted | (없음, 짧은 iter) | (없음) |
 | **v4** | 260507 | (uncommitted) | (n/a) | 0.20/0.50 (강) | 0.20/0.50 | 2-stage (강한 grade 2 dominant) | pink FFT | wafer-level pink noise field | (없음) | `_pink_preview/` (삭제됨) |
 | **v5** | 260507 | `582826d` | `293b6ba` | 0.50/0.88 | 0.60/0.91 | 3-way 0.45/0.55 | Beta(2,10) | wafer pink + chip slice | `_pre_v5_260507/` (모두) | `_wafer_v5_preview/` + `docs/chip-multilabel/manager_report/figs/` |
-| **★ v5.1** | 260507 | `(현재)` | `(현재)` | **0.53/0.90** | 0.60/0.91 | 3-way 0.45/0.55 | Beta(2,10) | wafer pink + chip slice | (v5 와 동일 backup, 별도 backup 안 만듦) | `_fork_v5_1_sample/` |
+| v5.1 | 260507 | `329ef90` | `b7a53ba` | 0.53/0.90 | 0.60/0.91 | 3-way 0.45/0.55 | Beta(2,10) | wafer pink + chip slice (Beta clip 0.13/0.35) | (v5 backup 공유) | `_fork_v5_1_sample/` |
+| **★ v5.2** | 260507 | `(commit pending)` | `(commit pending)` | 0.53/0.90 | 0.60/0.91 | **independent sample + per-pixel choice (bg=pink_baseline → chip seam 제거)** | Beta(2,10) | **wafer pink: uniform [0,1] → linear [0.22, 0.42]** + **RingDots fixed positions (R×0.55, 18 dots)** + **Edge-Top/Bottom DEFECT_BUDGET 6→20** | (v5 backup 공유, 별도 backup 안 만듦) | `_uniform_linear_sample/` (10 wafer linear spread) |
 
 ## 각 column 의미
 

@@ -98,7 +98,8 @@ bank_boundary `OBJECT_DISTS` = `[0.003, 0.10, 0.85, 0.11, 0.004, 0.002, 0.001, 0
 | v2-v3 | 260507 | floor 0.10/cap 0.50, cap 0.35 | 사용자 visual 조정 |
 | v4 (wafer pink) | 260507 | wafer-level pink field + chip slice | chip 경계 seam 제거 |
 | v5 | 260507 | per-obj smoothstep (fork 0.50/0.88, sc/sr 0.60/0.91) + bank 0.45/0.55 | 사용자 visual 통과 |
-| **v5.1** (현재) | 260507 | fork 만 미세 dial down: 0.50/0.88 → 0.53/0.90 | 사용자 "fork 진짜 미세하게 pixel 2 줄여보자" |
+| v5.1 | 260507 | fork 만 미세 dial down: 0.50/0.88 → 0.53/0.90 | 사용자 "fork 진짜 미세하게 pixel 2 줄여보자" |
+| **v5.2** (현재) | 260507 | (1) bank 3-way zone mix → independent sample + per-pixel choice, bg=pink_baseline (chip seam 제거); (2) wafer pink: Beta clip → uniform [0,1] → linear map [0.22, 0.42] (모든 wafer floor 에 cluster 안 됨, 균등 spread); (3) RingDots: fixed positions (R×0.55, 18 dots, th_off=0, sigma=CHIP×0.30), peak 0.40-0.60 random; (4) Edge-Top/Edge-Bottom DEFECT_BUDGET 6→20 | 사용자 visual approve "진짜 완벽하다" |
 
 ## 절대 영구 원칙
 

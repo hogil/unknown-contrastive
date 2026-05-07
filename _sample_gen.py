@@ -299,8 +299,8 @@ DEFECT_BUDGET = {
     'Center':       18,                                                                # 더 모음 (was 25)
     'Donut':        30,                                                                # 더 모음 (was 40)
     'Edge-Ring':    70,
-    'Edge-Bottom':  6,                                                                 # split from Edge-Loc, 하단
-    'Edge-Top':     6,                                                                 # split from Edge-Loc, 상단
+    'Edge-Bottom':  20,                                                                # 260507 v5.1: 6 → 20 (사용자 directive — 불량 chip 너무 적음)
+    'Edge-Top':     20,                                                                # 260507 v5.1: 6 → 20
     'Full':         250,                                                               # Random(50)~Near-full(500) 중간
     'Thick-Edge':   400,                                                               # randomized
     'Normal':       0,                                                                 # special: render_normal에서 처리
@@ -978,8 +978,12 @@ def render(class_name, object_name, seed):
     #    floor 0.08 + cap 0.35 (max 강도 ↓), per-wafer overall_scale = beta(2,8) random.
     #    baseline_tier 은 JSON wafer_meta 기록용으로만 유지 (rendering 무관).
     wafer_pink = _pink_noise_field_2d(rng, SIZE, exponent=1.5)                       # (SIZE,SIZE) float32 ∈ [0,1]
-    overall_scale = float(rng.beta(2, 8))                                             # per-wafer noise level
-    p_bg_field = np.clip(overall_scale * (0.5 + 1.0 * wafer_pink), 0.08, 0.35).astype(np.float32)
+    # 260507 v5.2: uniform [0,1] per-wafer scale → linear map to [floor, cap].
+    # Beta(2,8) clip 폐기 — 대부분 floor 에 걸리는 문제 (사용자 directive "linear 하게 상승").
+    P_FLOOR, P_CAP = 0.22, 0.42
+    t_wafer = float(rng.uniform(0.0, 1.0))                                           # uniform per-wafer
+    p_bg_field = (P_FLOOR + (P_CAP - P_FLOOR) *
+                  np.clip(t_wafer + 0.3 * (wafer_pink - 0.5), 0.0, 1.0)).astype(np.float32)
     u_bg = rng.random((SIZE, SIZE))
     is_bg = u_bg < p_bg_field
     u_bg2 = rng.random((SIZE, SIZE))
@@ -1039,7 +1043,8 @@ def render(class_name, object_name, seed):
             defect_grade = np.where(is_2, np.uint8(2), defect_other)
             grades = np.where(is_defect, defect_grade, pink_baseline).astype(np.uint8)
         else:
-            # 3-way zone mix (bank_boundary etc) — v5 split 0.45/0.55
+            # 3-way zone mix (bank_boundary etc) — v5.2 (260507): independent sample + per-pixel choice.
+            # bg zone = pink_baseline (wafer slice → chip seam 제거). edge = CUM_EDGE, center = cum_obj 그대로.
             t_low = np.clip(alpha / 0.45, 0.0, 1.0).astype(np.float32)
             t_high = np.clip((alpha - 0.45) / 0.55, 0.0, 1.0).astype(np.float32)
             s_low = (t_low * t_low * (3.0 - 2.0 * t_low)).astype(np.float32)
@@ -1048,14 +1053,14 @@ def render(class_name, object_name, seed):
             mask_high = 1.0 - mask_low
             w_bg     = (mask_low * (1.0 - s_low)).astype(np.float32)
             w_edge   = (mask_low * s_low + mask_high * (1.0 - s_high)).astype(np.float32)
-            w_center = (mask_high * s_high).astype(np.float32)
-            cum_mixed = (w_bg[..., None]     * CUM_DEFECT_BG[None,None,:] +
-                         w_edge[..., None]   * CUM_EDGE[None,None,:] +
-                         w_center[..., None] * cum_obj[None,None,:])
-            uu = rng.random((CHIP, CHIP))
-            grades = (uu[..., None] < cum_mixed).argmax(axis=-1).astype(np.uint8)
-            # 3-way mix 의 low-alpha (background) 픽셀도 pink baseline 으로 override → chip 경계 seam 제거
-            grades = np.where(alpha < 0.05, pink_baseline, grades).astype(np.uint8)
+            # w_center = mask_high * s_high — per-pixel choice 의 잔여 prob 으로 자동 처리
+            u_edge   = rng.random((CHIP, CHIP))
+            u_center = rng.random((CHIP, CHIP))
+            edge_g   = (u_edge[..., None]   < CUM_EDGE[None, None, :]).argmax(axis=-1).astype(np.uint8)
+            center_g = (u_center[..., None] < cum_obj[None, None, :]).argmax(axis=-1).astype(np.uint8)
+            choice = rng.random((CHIP, CHIP))
+            grades = np.where(choice < w_bg, pink_baseline,
+                     np.where(choice < w_bg + w_edge, edge_g, center_g)).astype(np.uint8)
         y0, x0 = gy*CHIP, gx*CHIP
         canvas[y0:y0+CHIP, x0:x0+CHIP] = grades
 
