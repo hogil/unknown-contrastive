@@ -43,11 +43,11 @@ P1 capture = 1.000   결함 종류 한 개도 누락 X
 P2 noise ≤ 6%        전체 결함 wafer 중 group 에 못 들어간 비율
                      ●●●●●●●●●●●●●●●●●●●○   (20 중 19 group ●, 1 noise ○)
 
-P3 Comp ≥ 0.9        같은 결함 한 group 으로
-                     [● ● ● ● ●]   (한 group)   vs   [●●][●●][●]   (split, Comp ↓)
+P3 Comp ≥ 0.9        같은 결함이 흩어지지 않고 한 group 에 모이는 정도
+                     [● ● ● ● ●]   (한 group ✓)   vs   [● ●][● ●][●]   (3 group split, Comp ↓)
 
-P4 Hom ≥ 0.9         한 group 안 한 결함만
-                     [A A A A A]   (pure)        vs   [A A B C A]   (mix, Hom ↓)
+P4 Hom ≥ 0.9         한 group 안에 다른 결함이 섞이지 않은 정도
+                     [A A A A A]   (pure ✓)        vs   [A A B C A]   (mix, Hom ↓)
 ```
 
 **P1 vs P2** = 종류 누락 vs wafer 누락 (P2 가 더 빡빡).
