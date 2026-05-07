@@ -61,9 +61,10 @@ wafer ──► CNN ──► 128-dim emb ──► HDBSCAN ──► group A, B
 
 ---
 
-## 1. 데이터 sample — 이런 wafer 들로 학습
+## 1. 데이터 sample — 43 종류 결함 중 6 개 preview
 
-학습 단계엔 GT label 안 씀. wafer 1 장당 augment 두 view 뽑아 self-paired contrastive.
+전체 anchor = **43 defect class × 평균 30 + Normal 1000 = 2,146 wafer**.
+아래 6 장은 그 중 sample (4 site×chip + 2 canvas pattern). 학습 단계엔 GT label 안 씀 — wafer 1 장당 augment 두 view 만 self-paired contrastive.
 
 <table>
 <tr>
@@ -78,7 +79,7 @@ wafer ──► CNN ──► 128-dim emb ──► HDBSCAN ──► group A, B
 </tr>
 </table>
 
-4 site×chip (Center_fork / Edge-Top_scratch / Edge-Bottom_scratch_rot / Edge-Ring_scratch) + 2 canvas (BrokenRing / RingDots). 학습 anchor = 42 defect class × 평균 30 + Normal 1000 = 2,146 wafer.
+위 6 wafer 의 종류: 4 site×chip (Center_fork / Edge-Top_scratch / Edge-Bottom_scratch_rot / Edge-Ring_scratch) + 2 canvas (BrokenRing / RingDots). 나머지 37 종류 (Donut_*, Full_*, Thick-Edge_*, CrescentArc, CrossScratch, DiagonalSmear, ParallelScratches, RingDots variants, ... + 정상 wafer Normal_bank_boundary 1000 장) 도 같은 anchor 안에 모두 포함되어 학습 / 평가됨.
 
 ### 합성 방식 (sister repo `known-cnn/dist_apply/_sample_gen.py`)
 
