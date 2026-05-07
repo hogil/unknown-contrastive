@@ -118,6 +118,17 @@ P4 Hom ≥ 0.9         한 group 안에 다른 결함이 섞이지 않은 정도
 
 → 같은 group 안 9 wafer 가 **밝기 / 결함 영역 / dot 분포 다양** 해도 묶임 (FPS pair-dist 0.19~0.66). 모델이 **site × chip-object × wafer-canvas** 3 축 모두 인식.
 
+## 3. embedding 공간 시각화 — t-SNE
+
+128-dim contrastive embedding 을 2D 로 투영 (cosine metric, perplexity=30). 같은 색 = 같은 GT class / HDBSCAN cluster.
+
+![](figs/fig_tsne_iter14.png)
+
+**왼쪽 (GT class)**: 43 결함 종이 embedding 공간에서 자연스럽게 분리된 군집 형성 — label 안 줬는데도 contrastive 가 시각적/위치적 특징으로 알아서 나눔.
+**오른쪽 (HDBSCAN)**: 자동으로 발견된 44 cluster (+ 76 noise 회색). 좌/우 색 분포 비슷 = HDBSCAN 결과가 GT 와 거의 일치 (Comp 0.952, AMI 0.913).
+
+→ **embedding 자체가 GT 정보를 암묵적으로 학습** 했음을 시각적으로 확인.
+
 ---
 
 ## GROUP 어떻게 만드나
