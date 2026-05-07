@@ -10,11 +10,14 @@ WM-811K wafer 결함 패턴을 **label 없이** group 으로 자동 묶는다.
 ## 기본 골격
 
 ```
-wafer ──► CNN ──► 128-dim emb ──► HDBSCAN ──► group A, B, ..., N + noise
-        (frozen)   (학습 대상)               (mcs=12, eps=0.06)
+wafer ──► CNN ──► proj head ──► 128-dim emb ──► HDBSCAN ──► group A, B, ..., N + noise
+        (frozen)  ↑                                       (mcs=12, eps=0.06)
+                  contrastive 학습 (InfoNCE, label X)
+                  같은 wafer 두 view = positive
+                  다른 wafer        = negative
 ```
 
-학습 = 같은 wafer 두 augment view 만 positive, 다른 wafer 는 negative (InfoNCE).
+self-supervised contrastive learning — 라벨 없이 augment 두 view 사이 유사도만 학습 → wafer embedding 공간에서 같은 결함은 가까이 / 다른 결함은 멀리 자동 정렬 → HDBSCAN 으로 group 발견.
 
 ---
 
