@@ -67,18 +67,18 @@ wafer ──► CNN ──► 128-dim emb ──► HDBSCAN ──► group A, B
 
 <table>
 <tr>
-<td align="center" valign="top" width="33%"><img src="figs/wafer_01_CenterCircle.png" width="260" height="260"><br><b>CenterCircle</b><br>canvas pattern</td>
-<td align="center" valign="top" width="33%"><img src="figs/wafer_02_EdgeBottom_scratch_rot.png" width="260" height="260"><br><b>Edge-Bottom_scratch_rot</b><br>site×chip object</td>
-<td align="center" valign="top" width="33%"><img src="figs/wafer_03_RingDots.png" width="260" height="260"><br><b>RingDots</b><br>canvas pattern</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_01_Center_fork.png" width="260" height="260"><br><b>Center_fork</b><br>site×chip object</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_02_EdgeTop_scratch.png" width="260" height="260"><br><b>Edge-Top_scratch</b><br>site×chip object</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_03_EdgeBottom_scratch_rot.png" width="260" height="260"><br><b>Edge-Bottom_scratch_rot</b><br>site×chip object</td>
 </tr>
 <tr>
-<td align="center" valign="top" width="33%"><img src="figs/wafer_04_BrokenRing.png" width="260" height="260"><br><b>BrokenRing</b><br>canvas pattern</td>
-<td align="center" valign="top" width="33%"><img src="figs/wafer_05_Center_fork.png" width="260" height="260"><br><b>Center_fork</b><br>site×chip object</td>
-<td align="center" valign="top" width="33%"><img src="figs/wafer_06_EdgeRing_scratch.png" width="260" height="260"><br><b>Edge-Ring_scratch</b><br>site×chip object</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_04_EdgeRing_scratch.png" width="260" height="260"><br><b>Edge-Ring_scratch</b><br>site×chip object</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_05_BrokenRing.png" width="260" height="260"><br><b>BrokenRing</b><br>canvas pattern</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_06_RingDots.png" width="260" height="260"><br><b>RingDots</b><br>canvas pattern</td>
 </tr>
 </table>
 
-3 canvas (CenterCircle / RingDots / BrokenRing) + 3 site×chip (Edge-Bottom_scratch_rot / Center_fork / Edge-Ring_scratch). 학습 anchor = 42 defect class × 평균 30 + Normal 1000 = 2,146 wafer.
+4 site×chip (Center_fork / Edge-Top_scratch / Edge-Bottom_scratch_rot / Edge-Ring_scratch) + 2 canvas (BrokenRing / RingDots). 학습 anchor = 42 defect class × 평균 30 + Normal 1000 = 2,146 wafer.
 
 ### 합성 방식 (sister repo `known-cnn/dist_apply/_sample_gen.py`)
 
@@ -93,22 +93,22 @@ wafer ──► CNN ──► 128-dim emb ──► HDBSCAN ──► group A, B
 
 ## 2. grouping 결과 — 여러 wafer → 한 group
 
-학습 후 embedding → HDBSCAN. 각 panel = **같은 group 안 9 wafer 3×3 grid** (brightness × defect-area 2D quantile sampling — 어두/밝음 + 영역 넓/좁 산포 확보). 4 group sample (Iter 14, diversity score 상위):
+같은 class 의 wafer 들이 시각적으로 다양해도 (밝/어두움, defect 영역 넓/좁) 모델이 한 group 으로 묶음. 각 panel = **같은 class 의 10 wafer 중 9 FPS distinct sample** (3×3 grid). 4 site×chip group:
 
 <table>
 <tr>
-<td align="center" valign="top" width="50%"><img src="figs/group_01_CenterCircle.png" width="380" height="380"><br><b>CenterCircle group</b><br>41 wafer 자동 묶음 (9 sample)</td>
-<td align="center" valign="top" width="50%"><img src="figs/group_02_EdgeBottom_scratch_rot.png" width="380" height="380"><br><b>Edge-Bottom_scratch_rot group</b><br>13 wafer 자동 묶음 (9 sample, FPS distinct)</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_01_Center_fork.png" width="380" height="380"><br><b>Center_fork group</b><br>site=Center + chip=fork</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_02_EdgeTop_scratch.png" width="380" height="380"><br><b>Edge-Top_scratch group</b><br>site=Edge-Top + chip=scratch</td>
 </tr>
 <tr>
-<td align="center" valign="top" width="50%"><img src="figs/group_03_RingDots.png" width="380" height="380"><br><b>RingDots group</b><br>27 wafer 자동 묶음 (9 sample)</td>
-<td align="center" valign="top" width="50%"><img src="figs/group_04_BrokenRing.png" width="380" height="380"><br><b>BrokenRing group</b><br>17 wafer 자동 묶음 (9 sample)</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_03_EdgeBottom_scratch_rot.png" width="380" height="380"><br><b>Edge-Bottom_scratch_rot group</b><br>site=Edge-Bottom + chip=scratch_rot</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_04_EdgeRing_scratch.png" width="380" height="380"><br><b>Edge-Ring_scratch group</b><br>site=Edge-Ring + chip=scratch</td>
 </tr>
 </table>
 
-→ section 1 의 single wafer 가 section 2 처럼 **같은 외형/위치/결함끼리 자동으로 묶인다**. label 없이.
+4 site (Center / Edge-Top / Edge-Bottom / Edge-Ring) × 3 chip (fork / scratch / scratch_rot) — 같은 site 라도 chip 결함이 다르고, 같은 chip 결함이라도 site 가 다르면 다른 group 으로 분리.
 
-→ 모델이 **site × chip-object × wafer-canvas** 3 축 모두 인식.
+→ 같은 group 안 9 wafer 가 **밝기 / 결함 영역 / dot 분포 다양** 해도 묶임 (FPS pair-dist 0.19~0.53). 모델이 **site × chip-object** 2 축 모두 인식.
 
 ---
 
