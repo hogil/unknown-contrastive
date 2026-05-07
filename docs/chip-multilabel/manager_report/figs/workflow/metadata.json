@@ -1,0 +1,146 @@
+[
+  {
+    "tag": "1_single_fork",
+    "label": "single fork correct",
+    "GT_class_key": "fork",
+    "GT_bits_4d": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "pred_class_key": "fork",
+    "pred_bits_4d": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "prob_bb": 0.08137363195419312,
+    "prob_fork": 0.9478657245635986,
+    "prob_sc": 0.05389915779232979,
+    "prob_sr": 0.08479540795087814,
+    "filename": "workflow/1_single_fork.png",
+    "decision_type": "single"
+  },
+  {
+    "tag": "2_combo_fork_scratch",
+    "label": "2-combo fork+scratch correct",
+    "GT_class_key": "fork+scratch",
+    "GT_bits_4d": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "pred_class_key": "fork+scratch",
+    "pred_bits_4d": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "prob_bb": 0.11716747283935547,
+    "prob_fork": 0.9038048982620239,
+    "prob_sc": 0.31174105405807495,
+    "prob_sr": 0.13500383496284485,
+    "filename": "workflow/2_combo_fork_scratch.png",
+    "decision_type": "combo"
+  },
+  {
+    "tag": "3_combo_bb_scratch",
+    "label": "2-combo bb+sc correct",
+    "GT_class_key": "bank_boundary+scratch",
+    "GT_bits_4d": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "pred_class_key": "bank_boundary+scratch",
+    "pred_bits_4d": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "prob_bb": 0.8617710471153259,
+    "prob_fork": 0.2221934050321579,
+    "prob_sc": 0.41739019751548767,
+    "prob_sr": 0.18491464853286743,
+    "filename": "workflow/3_combo_bb_scratch.png",
+    "decision_type": "combo"
+  },
+  {
+    "tag": "4_normal",
+    "label": "Normal correct (no fire)",
+    "GT_class_key": "Normal",
+    "GT_bits_4d": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "pred_class_key": "Normal",
+    "pred_bits_4d": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "prob_bb": 0.10212548077106476,
+    "prob_fork": 0.13869494199752808,
+    "prob_sc": 0.05271640047430992,
+    "prob_sr": 0.14487324655056,
+    "filename": "workflow/4_normal.png",
+    "decision_type": "normal"
+  },
+  {
+    "tag": "5_ood_overlay_DS",
+    "label": "OOD overlay 2-bit correct",
+    "GT_class_key": "fork+scratch+ood_DiagonalSmear",
+    "GT_bits_4d": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "pred_class_key": "fork+scratch",
+    "pred_bits_4d": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "prob_bb": 0.1114344596862793,
+    "prob_fork": 0.9041438698768616,
+    "prob_sc": 0.4043310284614563,
+    "prob_sr": 0.12074951827526093,
+    "filename": "workflow/5_ood_overlay_DS.png",
+    "decision_type": "combo"
+  },
+  {
+    "tag": "6_fork_sr_wrong",
+    "label": "fork+sr wrong fork miss",
+    "GT_class_key": "fork+scratch_rot",
+    "GT_bits_4d": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "pred_class_key": "scratch_rot",
+    "pred_bits_4d": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "prob_bb": 0.1749734729528427,
+    "prob_fork": 0.28308719396591187,
+    "prob_sc": 0.08663207292556763,
+    "prob_sr": 0.9634374976158142,
+    "filename": "workflow/6_fork_sr_wrong.png",
+    "decision_type": "single"
+  }
+]
