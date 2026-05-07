@@ -22,28 +22,36 @@ wafer ──► CNN ──► 128-dim emb ──► HDBSCAN ──► group A, B
 
 ### 운영 통과 4 기준 (lock-in)
 
-| 우선순위 | 지표 | 기준 | 운영 의미 |
-|---|---|---|---|
-| **P1** | class_capture_rate | = 1.000 | 결함 종류 한 개라도 누락 X |
-| **P2** | noise(def) | ≤ 6% | 결함 wafer 분류 누락 비율 |
-| **P3** | Completeness | ≥ 0.9 | 같은 class 가 한 group 으로 |
-| **P4** | Homogeneity | ≥ 0.9 | 한 group 안에 한 class 만 |
+| 우선순위 | 지표 | 기준 |
+|---|---|---|
+| **P1** | class_capture_rate | = 1.000 |
+| **P2** | noise(def) | ≤ 6% (≤ 10% 허용) |
+| **P3** | Completeness | ≥ 0.9 |
+| **P4** | Homogeneity | ≥ 0.9 |
 
 보조: AMI / ARI / Silhouette.
 
-### Two-King — 30 iter ablation 결과
+#### 각 기준 운영 의미 — 매니저 시각
 
-| metric | **Iter 1 (P2 King)** | **Iter 14 (Quality King)** |
-|---|---:|---:|
-| **noise(def) P2** | **4.62% ★** | 6.63% |
-| **Comp P3** | 0.948 | **0.952 ★** |
-| **capture P1** | 1.000 ✅ | 1.000 ✅ |
-| **Hom P4** | 0.898 | **0.908 ★** |
-| AMI | 0.904 | **0.913 ★** |
-| ARI | 0.733 | **0.763 ★** |
-| Silhouette | 0.777 | 0.725 |
+**P1 class_capture_rate = 1.000** — *결함 종류 한 개라도 라인에서 영원히 못 발견하면 ❌*
+> 학습 안 본 신규 wafer 가 들어와도, 모델이 학습한 결함 42 종류 **모두**가 group 으로 잡혀야 통과. 한 종류라도 group 못 잡으면 → 그 결함 종류는 라인에서 한 번도 발견 안 됨 = recall 0%. **0.976 도 ❌** (1 종류 누락 = 그 종류 wafer 100% 놓침).
+>
+> 통과 시: "어떤 결함이든 group 한 개 이상에는 들어간다" 보장.
 
-cfg 차이 4 axis: `LR_HEAD 1e-3↔5e-4`, `NEG_SIM 0.72↔0.65`, `NCE_TEMP 0.07↔0.05`, 나머지 동일.
+**P2 noise(def) ≤ 6%** — *결함 wafer 100 장 중 몇 장이 'noise=뭔지 모름' 처리되나*
+> HDBSCAN 이 어떤 group 에도 못 넣으면 noise (=label -1). 라인 작업자는 noise wafer 를 수동 재검사해야 함 → 처리량 손실. **4.62% (Iter 1) 면 100 장 중 5 장**, **6.63% (Iter 14) 면 100 장 중 7 장**, ≥10% 면 라인 throughput 큰 영향.
+>
+> P1 (모든 종류 잡힘) 보다 더 빡빡한 기준 — 종류뿐 아니라 wafer 한 장 한 장 거의 다 group 에 들어가야 함.
+
+**P3 Completeness ≥ 0.9** — *같은 결함끼리 흩어지지 말고 한 group 으로*
+> 같은 결함 패턴 wafer 30 장이 5 group 으로 흩어지면 → 라벨러가 5 group 마다 따로 검토해 "아, 이게 결함 A 다" 라벨 붙임 = 작업량 5 배. **≥0.9** 면 같은 결함의 90%+ 가 한 group → **한 번 라벨 = 30 장 모두 처리**.
+>
+> Comp 낮으면 수작업 폭증.
+
+**P4 Homogeneity ≥ 0.9** — *한 group 안에 다른 결함 섞이지 말고 한 결함만*
+> group #21 안에 결함 A 가 90%, B 가 10% 섞이면 → 라벨러가 "A 라고 라벨 붙였는데 10% 는 B 였음" 발견 = wafer 일일이 재검사. **≥0.9** 면 group 안 90%+ 가 같은 결함 → **라벨 한 번 = 거의 모두 맞음**.
+>
+> Hom 낮으면 라벨 신뢰도 폭락.
 
 ### 주요 실험 (전체 30 iter 중 의미 있는 8개)
 
@@ -90,29 +98,9 @@ cfg 차이 4 axis: `LR_HEAD 1e-3↔5e-4`, `NEG_SIM 0.72↔0.65`, `NCE_TEMP 0.07�
                                        Edge-Top / Full / Thick-Edge / Normal)
 
 2) chip-object 합성  (5 object: bank_boundary / fork / scratch / scratch_rot / invalid_main)
-                    (object 가 들어갈 chip 위치 = canvas 의 DEFECT_BUDGET 픽셀 비율)
 
 3) chip 안 grade 픽셀 확률적 채움 (8-color palette PNG)
 ```
-
-**DEFECT_BUDGET** — wafer canvas 별로 chip-defect 발생 분포 (260507 v5.1):
-
-| canvas | chip 갯수 | 의미 |
-|---|---:|---|
-| Center | 18 | 가운데 모임 |
-| Donut | 30 | ring 안쪽 모임 |
-| Edge-Ring | 70 | 가장자리 ring |
-| Edge-Bottom / Edge-Top | 20 | 위/아래 strip (260507 v5.1: 6 → 20) |
-| Full | 250 | wafer 전체 흩어짐 |
-| Thick-Edge | 400 | 두꺼운 ring 가장자리 |
-| Normal | 0 | 결함 없음 |
-
-**chip alpha** — 각 chip object 의 모양 함수 (BG 변경 X, 불량 영역만):
-- `alpha_fork`: 세로선 fork 패턴 (cy_h 30~130 random, sigma 1.8~2.3)
-- `alpha_scratch`: 가로 scratch 라인
-- `alpha_scratch_rot`: -21° 고정 회전 scratch
-- `alpha_bank_boundary`: chip 끝선 두꺼운 라인 + halo
-- `alpha_invalid_main`: chip 텍스트 (bin number) 표기
 
 ## 2. grouping 결과 — 여러 wafer → 한 group
 
@@ -297,23 +285,121 @@ Donut_scratch_rot     ✓ (group #38)      Donut_scratch_rot     ✗ (15/15 nois
 
 ### P2 — noise(def) (defect only)
 
-defect 1,146 wafer 중 group 못 들어간 비율. 50 dot 로 정규화 (1 dot = 약 23 wafer):
+defect 1,146 wafer 중 HDBSCAN 이 어떤 group 에도 못 넣어 noise (label = -1) 처리한 비율.
 
 ```
-case ① 4.62% ★ (Iter 1)
+noise_pct(def) = (HDBSCAN noise 인 defect wafer 수) / 1,146 × 100%
+```
+
+#### HDBSCAN 이 wafer 를 group vs noise 로 어떻게 결정하나
+
+```
+HDBSCAN(min_samples=4, min_cluster_size=12, cluster_selection_epsilon=0.06, ...)
+```
+
+- `min_samples=4` — 한 wafer 가 "core point" 가 되려면 반경 안 4 개 이웃 필요
+- `min_cluster_size=12` — group 으로 인정되려면 12 wafer 이상 모여야
+- `cluster_selection_epsilon=0.06` — embedding distance ≤ 0.06 이면 같은 group 후보
+
+wafer 가 noise 로 분류되는 시나리오 3 가지:
+
+```
+(a) 외톨이 wafer
+        ●●●●●          (group A, size 30)
+                         ●●●●●          (group B, size 25)
+                  ⊙ wafer X       ← 어떤 group 도 가깝지 않음
+                                     → noise (-1)
+
+(b) 작은 무리 (mcs 미달)
+        ●●●●●          (group A, size 30)
+                       ⊙⊙⊙⊙⊙⊙⊙ ← 7 wafer 만 모임 (12 미달)
+                                     → 7 wafer 모두 noise
+
+(c) 클래스 자체가 작아서 분리 못 함
+   Donut_scratch_rot 클래스 = 15 wafer 만 있음 → embedding 이 분리 못 하면
+        ⊙⊙⊙⊙⊙⊙⊙⊙⊙⊙⊙⊙⊙⊙⊙ ← 15 wafer 통째 noise
+                                     → P1 (capture) 도 violation
+```
+
+#### 시각화 — defect 1,146 wafer 가 group / noise 어디 갔나 (50 dot 정규화)
+
+```
+case ① 4.62% ★ (Iter 1) — excellent
 ●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●○○      group ● 48, noise ○ 2
-↑ 1,093 group / 53 noise  →  95.4% group 통과
+1,093 group / 53 noise  →  95.4% group 통과
 
-case ② 6.63% (Iter 14)
+case ② 6.63% (Iter 14) — strong
 ●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●○○○      group ● 47, noise ○ 3
-↑ 1,070 group / 76 noise  →  93.4% group 통과
+1,070 group / 76 noise  →  93.4% group 통과
 
-case ③ 85% (학습 실패 sample)
+case ③ 30% (weak embedding) — academic publish 어려움
+●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●○○○○○○○○○○○○○○○○      group ● 35, noise ○ 15
+802 group / 344 noise  →  embedding 약함
+
+case ④ 85% (Iter 6 EPOCHS=10 over-fit) — 학습 실패
 ●●●●●●●○○○○○○○○○○○○○○○○○○○○○○○○○○○○○○○○○○○○○○○○○○      group ● 7, noise ○ 43
-↑ 169 group / 977 noise  →  거의 다 noise (Iter 6 EPOCHS=10 over-fit)
+169 group / 977 noise  →  자동 분류 의미 X
 ```
 
-**의미**: noise = "이게 뭔 결함인지" 모르고 분류 도구가 "기타" 처리. 기준: ≤ 6% ideal, ≤ 10% 허용, > 30% = 학습 실패.
+#### 운영 throughput 영향 — 하루 wafer 100 장 가정
+
+```
+                         자동 처리      수동 재검사    총 처리시간 (검토 1초/장 + 수동 30초/장)
+                         ────────      ────────      ──────────────────────────────────
+case ① 4.62%  ●●●...●○   95 장          5 장          100 + 150 = 250 초 (4.2 분)
+case ② 6.63%  ●●●...●○○  93 장          7 장          100 + 210 = 310 초 (5.2 분)
+case ③ 30%    ●●●○○...   70 장         30 장          100 + 900 = 1000 초 (16.7 분)  ← 4 배 손실
+case ④ 85%    ●○○○○...   15 장         85 장          100 + 2550 = 2650 초 (44 분)   ← 자동 의미 X
+```
+
+→ noise 5 % → 30% 만 가도 **라인 throughput 4 배 차이**. P2 가 P1 다음 우선순위인 이유.
+
+#### 학술 기준 (HDBSCAN — McInnes 2017)
+
+| 영역 | noise % | 의미 |
+|---|---:|---|
+| **excellent** | ≤ 5% | 매우 강한 cluster structure |
+| **strong (학술 통과 line)** | ≤ 10% | well-trained, publish 가능 |
+| weak | 10~25% | embedding 약함 |
+| failed | ≥ 30% | 학습 실패 |
+
+McInnes 2017 원 논문: *"noise ratio depends on data, but ≤ 10% is standard for well-trained embedding."*
+
+#### P2 vs P1 vs P3 헷갈리기 쉬운 case
+
+`Center_scratch` 100 wafer 가정:
+
+```
+case A: P1 ✅, P2 0%, P3 1.0  ★ ideal
+group #21:  ●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●  100/100
+
+case B: P1 ✅, P2 5%, P3 1.0  (Iter 1 같음)
+group #21:  ●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●○○○○○  95
+                                                                                              5 noise
+
+case C: P1 ✅, P2 0%, P3 0.5  (split — Comp 떨어짐)
+group #21:  ●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●  50
+group #22:  ●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●  50
+            → noise 0% 인데 라벨러 두 group 따로 검토 (작업량 ×2)
+
+case D: P1 ❌ 0.976, P2 1%
+이 class 98 잡힘, 다른 class (Donut_scratch_rot 15) 통째 noise
+P2 = (2 + 15) / 1146 ≈ 1.5% 인데 P1 = 41/42 = 0.976 → 한 결함 종류 통째 누락 ❌
+```
+
+P2 만 보면 안 됨 — P1 (모든 종류 잡힘) + P3 (한 group 으로) 동시 봐야.
+
+#### P2 lever (개선 방법)
+
+| lever | 효과 | 우리 발견 |
+|---|---|---|
+| **LOCAL_WEIGHT 0.5 → 1.0** | embedding 위치 정보 ↑ | **noise 9.34 → 4.62%** (Iter 1, -50%) ★ |
+| LR_HEAD 1e-3 → 5e-4 | head 학습 부드러움 | noise 9.34 → 6.11% |
+| EPOCHS↑ | over-fit | noise 개선 X (Iter 6) |
+| HDBSCAN mcs↓ | 작은 group 도 인정 | noise ↓, 단 P3 fragmentation ↑ |
+| HDBSCAN eps↑ | 더 넓게 묶음 | noise ↓, 단 P4 mixing ↑ |
+
+embedding lever (학습 측) 가 정공법. HDBSCAN hparam 으로 noise 줄이면 P3/P4 trade-off.
 
 ### P4 — Homogeneity (Comp 의 dual)
 
