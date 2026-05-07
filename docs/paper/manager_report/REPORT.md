@@ -34,16 +34,24 @@ self-supervised contrastive learning — 라벨 없이 augment 두 view 사이 �
 
 보조: AMI / ARI / Silhouette.
 
-#### 각 기준 운영 의미 — 매니저 시각
+#### 각 기준 한 줄 의미
 
-| 우선순위 | 한 줄 설명 | 통과 시 운영 의미 | 위반 시 운영 의미 |
-|---|---|---|---|
-| **P1** capture = 1.000 | 결함 종류 누락 검사 | 모든 결함 종류가 group ≥1 에 들어감 → **어떤 결함이든 분류 가능** | 한 종류라도 group 못 잡으면 → 그 종류는 라인에서 한 번도 발견 안 됨 (recall 0%, 0.976 도 ❌) |
-| **P2** noise ≤ 6% | wafer 한 장 한 장 분류율 | 결함 wafer 거의 다 group 에 들어감 → 자동 분류 통과, 라인 throughput 정상 | ≥10% 면 작업자가 noise wafer 수동 재검사 → throughput 4 배 손실 |
-| **P3** Comp ≥ 0.9 | 같은 결함끼리 한 group | 같은 class wafer 30 장이 한 group 에 모임 → **한 번 라벨링 = 30 장 모두 처리** | 같은 결함이 5 group 으로 흩어짐 → 라벨러 작업량 5 배 폭증 |
-| **P4** Hom ≥ 0.9 | group 안 결함 섞임 검사 | group 안 ≥90% 가 같은 결함 → **라벨 한 번 = 거의 모두 맞음** | group 안 다른 결함 섞이면 → 라벨 후 wafer 일일이 재검사 (라벨 신뢰도 ↓) |
+```
+P1 capture = 1.000   결함 종류 한 개도 누락 X
+                     ✓ ✓ ✓ ✓ ✓ ... ✓   (43 종 모두 group ≥1)
 
-**핵심 차이**: P1 은 "종류 누락" 만, P2 는 "wafer 한 장 한 장" — P2 가 더 빡빡. P3 은 "흩어짐 (split)", P4 는 "섞임 (mix)" — Comp/Hom 은 trade-off 관계라 AMI 가 두 개 동시 봄.
+P2 noise ≤ 6%        wafer 한 장 한 장 자동 분류
+                     ●●●●●●●●●●●●●●●●●●●○   (20 중 19 group, 1 noise)
+
+P3 Comp ≥ 0.9        같은 결함 한 group 으로
+                     [● ● ● ● ●]   (한 group)   vs   [●●][●●][●]   (split, Comp ↓)
+
+P4 Hom ≥ 0.9         한 group 안 한 결함만
+                     [A A A A A]   (pure)        vs   [A A B C A]   (mix, Hom ↓)
+```
+
+**P1 vs P2** = 종류 누락 vs wafer 누락 (P2 가 더 빡빡).
+**P3 vs P4** = split vs mix (trade-off, AMI 가 둘 동시 봄).
 
 ### 주요 실험 (전체 30 iter 중 의미 있는 8개)
 
