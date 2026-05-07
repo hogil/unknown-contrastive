@@ -78,18 +78,18 @@ wafer ──► CNN ──► 128-dim emb ──► HDBSCAN ──► group A, B
 
 <table>
 <tr>
-<td align="center" valign="top" width="33%"><img src="figs/wafer_01_CrescentArc.png" width="260" height="260"><br><b>CrescentArc</b><br>canvas pattern</td>
-<td align="center" valign="top" width="33%"><img src="figs/wafer_02_BrokenRing.png" width="260" height="260"><br><b>BrokenRing</b><br>canvas pattern</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_01_CenterCircle.png" width="260" height="260"><br><b>CenterCircle</b><br>canvas pattern</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_02_ParallelScratches.png" width="260" height="260"><br><b>ParallelScratches</b><br>canvas pattern</td>
 <td align="center" valign="top" width="33%"><img src="figs/wafer_03_RingDots.png" width="260" height="260"><br><b>RingDots</b><br>canvas pattern</td>
 </tr>
 <tr>
-<td align="center" valign="top" width="33%"><img src="figs/wafer_04_Center_fork.png" width="260" height="260"><br><b>Center_fork</b><br>site×chip object</td>
-<td align="center" valign="top" width="33%"><img src="figs/wafer_05_EdgeBottom_scratch_rot.png" width="260" height="260"><br><b>Edge-Bottom_scratch_rot</b><br>site×chip object</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_04_BrokenRing.png" width="260" height="260"><br><b>BrokenRing</b><br>canvas pattern</td>
+<td align="center" valign="top" width="33%"><img src="figs/wafer_05_Center_fork.png" width="260" height="260"><br><b>Center_fork</b><br>site×chip object</td>
 <td align="center" valign="top" width="33%"><img src="figs/wafer_06_EdgeRing_scratch.png" width="260" height="260"><br><b>Edge-Ring_scratch</b><br>site×chip object</td>
 </tr>
 </table>
 
-3 canvas (CrescentArc / BrokenRing / RingDots) + 3 site×chip (Center fork / Edge-Bottom scratch_rot / Edge-Ring scratch). 학습 anchor 는 이런 종류 42 class × 평균 30 + Normal 1000 = 2,146 wafer.
+4 canvas (CenterCircle / ParallelScratches / RingDots / BrokenRing) + 2 site×chip (Center_fork / Edge-Ring_scratch). 학습 anchor = 42 defect class × 평균 30 + Normal 1000 = 2,146 wafer.
 
 ### 합성 방식 (sister repo `known-cnn/dist_apply/_sample_gen.py`)
 
@@ -104,16 +104,16 @@ wafer ──► CNN ──► 128-dim emb ──► HDBSCAN ──► group A, B
 
 ## 2. grouping 결과 — 여러 wafer → 한 group
 
-학습 후 embedding → HDBSCAN. 각 panel = **같은 group 안 9 wafer 3×3 grid** (raw single wafer 9 장 직접 합성). 4 group sample (Iter 14 결과):
+학습 후 embedding → HDBSCAN. 각 panel = **같은 group 안 9 wafer 3×3 grid** (brightness × defect-area 2D quantile sampling — 어두/밝음 + 영역 넓/좁 산포 확보). 4 group sample (Iter 14, diversity score 상위):
 
 <table>
 <tr>
-<td align="center" valign="top" width="50%"><img src="figs/group_01_CrescentArc.png" width="380" height="380"><br><b>CrescentArc group</b><br>43 wafer 자동 묶음 (9 sample)</td>
-<td align="center" valign="top" width="50%"><img src="figs/group_02_BrokenRing.png" width="380" height="380"><br><b>BrokenRing group</b><br>17 wafer 자동 묶음 (9 sample)</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_01_CenterCircle.png" width="380" height="380"><br><b>CenterCircle group</b><br>41 wafer 자동 묶음 (9 sample)</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_02_ParallelScratches.png" width="380" height="380"><br><b>ParallelScratches group</b><br>40 wafer 자동 묶음 (9 sample)</td>
 </tr>
 <tr>
-<td align="center" valign="top" width="50%"><img src="figs/group_03_EdgeBottom_scratch_rot.png" width="380" height="380"><br><b>Edge-Bottom_scratch_rot group</b><br>13 wafer 자동 묶음 (9 sample)</td>
-<td align="center" valign="top" width="50%"><img src="figs/group_04_EdgeRing_scratch.png" width="380" height="380"><br><b>Edge-Ring_scratch group</b><br>20 wafer 자동 묶음 (9 sample)</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_03_RingDots.png" width="380" height="380"><br><b>RingDots group</b><br>27 wafer 자동 묶음 (9 sample)</td>
+<td align="center" valign="top" width="50%"><img src="figs/group_04_BrokenRing.png" width="380" height="380"><br><b>BrokenRing group</b><br>17 wafer 자동 묶음 (9 sample)</td>
 </tr>
 </table>
 
