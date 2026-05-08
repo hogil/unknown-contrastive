@@ -1,7 +1,9 @@
 # ===== large or per-run output (절대 commit 금지, 절대 삭제 금지) =====
 outputs/
+outputs_contrastive_*/
 logs/
 log/
+_watch_tmp/
 
 # ===== python =====
 __pycache__/
