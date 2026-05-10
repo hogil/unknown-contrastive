@@ -14,6 +14,8 @@
 - **SCHaNe** — *When hard negative sampling meets supervised contrastive learning*. [arxiv 2308.14893](https://arxiv.org/abs/2308.14893). SupCon + dissimilarity weight, +3.32% few-shot.
 - **ProNC** — *Progressive Neural Collapse / ETF prototype*. [arxiv 2505.24254](https://arxiv.org/abs/2505.24254). ICLR 2026.
 - **Wang & Isola 2020** — *Understanding Contrastive Representation Learning through Alignment and Uniformity on the Hypersphere*. [ICML / arxiv 2005.10242](https://arxiv.org/abs/2005.10242). Alignment + Uniformity metric.
+- **Wang et al. 2021** — *Dense Contrastive Learning for Self-Supervised Visual Pre-Training* (DenseCL). [CVPR / arxiv 2011.09157](https://arxiv.org/abs/2011.09157). Local grid contrast, 본 연구의 LOCAL_WEIGHT lever (lever 1) 의 직계.
+- **Pariza et al. 2024** — *NeCo: Improving DINOv2's Spatial Representations in 19 GPU Hours with Patch Neighbor Consistency*. [arxiv 2408.11054](https://arxiv.org/abs/2408.11054). ★ **본 연구 lever 5 (NECO_WEIGHT) 의 직계 — iter 37 SOTA 의 enabling factor**. patch-neighbor consistency loss.
 
 ## Clustering metrics
 

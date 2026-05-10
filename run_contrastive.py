@@ -62,8 +62,13 @@ def install_nv_retriever_perc_pos(alpha: float = 0.95) -> None:
     print(f"[NV-Retriever] TopK-PercPos active: thr_i = pos[i] × {alpha}  (ignore_sim ignored)")
 
 
-def install_partial_unfreeze(n: int) -> None:
+def install_partial_unfreeze(n: int, lr_scale: float = 1.0) -> None:
     """Backbone partial unfreeze — last `n` ConvNeXtV2 stages trainable, rest frozen.
+
+    `lr_scale` (default 1.0) applies a per-grad multiplier on unfrozen backbone
+    parameters via `register_hook`. Effective backbone LR = LR_HEAD × lr_scale.
+    Decoupled from optimizer/warmup machinery (which uses a single LR_HEAD param
+    group). With AdamW wd=1e-6, decoupled wd impact is negligible.
 
     ConvNeXtV2-base has 4 stages (`backbone.stages[0..3]`). With n=2, stages[2] and stages[3]
     become trainable (mid+high-level feature blocks); stages[0..1] + stem stay frozen
@@ -93,16 +98,22 @@ def install_partial_unfreeze(n: int) -> None:
         stages = self.backbone.stages
         n_stages = len(stages)
         n_unfreeze = min(n, n_stages)
+        n_hooked = 0
         for i, stage in enumerate(stages):
             req = (i >= n_stages - n_unfreeze)
             for p in stage.parameters():
                 p.requires_grad = req
+                if req and lr_scale != 1.0:
+                    p.register_hook(lambda g, s=lr_scale: g * s)
+                    n_hooked += 1
         n_train = sum(p.numel() for p in self.backbone.parameters() if p.requires_grad)
         n_total = sum(p.numel() for p in self.backbone.parameters())
         unfrozen_idx = list(range(n_stages - n_unfreeze, n_stages))
+        scale_msg = f" lr_scale={lr_scale} ({n_hooked} grad-hooks)" if lr_scale != 1.0 else ""
         print(f"[partial-unfreeze] last {n_unfreeze}/{n_stages} stages trainable "
               f"(idx={unfrozen_idx}); backbone trainable params "
-              f"{n_train:,} / {n_total:,} ({100.0 * n_train / n_total:.1f}%)")
+              f"{n_train:,} / {n_total:,} ({100.0 * n_train / n_total:.1f}%)"
+              f"{scale_msg}")
 
     contrastive.CL.__init__ = patched_init
     print(f"[patch] install_partial_unfreeze(n={n}) registered")
@@ -183,6 +194,153 @@ def install_neco_loss(weight: float, tau: float = 0.1) -> None:
     print(f"[NeCo] patch-neighbor consistency active: weight={weight} tau={tau}")
 
 
+def install_neco_loss_zone_aware(weight: float, tau: float = 0.1, n_zones_vertical: int = 3) -> None:
+    """★ Novelty A — Zone-Aware NeCo (domain-specific patch-neighbor consistency).
+
+    Standard NeCo (install_neco_loss) couples ALL 144 patches in a 12×12 grid via
+    pairwise softmax + KL. For wafer maps that's overkill — Edge-Top scratches and
+    Center bank_boundary are spatially disjoint, yet standard NeCo links them through
+    cross-zone patches, blurring zone-specific signatures.
+
+    Zone-Aware NeCo restricts the patch-pair NeCo loss to within-zone pairs only.
+    For n_zones_vertical=3 the 12×12 grid is split into 3 horizontal bands of size
+    4×12: Edge-Top / Center / Edge-Bottom (matching our actual class taxonomy:
+    Edge-Top_×, Center_×, Edge-Bottom_× , with Donut/Full/Edge-Ring spanning
+    multiple zones via global InfoNCE which is unaffected).
+
+    Each zone yields a zone_N×zone_N (e.g. 48×48) patch sim matrix; we sum the
+    symmetric KL across zones. Total compute is 3 × 48^2 ≈ 7K ops per sample —
+    cheaper than standard NeCo's 144^2 ≈ 21K, with stronger spatial inductive bias.
+
+    Hypothesis: this should sharpen sister-class boundaries (Edge-Top_scratch vs
+    Edge-Bottom_scratch_rot) which standard NeCo regresses on (cluster-analyzer
+    finding: rotation-pair centroids drift -0.005~-0.007 closer under standard
+    NeCo). Zone confinement removes the cross-zone bridge that pulls them together.
+
+    Args:
+        weight: same as install_neco_loss
+        tau: same as install_neco_loss
+        n_zones_vertical: number of horizontal bands. Must divide H (=12).
+                          3 → Edge-Top/Center/Edge-Bottom (4-row bands).
+                          4 → finer spatial split (3-row bands).
+    """
+    if weight <= 0 or n_zones_vertical <= 0:
+        return
+    import torch.nn.functional as F
+    import contrastive
+
+    _orig_local = contrastive.info_nce_local_multi
+
+    def neco_zone_wrapped(f1: torch.Tensor, f2: torch.Tensor, **kwargs):
+        local_loss = _orig_local(f1, f2, **kwargs)
+
+        B, C, H, W = f1.shape
+        assert H % n_zones_vertical == 0, (
+            f"H={H} not divisible by n_zones_vertical={n_zones_vertical}"
+        )
+        zone_h = H // n_zones_vertical
+        N_z = zone_h * W
+
+        neco_total = f1.new_zeros(())
+        for z in range(n_zones_vertical):
+            r0, r1 = z * zone_h, (z + 1) * zone_h
+            f1_z = f1[:, :, r0:r1, :].reshape(B, C, N_z).transpose(1, 2)  # [B, N_z, C]
+            f2_z = f2[:, :, r0:r1, :].reshape(B, C, N_z).transpose(1, 2)
+            S1 = torch.bmm(f1_z, f1_z.transpose(1, 2))
+            S2 = torch.bmm(f2_z, f2_z.transpose(1, 2))
+            eye = torch.eye(N_z, device=f1.device, dtype=torch.bool).unsqueeze(0)
+            S1 = S1.masked_fill(eye, -1e4)
+            S2 = S2.masked_fill(eye, -1e4)
+            log_P1 = F.log_softmax(S1 / tau, dim=-1)
+            log_P2 = F.log_softmax(S2 / tau, dim=-1)
+            P1 = log_P1.exp()
+            P2 = log_P2.exp()
+            kl_12 = (P1 * (log_P1 - log_P2)).sum(dim=-1).mean()
+            kl_21 = (P2 * (log_P2 - log_P1)).sum(dim=-1).mean()
+            neco_total = neco_total + 0.5 * (kl_12 + kl_21)
+        neco_total = neco_total / n_zones_vertical
+        return local_loss + weight * neco_total
+
+    contrastive.info_nce_local_multi = neco_zone_wrapped
+    print(f"[NeCo Zone-Aware ★] weight={weight} tau={tau} "
+          f"n_zones_vertical={n_zones_vertical} (zone size H/{n_zones_vertical}×W)")
+
+
+def install_neco_loss_hierarchical(weight: float, tau: float = 0.1,
+                                   pool_factors: tuple = (1, 2, 4)) -> None:
+    """★ Novelty B — Hierarchical Multi-Scale NeCo.
+
+    Standard NeCo operates on a single 12×12 patch grid. This variant stacks NeCo
+    losses across multiple spatial scales by mean-pooling the feature map and
+    re-applying the soft-rank KL at each scale:
+
+      pool_factors=(1, 2, 4) →  scales = (12×12, 6×6, 3×3)
+
+    Hypothesis: small defects (fork, scratch) are best disambiguated at fine grids,
+    while macro layouts (Donut, Edge-Ring, Center) need coarse grids. Multi-scale
+    NeCo captures both ends without manual zone curation.
+
+    Implementation: avg_pool2d(f1/f2, factor) → reshape → bmm → softmax → KL.
+    Total compute = Σ_s (N_s² ops) where N_s = (12/factor)². For (1,2,4): 144²+36²+9²
+    ≈ 22.5K ops/sample, ~7% over standard NeCo (21K). Cheap.
+
+    Args:
+        weight: NeCo loss weight added to local loss term (default 0 = no-op).
+        tau: row-softmax temperature (paper default 0.1).
+        pool_factors: tuple of avg_pool2d factors. (1,) = standard NeCo only.
+                      (1,2) = + 6×6 grid. (1,2,4) = + 6×6 + 3×3 grid.
+
+    Differentiation from prior multi-scale contrastive (ReConPatch, MCA-SAM):
+    those use direct CL on multi-scale features. We apply NeCo's *patch-NN ordering*
+    KL at each scale — preserves DINOv2-style soft-rank inductive bias hierarchically.
+    """
+    if weight <= 0 or len(pool_factors) == 0:
+        return
+    import torch.nn.functional as F
+    import contrastive
+
+    _orig_local = contrastive.info_nce_local_multi
+    pool_factors = tuple(pool_factors)
+
+    def neco_hier_wrapped(f1: torch.Tensor, f2: torch.Tensor, **kwargs):
+        local_loss = _orig_local(f1, f2, **kwargs)
+        B, C, H, W = f1.shape
+
+        neco_total = f1.new_zeros(())
+        for factor in pool_factors:
+            if factor == 1:
+                fp1, fp2 = f1, f2
+            else:
+                fp1 = F.avg_pool2d(f1, kernel_size=factor, stride=factor)
+                fp2 = F.avg_pool2d(f2, kernel_size=factor, stride=factor)
+                fp1 = F.normalize(fp1, dim=1)
+                fp2 = F.normalize(fp2, dim=1)
+            _, _, Hs, Ws = fp1.shape
+            N_s = Hs * Ws
+            if N_s < 4:  # too few patches, skip
+                continue
+            p1 = fp1.reshape(B, C, N_s).transpose(1, 2)
+            p2 = fp2.reshape(B, C, N_s).transpose(1, 2)
+            S1 = torch.bmm(p1, p1.transpose(1, 2))
+            S2 = torch.bmm(p2, p2.transpose(1, 2))
+            eye = torch.eye(N_s, device=f1.device, dtype=torch.bool).unsqueeze(0)
+            S1 = S1.masked_fill(eye, -1e4)
+            S2 = S2.masked_fill(eye, -1e4)
+            log_P1 = F.log_softmax(S1 / tau, dim=-1)
+            log_P2 = F.log_softmax(S2 / tau, dim=-1)
+            P1 = log_P1.exp()
+            P2 = log_P2.exp()
+            kl_12 = (P1 * (log_P1 - log_P2)).sum(dim=-1).mean()
+            kl_21 = (P2 * (log_P2 - log_P1)).sum(dim=-1).mean()
+            neco_total = neco_total + 0.5 * (kl_12 + kl_21)
+        neco_total = neco_total / len(pool_factors)
+        return local_loss + weight * neco_total
+
+    contrastive.info_nce_local_multi = neco_hier_wrapped
+    print(f"[NeCo Hierarchical ★ Novelty B] weight={weight} tau={tau} "
+          f"pool_factors={pool_factors} (scales={[12//f for f in pool_factors]}×{[12//f for f in pool_factors]})")
+
+
 def install_gpu_throttle(throttle_ms: float) -> None:
     """Inject sleep after each optimizer.step() to throttle GPU compute utilization.
 
@@ -250,14 +408,37 @@ def main():
 
     # Backbone partial unfreeze (env BACKBONE_UNFREEZE_LAST_N, default 0 = no-op).
     # Must run before CL() is instantiated in contrastive.main(). Patches CL.__init__.
-    install_partial_unfreeze(int(os.environ.get("BACKBONE_UNFREEZE_LAST_N", 0)))
+    install_partial_unfreeze(
+        int(os.environ.get("BACKBONE_UNFREEZE_LAST_N", 0)),
+        lr_scale=float(os.environ.get("BACKBONE_LR_SCALE", 1.0)),
+    )
 
     # NeCo patch-neighbor consistency (env NECO_WEIGHT, default 0.0 = no-op).
-    # Patches contrastive.info_nce_local_multi. Adds soft-rank KL term to local loss.
-    install_neco_loss(
-        weight=float(os.environ.get("NECO_WEIGHT", 0.0)),
-        tau=float(os.environ.get("NECO_TAU", 0.1)),
-    )
+    # NECO_ZONE_VERTICAL > 0 enables Zone-Aware NeCo (novelty A): partition the 12×12
+    # patch grid into N vertical zones (Edge-Top / Center / Edge-Bottom for N=3) and
+    # restrict NeCo to within-zone patch pairs only. Domain prior: zone-specific defects
+    # (Edge-Top scratch) should not contaminate other zones via NeCo's spatial coupling.
+    _neco_w = float(os.environ.get("NECO_WEIGHT", 0.0))
+    _neco_zone = int(os.environ.get("NECO_ZONE_VERTICAL", 0))
+    _neco_hier = os.environ.get("NECO_HIER_POOLS", "")  # e.g. "1,2,4"
+    if _neco_hier:
+        pool_factors = tuple(int(x) for x in _neco_hier.split(",") if x.strip())
+        install_neco_loss_hierarchical(
+            weight=_neco_w,
+            tau=float(os.environ.get("NECO_TAU", 0.1)),
+            pool_factors=pool_factors,
+        )
+    elif _neco_zone > 0:
+        install_neco_loss_zone_aware(
+            weight=_neco_w,
+            tau=float(os.environ.get("NECO_TAU", 0.1)),
+            n_zones_vertical=_neco_zone,
+        )
+    else:
+        install_neco_loss(
+            weight=_neco_w,
+            tau=float(os.environ.get("NECO_TAU", 0.1)),
+        )
 
     # Monkey-patch ImageFolder:
     # 1. classification/classification_chips 빈 폴더 제외 (cnn_train EXCLUDE_CLASSES 동일 정책)

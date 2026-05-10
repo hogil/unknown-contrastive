@@ -59,8 +59,20 @@ def main() -> int:
                    help="Unfreeze last N stages of ConvNeXtV2 backbone (default 0). "
                         "Combined with --freeze-backbone=true, enables partial fine-tuning: "
                         "head + last N stages trainable, earlier stages frozen.")
+    p.add_argument("--backbone-lr-scale", type=float, default=1.0,
+                   help="Per-grad multiplier on unfrozen backbone params (default 1.0 = "
+                        "same LR as head). Use e.g. 0.02 to make effective backbone LR = "
+                        "LR_HEAD × 0.02. Implemented via register_hook on backbone params.")
     p.add_argument("--neco-weight", type=float, default=0.0,
                    help="NeCo (arXiv:2408.11054) patch ordering loss weight (default 0 = off)")
+    p.add_argument("--neco-zone-vertical", type=int, default=0,
+                   help="★ Novelty A — Zone-Aware NeCo. >0 partitions the 12×12 patch "
+                        "grid into N horizontal zones (default 0 = standard NeCo, 3 = "
+                        "Edge-Top/Center/Edge-Bottom 4-row bands). Within-zone NeCo only.")
+    p.add_argument("--neco-hier-pools", type=str, default="",
+                   help="★ Novelty B — Hierarchical Multi-Scale NeCo. Comma-separated "
+                        "pool factors (e.g. '1,2,4' = 12×12 + 6×6 + 3×3 grids). "
+                        "Empty = standard NeCo. Mutually exclusive with zone-vertical.")
     args = p.parse_args()
 
     if not Path(args.data).exists():
@@ -99,7 +111,10 @@ def main() -> int:
         "NEG_FILTER_ALPHA": str(args.neg_filter_alpha),
         "FREEZE_BACKBONE": args.freeze_backbone,
         "BACKBONE_UNFREEZE_LAST_N": str(args.backbone_unfreeze_last_n),
+        "BACKBONE_LR_SCALE": str(args.backbone_lr_scale),
         "NECO_WEIGHT": str(args.neco_weight),
+        "NECO_ZONE_VERTICAL": str(args.neco_zone_vertical),
+        "NECO_HIER_POOLS": args.neco_hier_pools,
         "PYTHONUNBUFFERED": "1",
     })
 

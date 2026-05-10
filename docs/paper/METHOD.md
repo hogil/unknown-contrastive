@@ -56,8 +56,18 @@ L = -log[ exp(sim(z₁,z₂)/τ) / Σ exp(sim(z₁,z_neg)/τ) ]
 Three components:
 - **Global InfoNCE** (G) — wafer-level positive/negative.
 - **Queue InfoNCE** (Q) — extends global with 4096-size memory bank (He et al. 2020).
-- **Local InfoNCE** (L, optional) — grid-cell-level intra-image contrast (USE_LOCAL flag).
-  Currently disabled (USE_LOCAL=False) in baseline; will be re-evaluated.
+- **Local InfoNCE** (L) — grid-cell-level intra-image contrast (`USE_LOCAL=True`),
+  weighted by `LOCAL_WEIGHT`. DenseCL-style (Wang et al. 2021) dense feature alignment
+  between two augmented views' grid cells. ★ **LOCAL_WEIGHT atomic sweep (Iter A0, 1, 3)**:
+  - LW=0.5 (Iter A0): Completeness=0.9375, AMI=0.8946, noise=9.34%, capture=1.000
+  - LW=0.7 (Iter 3): Completeness=0.936, AMI=0.893, noise=9.42%, capture=1.000 — **NULL** (A0 와 통계적 동일, sister-pair centroid 모두 소수점 셋째 자리 동일)
+  - LW=1.0 (Iter 1): Completeness=0.9481, AMI=0.9040, noise=4.62%, capture=1.000 — **best (sweet spot)**
+  
+  **★ LW=1.0 sweet spot 가설**: 0.5 ↔ 0.7 plateau (null), 0.7 ↔ 1.0 비선형 jump
+  (noise 9.42% → 4.62%, -50%). local contrast 가 일정 weight 임계 (≈0.85?) 넘어야
+  효과 발현되는 비선형 구간 추정. weight ↑ 마다 monotonic 개선이 아니므로 fine-grained
+  탐색 (LW=1.5) 이 다음 단계 후보. trade-off: `Donut_scratch_rot` noise 26.7% → 40%
+  (Iter A0→1, 회전 sub-style 자체 학습 부족 가설).
 
 ### 3.3 Augmentation (wafer-safe)
 | op | range | note |
@@ -73,11 +83,64 @@ Three components:
 - MixUp / CutMix / Cutout
 - Multi-crop with random position (SwAV 풍 — wafer 위치 정보 손상, 채택 거부 D-4)
 
-### 3.4 Hyperparameters (baseline)
-- BATCH = 16, IMAGE_SIZE = 384.
-- EPOCHS = 10 (warmup 1).
-- LR_HEAD = 1e-3 (head only, backbone frozen).
-- TRAIN_SAMPLING_RATIO = 1.0.
+### 3.4 Hyperparameters
+
+**Iter 0 (historical, old anchor)**:
+- BATCH = 16, IMAGE_SIZE = 384, EPOCHS = 10 (warmup 1)
+- LR_HEAD = 1e-3 (head only, backbone frozen), TRAIN_SAMPLING_RATIO = 1.0
+- USE_LOCAL = False
+
+**Iter A0+ (new method-track, D-15 anchor)**:
+- BATCH = **8**, IMAGE_SIZE = 384, EPOCHS = **5**
+- GPU per-step throttle 5000ms (driver TDR 회피, EXPERIMENTS.md 참조)
+- LR_HEAD = 1e-3, USE_LOCAL = **True**, LOCAL_WEIGHT (Iter A0=0.5, Iter 1=1.0)
+- IGNORE_NEG_SIM = 0.72, QUEUE_SIZE = 4096, TEMP = 0.07
+
+### 3.5 NeCo patch-neighbor consistency (lever 5, iter 37 SOTA, 2026-05-09)
+
+**NeCo** (Pariza et al. 2024, arXiv:2408.11054) — patch-neighbor consistency loss
+between two augmented views. For each spatial token in view 1, enforce ranking
+consistency with its k-nearest neighbors in view 2's token set:
+
+```
+L_NeCo = Σ_i KL( softrank(sim(z₁ᵢ, neighbors of z₁ᵢ)) || softrank(sim(z₂ᵢ', neighbors of z₂ᵢ')) )
+```
+
+Combined loss:
+```
+L_total = L_global + L_queue + LOCAL_WEIGHT · L_local + NECO_WEIGHT · L_NeCo
+```
+
+**Sweep result (iter 37/38/39, new anchor)**:
+- NECO_WEIGHT = **0.2** (iter 37): Comp=0.991, AMI=0.960, ARI=0.870, noise=0.61% — **★ SOTA**
+- NECO_WEIGHT = 0.1 (iter 38, under): Comp=0.985, AMI=0.956, noise=0.52%, but mixed_clusters 6→7
+- NECO_WEIGHT = 0.3 (iter 39, over): Comp=0.980, AMI=0.954, ARI=0.868, noise=1.05%
+
+**★ NECO_WEIGHT=0.2 sweet spot lock-in** — 0.1 (under-signal, sister-pair partial separation)
+와 0.3 (over-signal, dominate G/L) 모두 reject. Sweet-spot 좁음 (0.2 ± 0.1 가 가까운 reject)
+→ fragile 한 lever 임을 명시.
+
+**★ Base-cfg 의존성** — NeCo 는 P2 King base (LR=1e-3, NEG=0.72, TEMP=0.07) 위에서만 SOTA.
+Quality King base (LR=5e-4, NEG=0.65, TEMP=0.05) + NeCo 0.2 (iter 40) = ARI -13pp regression
+으로 negative interaction 확인. Lever 들이 독립적이지 않으며 base cfg 에 따라 부호가 바뀜.
+
+**Variant (iter 43, in progress)**: Zone-Aware NeCo — `NECO_ZONE_VERTICAL=3` 로 wafer 를
+top/middle/bottom 3 vertical zone 으로 분할, zone 내 patch-neighbor consistency 만 강제.
+Edge-Top vs Edge-Bottom 같은 위치 sub-style 직격 의도.
+
+### 3.6 Backbone partial unfreeze — ★ 영구 reject
+
+`BACKBONE_UNFREEZE_LAST_N=1` (last stage unfreeze) + `LR_SCALE` (backbone lr / head lr) 두
+LR_SCALE 값 모두 reject:
+
+| iter | LR_SCALE | 결과 | 판정 |
+|---|---|---|---|
+| iter 36 | 0.02 | capture 0.976 (P1 violation), Comp -0.025 | ✗ |
+| iter 42 | 0.005 | noise 11.69% (×19), ARI -0.396 (huge) | ✗ |
+
+**결론**: TAPT backbone (sister repo `known-cnn` supervised 33-class 학습 결과) 이 이미
+도메인 정렬 충분. 추가 unfreeze 는 small-data (2,146 wafer) 위에서 supervised collapse 풍
+over-fit 유도. **axis 영구 reject lock-in.**
 
 ## 4. Clustering (post-training)
 
@@ -133,6 +196,11 @@ Three components:
 
 - D-4: **Multi-crop** (SwAV) — wafer 위치 정보 손상
 - D-5: **SupCon 주력** — production unknown defect generalization 위험
+- ★ **IGNORE_NEG_SIM 0.65** (Iter 2, 2026-05-06) — REJECT. NV-Retriever 풍 false-negative
+  filter 강화가 모든 P1-P4 후퇴 (capture 1.000 → 0.976, mega-cluster 2 → 3, Donut_scratch_rot
+  0% cov). 0.72 의 conservative threshold 가 이미 적정 — 0.65 로 더 공격적 filter
+  시 진짜 hard negative 까지 제거되어 cluster boundary collapse. Iter 1 base 로 fallback,
+  IGNORE_NEG_SIM=0.65 는 dead branch lock-in.
 
 ## 10. 향후 개선 (계획)
 
