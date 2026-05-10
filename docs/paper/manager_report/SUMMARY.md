@@ -5,6 +5,32 @@
 
 ---
 
+## 0. 한눈에 보기 — 입력 wafer → 자동 그룹핑
+
+### 입력: 다양한 wafer 결함 패턴 (43 종 중 6 종 예시)
+
+| Center_fork | Edge-Top_scratch | Edge-Bottom_scratch_rot |
+|:---:|:---:|:---:|
+| ![](figs/wafer_01_Center_fork.png) | ![](figs/wafer_02_EdgeTop_scratch.png) | ![](figs/wafer_03_EdgeBottom_scratch_rot.png) |
+
+| Edge-Ring_scratch | BrokenRing | RingDots |
+|:---:|:---:|:---:|
+| ![](figs/wafer_04_EdgeRing_scratch.png) | ![](figs/wafer_05_BrokenRing.png) | ![](figs/wafer_06_RingDots.png) |
+
+### 출력: HDBSCAN 자동 grouping (같은 결함 → 같은 cluster)
+
+| Group 1 — Center_fork | Group 2 — Edge-Top_scratch |
+|:---:|:---:|
+| ![](figs/group_01_Center_fork.png) | ![](figs/group_02_EdgeTop_scratch.png) |
+
+| Group 3 — BrokenRing | Group 4 — RingDots |
+|:---:|:---:|
+| ![](figs/group_03_BrokenRing.png) | ![](figs/group_04_RingDots.png) |
+
+★ **iter 37 SOTA**: 43 class 모두 group 1+ 형성 (capture 1.000), noise(def) 0.61% (1146 중 7 wafer 만 어디도 못 묶임)
+
+---
+
 ## 1. 프로젝트 한 줄 설명
 
 > **반도체 wafer 사진 수천 장을 컴퓨터에게 "비슷한 것끼리 묶어라" 시키는 시스템.**
