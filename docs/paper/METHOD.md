@@ -128,6 +128,51 @@ Quality King base (LR=5e-4, NEG=0.65, TEMP=0.05) + NeCo 0.2 (iter 40) = ARI -13p
 top/middle/bottom 3 vertical zone 으로 분할, zone 내 patch-neighbor consistency 만 강제.
 Edge-Top vs Edge-Bottom 같은 위치 sub-style 직격 의도.
 
+### 3.7 Component Isolation Methodology (Real Baseline B0-B5, 2026-05-11) — ★ NEW
+
+기존 atomic ablation (Iter A0 → iter 58) 의 limitation: A0 baseline 에 이미 Local InfoNCE
+(DenseCL) / MoCo Queue / NEG filter 활성 → lever 효과는 그 위에서의 incremental tuning.
+진짜 component-level contribution isolation 위해 **Real Baseline (B0)** 부터 component 단계별
+추가하는 protocol 도입.
+
+#### Protocol
+
+```
+B0 — Real Baseline      USE_LOCAL=false, USE_QUEUE=false, NEG=off (1.0), NeCo=0
+B1 — + Local DenseCL    USE_LOCAL=true, LW=0.5
+B2 — LW=1.0             LW=0.5 → 1.0 (lever 1 isolated)
+B3 — + MoCo Queue       USE_QUEUE=true, QUEUE_SIZE=4096
+B4 — + NEG filter       IGNORE_NEG_SIM=0.72
+B5 — + NeCo 0.2         NECO_WEIGHT=0.2 (= iter 37 cfg)
+```
+
+**고정 cfg (모든 B 단계 동일)**: ConvNeXtV2-base FCMAE + TAPT, IMAGE_SIZE=384, BATCH=8, EPOCHS=5,
+WARMUP=1, LR_HEAD=1e-3, NCE_TEMP=0.07, SEED=42, anchor avg30_new_260508_123037 (43 class, n=2146).
+HDBSCAN eom mcs=12 ms=3 모든 row 동일 (encoder 학습 무관 axis 분리).
+
+#### 주요 측정 (RESULTS 표 13)
+
+| step | atomic 변경 | ΔARI | Δnoise | 판정 |
+|:-:|---|---:|---:|---|
+| B0 → B1 | + Local DenseCL | +0.028 | -2.27pp | ✓ Local 단독 효과 |
+| B1 → B2 | LW=0.5 → 1.0 | **-0.028** | **+2.27pp** | **✗ LW isolated regression** |
+| B2 → B3 | + MoCo Queue | **+0.023** | **-4.89pp** | **★ N6 Component Interaction** |
+| B3 → B4 | + NEG=0.72 | +0.014 | -0.78pp | ✓ small clean |
+| B4 → B5 | + NeCo 0.2 | **-0.004** | **+0.44pp** | **✗ NeCo isolated ≈ 0** |
+
+**총 누적 B0 → B5**: ARI 0.8231 → 0.8564 (+0.033), noise 6.20% → 0.96% (-5.24pp).
+
+#### Methodology 의미
+
+1. **paper community 의 lever isolated 보고 함정 드러남** — atomic ablation 만으로
+   contribution 분해 시 Component Interaction (N6) 누락.
+2. **LW lever 의 진짜 contribution = Queue interaction** — isolated 로는 negative.
+3. **NeCo (paper N1) contribution 재검토** — isolated effect ≈ 0, combined 효과만 인정.
+   B5 same-seed reproduce 가 iter 37 보다 ΔARI -0.014 — run-to-run variance 가 N1 isolated
+   effect 보다 큼 (multi-seed N2 강한 evidence).
+
+상세: `RESULTS.md` 표 13, `ABLATION_PLAN.md`, `DISCUSSION.md` §7.9.
+
 ### 3.6 Backbone partial unfreeze — ★ 영구 reject
 
 `BACKBONE_UNFREEZE_LAST_N=1` (last stage unfreeze) + `LR_SCALE` (backbone lr / head lr) 두

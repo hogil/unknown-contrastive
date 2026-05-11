@@ -284,3 +284,73 @@ variants (Hierarchical 1,2,4 / Zone-Aware z=3) 의 모든 atomic 변경이 multi
 
 **N5 결론**: 5 active levers (encoder-side) + 2 hyperparameter sister axis + 2 NeCo Spatial
 variant 모두 sweep 후 saturate. **iter 37 cfg = 6-axis multi-axis saturation point**.
+
+---
+
+## 표 13 — ★ Real Baseline Component Isolation Matrix (B0-B5, 2026-05-11)
+
+> 사용자 지적 정합: 기존 Iter A0 baseline 에 이미 Local / Queue / NEG 활성. 진짜
+> component-level contribution isolation 위해 **Global InfoNCE only** 의 minimal baseline (B0)
+> 부터 단계별 component 추가. HDBSCAN cfg `eom mcs=12 ms=3` 모든 row 동일 고정. seed=42.
+
+### 13a. ablation matrix (cfg + Tier 1+2 결과)
+
+| step | cfg | USE_LOCAL | LW | USE_QUEUE | NEG | NeCo | P1 cap | P2 noise | P3 Comp | P4 Hom | AMI | NMI | ARI | Sil | n_cl |
+|:-:|---|:-:|:-:|:-:|:-:|:-:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **B0** | Global only | F | 0 | F | off | 0 | **1.000** | 6.195% | 0.9602 | 0.929 | 0.9290 | 0.949 | 0.8231 | 0.582 | 37 |
+| B1 | + Local (LW=0.5) | T | 0.5 | F | off | 0 | 1.000 | 3.927% | 0.9665 | 0.9351 | 0.9387 | 0.9505 | 0.8514 | 0.5139 | 37 |
+| B2 | LW=1.0 | T | 1.0 | F | off | 0 | 1.000 | 6.195% | 0.9602 | 0.9257 | 0.9290 | 0.9427 | 0.8231 | 0.5089 | 37 |
+| B3 | + MoCo Queue | T | 1.0 | T | off | 0 | 1.000 | 1.309% | 0.9828 | 0.9365 | 0.9496 | 0.9591 | 0.8464 | 0.5727 | 36 |
+| **B4** ★ | + NEG=0.72 | T | 1.0 | T | 0.72 | 0 | 1.000 | **0.524%** | **0.9852** | 0.9439 | 0.9557 | 0.9641 | **0.8605** | 0.6109 | 37 |
+| B5 | + NeCo 0.2 (=iter 37) | T | 1.0 | T | 0.72 | 0.2 | 1.000 | 0.960% | 0.9801 | 0.9403 | 0.9503 | 0.9598 | 0.8564 | 0.6104 | 37 |
+
+run_dir:
+- B0: `outputs_contrastive_260511_154102/`
+- B1: `outputs_contrastive_260511_162616/`
+- B2: `outputs_contrastive_260511_170230/`
+- B3: `outputs_contrastive_260511_173842/`
+- B4: `outputs_contrastive_260511_181441/`
+- B5: `outputs_contrastive_260511_185039/`
+
+### 13b. component-by-component isolated effect (Δ vs 직전 step)
+
+| step | Δstep | ΔARI | Δnoise | ΔComp | ΔAMI | 판정 |
+|:-:|---|---:|---:|---:|---:|---|
+| B0 → B1 | + Local DenseCL | **+0.028** | **-2.27pp** | +0.006 | +0.010 | ✓ Local 단독 효과 |
+| B1 → B2 | LW=0.5 → 1.0 | **-0.028** | **+2.27pp** | -0.006 | -0.010 | **✗ LW 단독 regression** |
+| B2 → B3 | + MoCo Queue | **+0.023** | **-4.89pp** | +0.023 | +0.021 | **★★★ N6 huge — LW+Queue interaction** |
+| B3 → B4 | + NEG=0.72 | **+0.014** | **-0.78pp** | +0.003 | +0.006 | ✓ NEG 단독 효과 small but clean |
+| B4 → B5 | + NeCo 0.2 | **-0.004** | **+0.44pp** | -0.005 | -0.005 | **✗ NeCo isolated ≈ 0** |
+
+**누적 (B0 → B5)**: ΔARI **+0.033**, Δnoise **-5.24pp**, ΔComp **+0.020**, ΔAMI **+0.021**.
+
+### 13c. 핵심 발견 — N6 (Component Interaction) NEW
+
+1. **LW lever (encoder paper N3-1) isolated effect 는 negative** — B1→B2 의 LW=0.5→1.0
+   단독 변경이 ARI -0.028, noise +2.27pp.
+2. **LW 의 진짜 효과 = Queue 와의 interaction** — B2→B3 의 Queue 추가가 ARI +0.023, noise -4.89pp.
+   B2 (LW 단독 활성) 위에서 Queue 가 LW over-emphasis 를 흡수.
+3. **NeCo (paper N1) isolated effect ≈ 0 또는 negative** — B4→B5 의 NeCo 0→0.2 단독 변경이
+   ARI -0.004, noise +0.44pp.
+4. **B4 > B5** — NeCo 없는 cfg 가 NeCo 있는 cfg 보다 모든 metric 우위 (ARI 0.8605 > 0.8564,
+   Comp 0.9852 > 0.9801, noise 0.524% < 0.960%).
+5. **B5 vs iter 37 (same seed=42)** — ARI 0.8564 vs 0.870 (Δ -0.014, multi-seed std 만큼!).
+   → same-seed run-to-run variance 가 NeCo isolated effect 보다 큼. **N2 (multi-seed) 강한 evidence**.
+
+### 13d. paper contribution 분류 갱신 (B0 → B5)
+
+| Component | Source | Paper claim | Real Baseline isolated effect |
+|---|---|---|---|
+| ConvNeXtV2 + TAPT | external | backbone choice | B0 ARI 0.823 (이미 강함) |
+| Global InfoNCE | baseline (B0) | 기존 (SimCLR/MoCo) | base |
+| Local InfoNCE | baseline (B1) | 기존 (DenseCL Wang 2021) | +0.028 ARI ✓ |
+| LW tuning | hparam (B2 sweet) | hparam discovery | -0.028 isolated (paper N6) |
+| MoCo Queue | baseline (B3) | 기존 (MoCo He 2020) | +0.023 ARI (lift LW) |
+| NEG filter | baseline (B4) | 기존 (NV-Retriever) | +0.014 ARI ✓ |
+| **NeCo** | **B5 (paper N1)** | Pariza 2024 wafer first | **-0.004 isolated ✗** |
+| HDBSCAN eom + ms=3 | post-hoc (paper N3) | new | encoder 무관 (모든 row 동일) |
+
+★ paper 진짜 NEW contribution 명확화:
+- **N1 (NeCo)**: isolated effect ≈ 0, 단 combined (B3 → B5 total ΔARI +0.010) 효과만 인정 — interaction 필수
+- **N3 (HDBSCAN)**: encoder 학습 무관, 모든 row 에서 noise -91% 효과 (12.6%→0.61%, leaf→eom+ms3)
+- **★ N6 (Component Interaction, NEW)**: LW lever 의 진짜 효과 = isolated 아닌 Queue interaction

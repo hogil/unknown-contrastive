@@ -12,6 +12,80 @@
 
 ---
 
+## 0.5 Real Baseline 이란? (★ 2026-05-11 NEW)
+
+> 초보자 친화 — "Iter A0 baseline 에 이미 components 활성. 진짜 component 별 효과 분리"
+
+기존 ablation (Iter A0 → iter 58) 의 한계:
+
+```
+기존 baseline (Iter A0):
+   ┌────────────────────────────┐
+   │ Global InfoNCE        ✓    │  ← 이미 켜짐
+   │ Local InfoNCE         ✓    │  ← 이미 켜짐
+   │ MoCo Queue 4096       ✓    │  ← 이미 켜짐
+   │ NEG filter 0.72       ✓    │  ← 이미 켜짐
+   │ NeCo                  ✗    │  ← 여기만 sweep
+   └────────────────────────────┘
+   → "NeCo 0→0.2 변경" 효과만 측정 가능
+   → 다른 components 의 단독 효과 (isolated effect) 모름
+
+진짜 isolated effect 측정 = Real Baseline B0 부터 시작
+```
+
+Real Baseline B0 → B5 6 step:
+
+```
+B0  Global InfoNCE only        ← 최소 baseline
+B1  + Local DenseCL (LW=0.5)
+B2  LW=1.0                     ← lever 1 isolated step
+B3  + MoCo Queue
+B4  + NEG filter 0.72
+B5  + NeCo 0.2                 ← = iter 37 cfg 완전 재현
+```
+
+결과 (HDBSCAN eom mcs=12 ms=3, seed=42 모두 동일):
+
+```
+B0: ARI 0.823 / noise 6.20%   ← TAPT backbone 만으로 이미 강함!
+B1: ARI 0.851 / noise 3.93%   ← + Local: ΔARI +0.028 ✓
+B2: ARI 0.823 / noise 6.20%   ← + LW 1.0: ΔARI -0.028 ✗ 단독 regression!
+B3: ARI 0.846 / noise 1.31%   ← + Queue: ΔARI +0.023 ✓✓✓ LW 효과 lift!
+B4: ARI 0.860 / noise 0.52%   ★ NeCo 없이도 우수!
+B5: ARI 0.856 / noise 0.96%   ← + NeCo: ΔARI -0.004 (isolated ≈ 0)
+```
+
+★★★★★ 5가지 핵심 발견:
+
+```
+1. TAPT backbone 의 강력함
+   B0 (Global only) 이미 ARI 0.823 = 전체 iter 37 ARI 의 94.6%!
+   → 우리 추가 components 의 total isolated effect = 5%
+
+2. LW lever 단독 효과는 negative (B1 → B2)
+   LW=0.5 → 1.0 단독 변경이 ARI -0.028
+   ↔ 기존 Iter A0 → 1 에서는 +0.029 (다른 components 활성 상태에서만)
+
+3. ★ Component Interaction (paper N6 NEW)
+   LW=1.0 의 진짜 효과 = Queue 와 interaction (B2 → B3)
+   Queue 가 LW over-emphasis 흡수
+   → "lever isolated 단독 효과" 보고는 함정
+
+4. NeCo (paper N1) isolated effect ≈ 0 (B4 → B5)
+   NeCo 단독 추가 효과 ΔARI -0.004 (within run-to-run variance)
+   B4 (no NeCo) 가 모든 metric 우위!
+
+5. same-seed run-to-run variance 큼
+   B5 (seed=42) vs iter 37 (seed=42, same cfg):
+   ΔARI 0.014 (multi-seed std 만큼) — N2 강한 evidence
+```
+
+paper contribution 갱신: N1-N5 → **N1-N6** (Component Interaction NEW)
+
+상세: `RESULTS.md` 표 13, `ABLATION_PLAN.md`, `DISCUSSION.md` §7.9.
+
+---
+
 ## 2. 컴퓨터가 wafer 를 어떻게 다루는가? (embedding)
 
 ```

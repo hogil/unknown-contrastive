@@ -92,31 +92,59 @@ P4 Hom ≥ 0.9         한 group 안에 다른 결함이 섞이지 않은 정도
 
 > 2026-05-11 신설. 사용자 지적 정합: 기존 Iter A0 baseline 에 이미 Local InfoNCE (DenseCL) / MoCo Queue / NEG filter 활성. 진짜 component-level contribution isolation 위해 **Global InfoNCE only** 의 minimal baseline (B0) 부터 단계별 component 추가.
 
-### Ablation Matrix (6 step, 진행 중)
+### Ablation Matrix (6 step, ★ 2026-05-11 완료)
 
 | step | cfg | USE_LOCAL | LW | USE_QUEUE | NEG filter | NeCo | **P1 cap** | **P2 noise** | **P3 Comp** | **P4 Hom** | AMI | NMI | ARI | Sil(cos) | n_cl |
 |:-:|---|:-:|:-:|:-:|:-:|:-:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **B0** | Global only | false | 0 | false | 1.0 (off) | 0 | **1.000** | **6.20%** | **0.960** | 0.929* | **0.929** | 0.949* | **0.823** | 0.582* | 38 |
-| B1 | + Local DenseCL | true | 0.5 | false | 1.0 | 0 | 학습 중 (PID 34940) | | | | | | | | |
-| B2 | + Local strong | true | 1.0 | false | 1.0 | 0 | 대기 | | | | | | | | |
-| B3 | + Queue | true | 1.0 | true | 1.0 | 0 | 대기 | | | | | | | | |
-| B4 | + NEG filter | true | 1.0 | true | 0.72 | 0 | 대기 | | | | | | | | |
-| **B5** | **+ NeCo (=iter 37)** | true | 1.0 | true | 0.72 | **0.2** | **1.000** | **0.61%** | **0.991** | **0.978** | **0.960** | **0.962** | **0.870** | **0.610** | 36 |
+| **B0** | Global only | false | 0 | false | 1.0 (off) | 0 | **1.000** | 6.20% | 0.9602 | 0.929 | 0.9290 | 0.949 | 0.8231 | 0.582 | 37 |
+| B1 | + Local DenseCL | true | 0.5 | false | 1.0 | 0 | 1.000 | **3.93%** | 0.9665 | 0.9351 | 0.9387 | 0.9505 | **0.8514** | 0.5139 | 37 |
+| B2 | LW strong (1.0) | true | 1.0 | false | 1.0 | 0 | 1.000 | 6.20% | 0.9602 | 0.9257 | 0.9290 | 0.9427 | 0.8231 | 0.5089 | 37 |
+| B3 | + Queue | true | 1.0 | true | 1.0 | 0 | 1.000 | **1.31%** | 0.9828 | 0.9365 | 0.9496 | 0.9591 | **0.8464** | 0.5727 | 36 |
+| **B4** ★ | + NEG=0.72 | true | 1.0 | true | 0.72 | 0 | 1.000 | **0.52%** | **0.9852** | 0.9439 | 0.9557 | 0.9641 | **0.8605** | 0.6109 | 37 |
+| B5 | + NeCo (=iter 37) | true | 1.0 | true | 0.72 | **0.2** | 1.000 | 0.96% | 0.9801 | 0.9403 | 0.9503 | 0.9598 | 0.8564 | 0.6104 | 37 |
 
-\* Homogeneity / NMI / Sil 은 B0 의 직접 측정값 (eom mcs=12 ms=3 sklearn).
+run_dir: B0=`260511_154102`, B1=`260511_162616`, B2=`260511_170230`, B3=`260511_173842`,
+B4=`260511_181441`, B5=`260511_185039`.
 
-### 누적 효과 (B0 → B5 component-by-component)
+### 누적 효과 (B0 → B5 component-by-component) ★ 측정 완료
 
 ```
-B0 → B5 total:  ΔARI +0.047 / ΔComp +0.031 / ΔAMI +0.031 / Δnoise -5.59pp
-                                                                
-component-by-component breakdown (B1-B5 측정 후 확정):
-   + Local InfoNCE      → TBD
-   + LW strong          → TBD
-   + MoCo Queue         → TBD
-   + NEG filter         → TBD
-   + NeCo (★ paper N1)  → TBD
-   + HDBSCAN eom + ms=3 → encoder 무관, 모든 row 동일 적용
+B0 → B5 total:  ΔARI +0.033 / ΔComp +0.020 / ΔAMI +0.021 / Δnoise -5.24pp
+
+component-by-component breakdown (Δ vs 직전 step):
+   B0 → B1  + Local InfoNCE   → ΔARI +0.028 / Δnoise -2.27pp ✓
+   B1 → B2  + LW strong        → ΔARI -0.028 / Δnoise +2.27pp ✗ NEGATIVE!
+   B2 → B3  + MoCo Queue       → ΔARI +0.023 / Δnoise -4.89pp ★★★ HUGE N6
+   B3 → B4  + NEG filter       → ΔARI +0.014 / Δnoise -0.78pp ✓
+   B4 → B5  + NeCo (paper N1)  → ΔARI -0.004 / Δnoise +0.44pp ✗ ≈ 0
+   + HDBSCAN eom + ms=3       → encoder 무관, 모든 row 동일 적용
+```
+
+### ★★★★★ 핵심 발견 5 (paper N6 NEW + N1 reframe)
+
+```
+1. LW=1.0 isolated regression (B1 → B2)
+   ARI -0.028 / noise +2.27pp
+   → "LW 강 → noise -50%" headline 은 다른 components 활성 상태에서만
+
+2. ★★★ N6 huge: Component Interaction (B2 → B3)
+   + Queue: ARI +0.023 / noise -4.89pp
+   = Queue 가 LW=1.0 over-emphasis 흡수
+   = "LW lever 효과 = isolated 아닌 Queue interaction"
+
+3. NeCo (paper N1) isolated effect ≈ 0 (B4 → B5)
+   ARI -0.004 / noise +0.44pp
+   → 기존 "noise -70%" claim 은 iter 35→37 cross-run variance
+
+4. B5 vs iter 37 reproduce (same seed=42, same cfg)
+   ΔARI 0.014 / Δnoise 0.35pp
+   = same seed 라도 run-to-run variance 가 multi-seed std 만큼
+   = paper N2 (multi-seed) 강한 evidence
+
+5. B4 > B5 (NeCo 없는 cfg 가 NeCo 있는 cfg 보다 우위)
+   B4: ARI 0.8605 / Comp 0.9852 / noise 0.524%
+   B5: ARI 0.8564 / Comp 0.9801 / noise 0.960%
+   = paper N1 (NeCo) 진짜 contribution 재검토 — combined effect 만 인정
 ```
 
 ### ★ paper-grade 발견 — TAPT backbone 의 강력함

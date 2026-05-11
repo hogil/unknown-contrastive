@@ -72,6 +72,29 @@ saturation point** 확정 (N5 contribution).
 
 상세: `RESULTS.md` 표 7/11/12, `ITERATIONS.md` iter 37 + iter 50-58, `ABSTRACT.md` v0.3.
 
+## ★ Real Baseline Component Isolation (iter 60-65, 2026-05-11)
+
+6-step Real Baseline ablation B0→B5 (Global InfoNCE only → iter 37 cfg) 완료:
+
+| step | cfg | ARI | noise | Comp | AMI |
+|:-:|---|---:|---:|---:|---:|
+| B0 | Global only | 0.8231 | 6.20% | 0.9602 | 0.9290 |
+| B1 | + Local DenseCL | 0.8514 | 3.93% | 0.9665 | 0.9387 |
+| B2 | LW=1.0 isolated | 0.8231 | 6.20% | 0.9602 | 0.9290 |
+| B3 | + MoCo Queue | 0.8464 | 1.31% | 0.9828 | 0.9496 |
+| **B4** ★ | + NEG=0.72 | **0.8605** | **0.52%** | **0.9852** | **0.9557** |
+| B5 | + NeCo 0.2 (=iter 37) | 0.8564 | 0.96% | 0.9801 | 0.9503 |
+
+**★ 핵심 발견 N6 (NEW) — Component Interaction Matters**:
+- LW lever isolated effect 는 negative (B1→B2 ARI -0.028)
+- LW 의 진짜 효과 = Queue interaction (B2→B3 ARI +0.023, noise -4.89pp)
+- NeCo (paper N1) isolated effect ≈ 0 (B4→B5 ARI -0.004)
+- B4 > B5 (NeCo 없는 cfg 가 모든 metric 우위)
+- B5 vs iter 37 (same seed): ΔARI 0.014 = multi-seed std → N2 강화
+
+paper contribution N1-N5 → **N1-N6** 갱신 (Component Interaction NEW).
+상세: `RESULTS.md` 표 13, `ABLATION_PLAN.md`, `DISCUSSION.md` §7.9, `ITERATIONS.md` iter 60-65, `ABSTRACT.md` v0.4.
+
 ## 절대 룰
 
 - 자체 정의 metric (weighted_isolation, pure_rate 등) 절대 출력 금지 — Tier 1+2 공식만

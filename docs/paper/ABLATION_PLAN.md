@@ -60,15 +60,62 @@ python _dispatch_iter.py --tag iter_60_B0_real_baseline \
 ... --neco-weight 0.2 ...
 ```
 
-## 기대 효과 (가설)
+## 기대 효과 (가설) vs 실측 (★ 2026-05-11 완료)
 
-| step | 효과 가설 | 실측 |
-|:-:|---|---|
-| B0 → B1 | + Local DenseCL → noise huge ↓ | TBD |
-| B1 → B2 | LW strong → noise 추가 ↓ | -50% (iter A0→Iter 1 패턴) |
-| B2 → B3 | + Queue → more negatives | small ↑ |
-| B3 → B4 | + NEG filter → false neg 보호 | ↑ |
-| B4 → B5 | + NeCo (★ paper N1) | noise -70% (iter 35→37 패턴) |
+| step | 효과 가설 | 실측 ΔARI | 실측 Δnoise | 판정 |
+|:-:|---|---:|---:|---|
+| B0 → B1 | + Local DenseCL → noise huge ↓ | **+0.028** | **-2.27pp** | ✓ Local 단독 효과 확실 |
+| B1 → B2 | LW strong → noise 추가 ↓ | **-0.028** | **+2.27pp** | **✗ LW=1.0 isolated regression!** |
+| B2 → B3 | + Queue → more negatives | **+0.023** | **-4.89pp** | **★★★ N6 huge — LW=1.0 + Queue interaction** |
+| B3 → B4 | + NEG filter → false neg 보호 | **+0.014** | **-0.78pp** | ✓ small but clean |
+| B4 → B5 | + NeCo (★ paper N1) | **-0.004** | **+0.44pp** | **✗ NeCo isolated effect ≈ 0!** |
+
+**총 누적 (B0 → B5)**: ΔARI **+0.033** / Δnoise **-5.24pp** / ΔComp **+0.020** / ΔAMI **+0.021**.
+
+★ B4 > B5: NeCo 없는 B4 가 NeCo 있는 B5 보다 우위 (ARI 0.860 > 0.856, noise 0.52% < 0.96%).
+이는 paper N1 (NeCo) 의 contribution 을 **isolated component-by-component 로 재검토** 하게
+하는 결정적 evidence.
+
+## ★ B0-B5 실측 표
+
+| # | cfg | P1 cap | P2 noise | P3 Comp | P4 Hom | AMI | NMI | ARI | Sil(cos) | n_cl |
+|:-:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **B0** | Global only | **1.000** | 6.195% | 0.9602 | 0.929* | 0.9290 | 0.949* | 0.8231 | 0.582* | 37 |
+| B1 | + Local LW=0.5 | 1.000 | 3.927% | 0.9665 | 0.9351 | 0.9387 | 0.9505 | 0.8514 | 0.5139 | 37 |
+| B2 | LW=1.0 | 1.000 | 6.195% | 0.9602 | 0.9257 | 0.9290 | 0.9427 | 0.8231 | 0.5089 | 37 |
+| B3 | + Queue | 1.000 | 1.309% | 0.9828 | 0.9365 | 0.9496 | 0.9591 | 0.8464 | 0.5727 | 36 |
+| **B4** ★ | + NEG=0.72 | 1.000 | **0.524%** | **0.9852** | 0.9439 | 0.9557 | 0.9641 | **0.8605** | 0.6109 | 37 |
+| B5 | + NeCo (=iter 37) | 1.000 | 0.960% | 0.9801 | 0.9403 | 0.9503 | 0.9598 | 0.8564 | 0.6104 | 37 |
+
+\* Hom/NMI/Sil 은 B0 별도 reporting (sklearn 직접 계산).
+
+run_dir:
+- B0: `outputs_contrastive_260511_154102/`
+- B1: `outputs_contrastive_260511_162616/`
+- B2: `outputs_contrastive_260511_170230/`
+- B3: `outputs_contrastive_260511_173842/`
+- B4: `outputs_contrastive_260511_181441/`
+- B5: `outputs_contrastive_260511_185039/`
+
+## ★★★★★ 핵심 발견 5
+
+1. **LW=1.0 단독 regression** (B1 → B2): LW=0.5 → 1.0 만 변경 시 ARI -0.028, noise +2.27pp.
+   = **LW strong 의 isolated effect 는 negative**.
+
+2. **★ N6 Component Interaction (NEW)** (B2 → B3): Queue 추가 시 ARI +0.023, noise -4.89pp.
+   B1 → B3 의 monotonic 이 아니라 B2 (LW=1.0 단독) 에서 dip 후 Queue 가 lift 함.
+   = **LW=1.0 의 효과는 Queue 와의 interaction 으로만 발현**. paper N6 contribution.
+
+3. **NeCo (N1) isolated effect ≈ 0** (B4 → B5): NeCo 단독 추가 시 ARI -0.004, noise +0.44pp.
+   = paper N1 의 "noise -70%" 는 iter 35→37 비교 (different runs).
+   component-isolated 로는 negligible 또는 negative.
+
+4. **iter 37 reproduce variance** (B5 vs iter 37, same seed=42): ΔARI 0.014, Δnoise 0.35pp.
+   = same seed 라도 run-to-run variance 가 multi-seed std 만큼 큼. **N2 (multi-seed) 강한 evidence**.
+
+5. **B4 > B5** (NeCo 없는 cfg 가 NeCo 있는 cfg 보다 모든 metric 우위):
+   B4 ARI 0.8605 > B5 0.8564 / B4 Comp 0.9852 > B5 0.9801 / B4 noise 0.52% < B5 0.96%.
+   = **paper N1 contribution 재검토 필요** — NeCo 의 진짜 효과는 base cfg interaction 으로만.
 
 ## paper 안 contribution 정확 분류
 

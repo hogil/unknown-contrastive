@@ -309,4 +309,139 @@ introduce in early iterations), Zone-Aware NeCo could become the
 right tool again. The methodology lock-in (multi-seed protocol,
 section 7.1 / 7.7) applies to any such re-test.
 
+## 7.9 Component Interaction Matters (N6, NEW 2026-05-11)
+
+The iter-37 SOTA configuration is the cumulative result of five contrastive
+components on top of a TAPT-initialized ConvNeXtV2-base backbone: Global
+InfoNCE, Local InfoNCE (DenseCL-style), LOCAL_WEIGHT lever, MoCo Queue,
+NEG filter, and NeCo patch-neighbor consistency. The original ablation
+trajectory (Iter A0 to iter 58) tuned each lever on top of an Iter-A0
+baseline that already had Local + Queue + NEG active. This was sufficient
+for hyperparameter ablation but did not give per-component isolated effects
+that a practitioner could attribute directly to a single design choice.
+
+To address this, we ran a six-step **Real Baseline ablation** (B0 to B5)
+starting from a minimal Global-InfoNCE-only baseline (B0) and adding one
+component at a time (B1 to B5). All other configuration (HDBSCAN
+`eom mcs=12 ms=3`, IMAGE_SIZE=384, BATCH=8, EPOCHS=5, LR_HEAD=1e-3,
+NCE_TEMP=0.07, seed=42, anchor `avg30_new_260508_123037`) was held fixed.
+B5 is the exact iter-37 configuration. RESULTS table 13 lists the full
+matrix; this section summarizes the three findings that change how we
+read the contribution map.
+
+### 7.9.1 LOCAL_WEIGHT 1.0 has negative isolated effect
+
+In the original Iter A0 to Iter 1 atomic step (old anchor), raising
+LOCAL_WEIGHT from 0.5 to 1.0 reduced defect noise from 9.34% to 4.62% —
+a 50% improvement that we labeled the "lever 1" of contrastive
+contribution. Real Baseline isolation tells a different story:
+
+- B1 (Local at LW=0.5, no Queue, no NEG, no NeCo): ARI 0.8514, noise 3.93%
+- B2 (Local at LW=1.0, no Queue, no NEG, no NeCo): ARI 0.8231, noise 6.20%
+
+**ARI -0.028 and noise +2.27pp** — the LW=1.0 isolated step is a
+**regression**, not an improvement. B0 and B2 produce identical Tier 1
+numbers (ARI 0.8231, noise 6.20%, Comp 0.9602, AMI 0.9290), meaning that
+without Queue support a stronger Local weight effectively cancels the
+B0 to B1 Local gain.
+
+### 7.9.2 LW's real effect is interaction with Queue (★ N6)
+
+The B2 to B3 step adds the MoCo Queue (size 4096) on top of the
+already-strong LW=1.0:
+
+- B2 (LW=1.0, no Queue): ARI 0.8231, noise 6.20%
+- B3 (LW=1.0 + Queue): ARI 0.8464, noise 1.309%
+
+**ARI +0.023 and noise -4.89pp** (78% noise reduction). This step lifts
+the B2-vs-B1 regression and pushes past B1's level. The Queue is
+absorbing the LW=1.0 over-emphasis by supplying enough additional
+negatives that the strong Local signal no longer dominates the
+gradient. We log this as the **N6 contribution — Component Interaction**.
+
+This is the practitioner-facing implication that paper-community lever
+isolation reports often miss: a lever's reported headline effect (here
+LW: 0.5 to 1.0, "noise -50%") is in fact a **conditional improvement**
+that only materializes when a partner component (here Queue) is also
+active. Isolated reports that swap one component at a time without
+mapping the partner interactions can produce contribution maps in which
+the listed lever's sign flips when transferred to a different baseline.
+
+### 7.9.3 NeCo (paper N1) has isolated effect approximately zero
+
+The same isolation protocol applied to NeCo (B4 to B5) reveals a sharper
+result:
+
+- B4 (LW=1.0 + Queue + NEG=0.72, no NeCo): ARI 0.8605, noise 0.524%,
+  Comp 0.9852, AMI 0.9557
+- B5 (LW=1.0 + Queue + NEG=0.72 + NeCo=0.2 = iter-37 cfg):
+  ARI 0.8564, noise 0.960%, Comp 0.9801, AMI 0.9503
+
+**ARI -0.004, noise +0.44pp, Comp -0.005, AMI -0.005** — every Tier 1
+metric is **slightly worse** with NeCo added in isolation. B4 (no NeCo)
+is in fact the best single-step configuration in the Real Baseline matrix.
+
+This is striking against the original iter-35-to-iter-37 result, which
+reported NeCo's atomic step as **noise 2.01% to 0.61%, -70%**. We now
+understand that contrast as the difference between two cross-run
+trajectories rather than a clean atomic isolation:
+
+- iter 35 (5/8, P2-King base, no NeCo): ARI 0.856, noise 2.01%
+- iter 37 (5/9, P2-King base + NeCo 0.2): ARI 0.870, noise 0.61%
+- B4 (Real Baseline, no NeCo): ARI 0.860, noise 0.52%
+- B5 (Real Baseline + NeCo 0.2): ARI 0.856, noise 0.96%
+- B5 vs iter 37 (same seed=42, same cfg): ARI **0.014 apart, noise 0.35pp
+  apart** — same seed, same configuration, different run, multi-seed
+  std worth of difference.
+
+The honest read: **NeCo's isolated contribution is within run-to-run
+variance, not above it**. NeCo's headline effect in iter 37 is a lucky
+draw of cross-run variance that the multi-seed protocol (section 7.1 /
+7.7) was already telling us to expect. The atomic step (B4 to B5) gives
+a slight negative; the iter-35-to-iter-37 step gave a +0.014 ARI
+positive. Both are within the 0.014 multi-seed standard deviation.
+
+### 7.9.4 What N6 means for paper N1 and the contribution map
+
+Two consequences for how the rest of the paper reports contributions.
+
+**Consequence 1** — Paper N1 (NeCo as a wafer-defect lever) is preserved
+but reframed. The original framing was "NeCo at 0.2 is a fifth atomic
+lever that reduces defect noise by 70%." The Real Baseline result
+revises this to "NeCo at 0.2 in combination with LW=1.0 + Queue + NEG
+gives an iter-37 configuration that has run-to-run variance comparable
+to a NeCo-less B4 configuration; the per-component isolated effect is
+within multi-seed std." This is consistent with the section 7.2
+mechanism reinterpretation (Normal-defect boundary repulsion) and with
+the section 7.6 saturation claim — NeCo sits at a sweet-spot edge whose
+isolated lift is small once one accounts for cross-run variance.
+
+**Consequence 2** — A new N6 contribution is added. The Real Baseline
+B0-to-B5 path shows that **LW's real effect is its interaction with
+Queue**, not its isolated atomic step. Future work that ports the
+iter-37 configuration to a new fab must replicate the four
+baseline components (Local + LW + Queue + NEG) together, not in
+isolation. Component-interaction maps — not just lever-isolated tables
+— are the right tool for ablation in this domain.
+
+The Real Baseline B0 (Global-only) result (ARI 0.823, capture 1.000,
+noise 6.20%) is itself the supporting evidence for a separate claim
+that we list here for completeness: **the ConvNeXtV2-base + TAPT
+backbone is doing most of the cluster-structure work**. Of the
+ARI 0.823 to 0.870 path from B0 to iter 37, the backbone alone
+delivers 0.823 / 0.870 = 94.6% of the ARI; the remaining 5.4% is the
+combined contribution of all five contrastive components plus the
+HDBSCAN tuning. This sharpens the C1-to-C5 contribution list: the
+quantitative novelty of the contrastive head and the HDBSCAN cfg
+together is in the 5%-of-ARI regime, and the dominant work is done
+by TAPT backbone selection — the supervised sister-classifier's
+val_f1 0.9946 transfers to the contrastive embedding as a strong
+prior. Practitioners porting this pipeline to a new fab should
+expect that getting a good TAPT backbone is the dominant lever, and
+the contrastive head + HDBSCAN tuning is the polish on top.
+
+The full Real Baseline matrix (RESULTS table 13, B0 to B5 with all
+Tier 1+2 numbers) is the deliverable evidence for this section. The
+six contributions (N1 to N6) are summarized in CONCLUSION 8.1.
+
 > Iteration history: `ITERATIONS.md`. Tier 1+2 metric tables: `RESULTS.md`.

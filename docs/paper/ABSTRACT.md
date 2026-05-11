@@ -106,3 +106,55 @@ as a multi-axis sweet-spot saturation point. Further encoder-side gains require 
 paradigm shift, which we sketch as a Cluster-Aware Synthesis Loop in future work.
 
 > 갱신 history: `ITERATIONS.md` (append-only). Decision history: `docs/contrastive-eval/DECISIONS.md`.
+
+## v0.4 (2026-05-11) — Real Baseline Component Isolation 추가 (★ N6 NEW)
+
+We present a self-supervised contrastive learning + density-based clustering pipeline
+for **open-set wafer defect grouping**, hardened over **65 atomic-change ablation
+iterations** plus a **six-step Real Baseline component isolation** (B0 to B5) against
+four primary objectives: P1 class capture, P2 defect noise rate, P3 Completeness, P4
+Homogeneity / AMI. The system uses a frozen ConvNeXtV2-base FCMAE encoder with
+task-adaptive pre-training (TAPT) from a sister supervised classifier, a 128-dimension
+projection head trained with InfoNCE plus DenseCL-style local grid contrast plus NeCo
+patch-neighbor consistency, and HDBSCAN clustering with `eom` selection and
+`min_samples=3`.
+
+On a 43-class new-anchor benchmark synthesized from WM-811K (42 defect + Normal,
+2,146 wafers, 5 chip-internal object types + 9 wafer-canvas patterns), the iter-37
+configuration achieves **single-seed ARI 0.870, 3-seed mean ARI 0.866 +/- 0.014,
+Completeness 0.991, AMI 0.960, defect-noise 0.61%, and 43/43 class capture**.
+
+We make **six contributions**. **(N1)** A 43-class open-set wafer benchmark with
+documented sub-style splits validated by GMM-BIC and intra/inter ratio evidence.
+**(N2)** Multi-seed honesty: the single-seed ARI 0.870 is a high-tail draw, and the
+3-seed mean 0.866 +/- 0.014 is the headline; **a Real Baseline B5 reproduce of iter-37
+(same seed=42, same cfg) lands at ARI 0.856, exactly one std away** — strong evidence
+that same-seed run-to-run variance is non-negligible. Two independent ablation axes
+(Zone-Aware NeCo z=4 and LOCAL_POS_TOPK=16) further reproduce the same +0.010 lucky
+variance pattern. **(N3)** Five atomic encoder levers (LOCAL_WEIGHT, LR_HEAD,
+IGNORE_NEG_SIM, NCE_TEMP, NECO_WEIGHT) plus three HDBSCAN-side axes plus 14 dead axes
+— a full ablation map for practitioners. HDBSCAN-side tuning alone (`leaf` to `eom` +
+`ms=4` to `ms=3`) reduces defect noise from 12.6% to 0.61% at fixed encoder (-91%).
+**(N4)** A domain-specific reinterpretation of NeCo's mechanism: NeCo at weight 0.2
+acts as **Normal-defect boundary repulsion** (per-class centroid shifts +0.05 to +0.07
+cosine away from Normal). **(N5)** A **comprehensive saturation point**: 6
+hyperparameter axes + 2 Spatial-NeCo variants all sweep to within multi-seed std of
+iter 37, establishing iter 37 as a multi-axis sweet-spot. **(N6 NEW) Component
+Interaction Matters**: A six-step Real Baseline ablation (B0 Global-only to B5 iter-37
+cfg) reveals that **LW lever's isolated effect is negative** (B1 to B2: ARI -0.028)
+and its real contribution **only materializes through Queue interaction** (B2 to B3:
+ARI +0.023). NeCo's isolated effect (B4 to B5) is **-0.004 ARI**, within run-to-run
+variance; B4 (no NeCo) is in fact the best single-step Real Baseline configuration.
+This sharpens the contribution map: the dominant work is done by the **TAPT backbone**
+(B0 ARI 0.823 = 94.6% of iter-37 ARI), and the contrastive head + HDBSCAN tuning
+together is the 5%-of-ARI polish on top. The Real Baseline B0 path makes the
+per-component contribution explicit and exposes a Component Interaction lesson that
+isolated lever-ablation tables miss.
+
+The Real Baseline B0 to B5 matrix is published as the per-component evidence backing
+all five lever claims (RESULTS table 13). Further encoder-side gains require a
+paradigm shift, which we sketch as a **Cluster-Aware Synthesis Loop** in future work.
+
+> 갱신 history: `ITERATIONS.md` (append-only, iter 0 through iter 65). Decision history:
+> `docs/contrastive-eval/DECISIONS.md`. Component isolation: `RESULTS.md` table 13,
+> `ABLATION_PLAN.md`, `DISCUSSION.md` §7.9.

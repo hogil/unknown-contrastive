@@ -71,6 +71,25 @@ empirical justification for the Cluster-Aware Synthesis Loop being
 the natural next paradigm rather than another encoder-side sweep.
 (Section 7.6 / DISCUSSION.md)
 
+**(C6 NEW, 2026-05-11) Component Interaction Matters — a Real Baseline
+isolation map**. A six-step Real Baseline ablation (B0 Global-only to
+B5 iter-37 cfg) added on top of the 58-iteration original sweep
+reveals that **LW lever's isolated atomic step is negative**
+(B1 LW=0.5 to B2 LW=1.0: ARI -0.028, noise +2.27pp). Its real
+contribution **only materializes through Queue interaction**
+(B2 to B3: ARI +0.023, noise -4.89pp). NeCo's isolated effect (B4 to
+B5) is **-0.004 ARI**, within same-seed run-to-run variance; B4
+(no NeCo) is in fact the best single-step Real Baseline
+configuration (ARI 0.8605, Comp 0.9852, noise 0.524%). The B0
+Global-only baseline already achieves ARI 0.8231, indicating that
+the TAPT ConvNeXtV2 backbone alone delivers 94.6% of the iter-37 ARI;
+the contrastive head plus HDBSCAN tuning is a 5%-of-ARI polish on
+top. This Component Interaction lesson (paper N6) sharpens the
+contribution map and exposes a hazard of lever-isolated atomic
+ablation that the original Iter A0 baseline (Local + Queue + NEG
+already active) hides. (Section 7.9 / RESULTS table 13 /
+ABLATION_PLAN.md)
+
 ## 8.2 The five-lever ablation map (one-line summary)
 
 | Lever | Step | Tier-1 effect (atomic) | Iter |
@@ -200,8 +219,9 @@ require a paradigm shift, not another sweep.
 
 The five-lever map plus the dead-axis map (now extended to 14 axes
 with iter 50-58) plus the multi-seed discipline plus the NeCo
-mechanism reinterpretation plus the saturation lock-in are the
-five contributions (N1-N5) of this work. The **Cluster-Aware
+mechanism reinterpretation plus the saturation lock-in plus the
+**Real Baseline component-interaction map (N6, 2026-05-11)** are the
+**six contributions (N1-N6)** of this work. The **Cluster-Aware
 Synthesis Loop** (8.3 F2) is the paradigm-level next step and the
 subject of a follow-up paper approved by the project user on 9 May
 2026. The negative result for Zone-Aware NeCo (section 7.3) is
@@ -209,6 +229,17 @@ preserved as a conditional positive — it could carry signal in a
 synthesis-spec-deficient regime that the Cluster-Aware Synthesis
 Loop would itself create in early iterations, with the multi-seed
 protocol applied at every re-test.
+
+A fourth lesson sits alongside the three above: **Component
+Interaction matters more than lever isolation**. The Real Baseline
+B0-to-B5 path shows that the LW lever's reported "noise -50%" headline
+(Iter A0 to Iter 1) is in fact a conditional improvement that flips
+sign without Queue support, and NeCo's headline contribution
+("noise -70%") is within same-seed run-to-run variance once isolated.
+Future fab-porting work must replicate the four baseline components
+(Local + LW + Queue + NEG) together, not in isolation, and should
+expect that getting a good TAPT backbone (which delivers 94.6% of the
+iter-37 ARI alone) is the dominant practitioner-facing lever.
 
 > Iteration history: `ITERATIONS.md` (append-only, 58 iterations through
 > 2026-05-10). Tier 1+2 metrics: `RESULTS.md`. Decision history:

@@ -209,3 +209,37 @@ Iter 41 의 HDBSCAN forcing 은 encoder 학습 X — iter 37 embedding 위 clust
 - `NECO_WEIGHT` (env-override 기반 dispatch flag, contrastive.py 의 NeCo loss hook)
 - `BACKBONE_UNFREEZE_LAST_N` + `LR_SCALE` (env-override, partial unfreeze) — **axis 영구 reject** (iter 36, 42)
 - `NECO_ZONE_VERTICAL` (env-override, zone-aware NeCo variant — iter 43 novelty A)
+
+---
+
+## ★ Real Baseline ablation track (iter 60-65, 2026-05-11) — Component Isolation
+
+> 기존 Iter A0 baseline 에 Local/Queue/NEG 이미 활성 → 진짜 component-level contribution isolation
+> 위해 **Global InfoNCE only** B0 부터 단계별 component 추가. 모든 row HDBSCAN `eom mcs=12 ms=3`,
+> seed=42, anchor avg30_new_260508_123037 동일 고정.
+
+| Run | tag (run_dir) | EPOCHS | BATCH | TEMP | LR_HEAD | USE_LOCAL | LW | USE_QUEUE | NEG_SIM | NECO_WEIGHT |
+|---|---|---:|---:|---:|---|:-:|---|:-:|---|---|
+| **iter 60 (B0)** | 260511_154102 | 5 | 8 | 0.07 | 1e-3 | **false** | 0 | **false** | **1.0 (off)** | 0 |
+| iter 61 (B1) | 260511_162616 | 5 | 8 | 0.07 | 1e-3 | true | **0.5** | false | 1.0 | 0 |
+| iter 62 (B2) | 260511_170230 | 5 | 8 | 0.07 | 1e-3 | true | **1.0** | false | 1.0 | 0 |
+| iter 63 (B3) | 260511_173842 | 5 | 8 | 0.07 | 1e-3 | true | 1.0 | **true** | 1.0 | 0 |
+| **iter 64 (B4)** ★ | 260511_181441 | 5 | 8 | 0.07 | 1e-3 | true | 1.0 | true | **0.72** | 0 |
+| iter 65 (B5) | 260511_185039 | 5 | 8 | 0.07 | 1e-3 | true | 1.0 | true | 0.72 | **0.2** |
+
+**Atomic step path**:
+- B0 → B1: USE_LOCAL false → true, LW 0 → 0.5
+- B1 → B2: LW 0.5 → 1.0 (lever 1 isolated)
+- B2 → B3: USE_QUEUE false → true (QUEUE_SIZE=4096)
+- B3 → B4: IGNORE_NEG_SIM 1.0 (off) → 0.72
+- B4 → B5: NECO_WEIGHT 0 → 0.2 (= iter 37 cfg 완전 재현)
+
+**결과 종합 (RESULTS 표 13)**:
+- 누적 효과 B0 → B5: ARI 0.823 → 0.856 (+0.033), noise 6.20% → 0.96% (-5.24pp)
+- ★ N6 발견: LW lever isolated effect 는 negative (B1→B2 ARI -0.028), Queue interaction 으로 lift (B2→B3 +0.023)
+- ★ N1 (NeCo) isolated effect ≈ 0 (B4→B5 ARI -0.004), B4 가 NeCo 없이도 best
+- B5 vs iter 37 same-seed 비교: ΔARI 0.014, Δnoise 0.35pp — multi-seed std 만큼 variance (N2 강한 evidence)
+
+이 결과가 **N6 contribution (Component Interaction, NEW)** + paper N1 (NeCo) reframe 의 evidence.
+
+상세: `RESULTS.md` 표 13, `ABLATION_PLAN.md`, `DISCUSSION.md` §7.9, `ITERATIONS.md` iter 60-65.

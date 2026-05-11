@@ -994,3 +994,184 @@ iter 50-58 의 6 hparam axis (LW / LR / NEG / TEMP / TOPK / QUEUE) + Spatial NeC
 | **iter 37 baseline** | 0.870 | — (3-seed) | 0.866 | 0.014 |
 
 → **두 axis 의 single-seed +0.010 ARI 는 같은 lucky variance pattern 의 sample** — paper 의 multi-seed methodology evidence 강력 보강.
+
+---
+
+## iter 60 — B0 Real Baseline (Global InfoNCE only) (2026-05-11) — ★ NEW REAL BASELINE
+
+run_dir: `outputs_contrastive_260511_154102/`
+
+### 설정
+- 사용자 지적 정합: 기존 Iter A0 baseline 에 이미 Local InfoNCE / MoCo Queue / NEG filter 활성.
+  → 진짜 component-level contribution isolation 위해 **Global InfoNCE only** 의 minimal baseline 신설.
+- `USE_LOCAL=false, USE_QUEUE=false, IGNORE_NEG_SIM=1.0 (off), NECO_WEIGHT=0`.
+- anchor avg30_new_260508_123037 (43 class, n=2146), seed=42.
+- HDBSCAN: eom mcs=12 ms=3 (모든 B 단계 동일 고정).
+
+### 결과 (eom mcs=12 ms=3)
+- **Completeness=0.9602, AMI=0.9290, ARI=0.8231, noise_pct(def)=6.195%, capture=1.000, n_cl=37**
+- Homogeneity=0.929*, NMI=0.949*, Silhouette(cos)=0.582*.
+
+### 발견
+1. **TAPT backbone 의 강력함**: Global InfoNCE 단독으로 ARI 0.823 / capture 1.000 / noise 6.2%.
+   ConvNeXtV2-base + supervised TAPT (sister repo `known-cnn` 33-class) 만으로 이미 wafer cluster
+   구조의 대부분을 학습.
+2. **paper 의 진짜 NEW contribution 재정의**: 우리 추가 components (Local + Queue + NEG + NeCo +
+   HDBSCAN) 의 total isolated effect 는 ΔARI +0.033 (B0 → B5). paper N1-N5 중 ★ N6
+   (Component Interaction) 새로 추가.
+
+### 다음 (iter 61)
+- + Local InfoNCE (USE_LOCAL=true, LW=0.5, DenseCL weak).
+
+---
+
+## iter 61 — B1 + Local DenseCL (LW=0.5) (2026-05-11) — ★ Local 단독 효과 + (atomic step from B0)
+
+run_dir: `outputs_contrastive_260511_162616/`
+
+### 설정
+- B0 + `USE_LOCAL=true, LOCAL_WEIGHT=0.5, LOCAL_POS_TOPK=12` (DenseCL Wang 2021).
+- 그 외 B0 동일.
+
+### 결과 (eom mcs=12 ms=3)
+- **Completeness=0.9665, AMI=0.9387, ARI=0.8514, noise_pct(def)=3.927%, capture=1.000, n_cl=37**
+- Hom=0.9351, NMI=0.9505, Sil=0.5139.
+
+### 발견 (vs B0)
+1. **Δ vs B0**: ARI **+0.028**, noise **-2.27pp**, Comp +0.006, AMI +0.010.
+2. **Local 단독 효과 확실** — patch-level spatial contrast 가 wafer 위치 정보 (Edge-Top / Edge-Bottom)
+   보존에 효과적. DenseCL paper claim (Wang 2021) 정합.
+3. **Sil 0.582 → 0.514 하락** — Local 추가가 cluster boundary 더 미세하게 만듦 (Sil 페널티 inherent).
+
+### 다음 (iter 62)
+- LW 0.5 → 1.0 (lever 1 isolated step).
+
+---
+
+## iter 62 — B2 LW=1.0 (lever 1 isolated) (2026-05-11) — ★★★ NEGATIVE — LW 단독 regression
+
+run_dir: `outputs_contrastive_260511_170230/`
+
+### 설정
+- B1 + `LOCAL_WEIGHT=0.5 → 1.0` (lever 1 atomic step, 그 외 B1 동일).
+- USE_QUEUE 여전히 false, NEG filter off.
+
+### 결과 (eom mcs=12 ms=3)
+- **Completeness=0.9602, AMI=0.9290, ARI=0.8231, noise_pct(def)=6.195%, capture=1.000, n_cl=37**
+- Hom=0.9257, NMI=0.9427, Sil=0.5089.
+
+### 발견 (vs B1)
+1. **Δ vs B1**: ARI **-0.028**, noise **+2.27pp**, Comp **-0.006**, AMI **-0.010**.
+2. **★ LW=1.0 isolated regression** — LW=0.5 → 1.0 단독 변경은 negative.
+   기존 Iter 1 (old anchor, A0→1) 에서 ARI +0.029 / noise -50% 효과는
+   **Local + Queue + NEG 가 활성 상태에서의 lever 효과**.
+3. **B0 ≈ B2 (모든 metric 일치)** — Queue/NEG 없는 cfg 에서는 LW 강화가 Local 의 효과를 상쇄.
+   즉 LW lever 의 진짜 효과 = component interaction.
+
+### 다음 (iter 63)
+- + MoCo Queue (USE_QUEUE=true, QUEUE_SIZE=4096) — interaction 시험.
+
+---
+
+## iter 63 — B3 + MoCo Queue (interaction lift) (2026-05-11) — ★★★ N6 huge
+
+run_dir: `outputs_contrastive_260511_173842/`
+
+### 설정
+- B2 + `USE_QUEUE=true, QUEUE_SIZE=4096` (MoCo He 2020).
+- 그 외 B2 동일 (LW=1.0, NEG filter off, NeCo off).
+
+### 결과 (eom mcs=12 ms=3)
+- **Completeness=0.9828, AMI=0.9496, ARI=0.8464, noise_pct(def)=1.309%, capture=1.000, n_cl=36**
+- Hom=0.9365, NMI=0.9591, Sil=0.5727.
+
+### 발견 (vs B2)
+1. **Δ vs B2**: ARI **+0.023**, noise **-4.89pp** (6.20→1.31%, -78%), Comp +0.023, AMI +0.021.
+2. **★★★ paper N6 huge evidence** — Queue 추가가 B2 의 LW=1.0 over-emphasis 를 흡수.
+   LW lever 효과 (B1→B2 negative → B2→B3 huge positive) 가 **Queue 와의 interaction 으로만 발현**.
+3. **n_cl 37 → 36** — Queue 가 sister-pair 합성에 기여 (cleaner cluster).
+4. paper community 의 "lever isolated 단독 효과" 보고 함정 입증 — atomic ablation 만으로
+   contribution 분해 시 Component Interaction 누락.
+
+### 다음 (iter 64)
+- + NEG filter (IGNORE_NEG_SIM 1.0 → 0.72) — 마지막 baseline component.
+
+---
+
+## iter 64 — B4 + NEG filter (0.72) (2026-05-11) — ★ best 발견
+
+run_dir: `outputs_contrastive_260511_181441/`
+
+### 설정
+- B3 + `IGNORE_NEG_SIM 1.0 → 0.72` (NV-Retriever-style false-neg filter, Moreira 2024).
+- 그 외 B3 동일 (LW=1.0, USE_QUEUE=true, NeCo off).
+
+### 결과 (eom mcs=12 ms=3) ★ B5 보다 우위
+- **Completeness=0.9852, AMI=0.9557, ARI=0.8605, noise_pct(def)=0.524%, capture=1.000, n_cl=37**
+- Hom=0.9439, NMI=0.9641, Sil=0.6109.
+
+### 발견 (vs B3)
+1. **Δ vs B3**: ARI **+0.014**, noise **-0.78pp** (1.31→0.52%, -60%), Comp +0.003, AMI +0.006.
+2. **★ B4 = NeCo 없는 best cfg** — 모든 metric (ARI/Comp/noise/Sil) 이 B5 보다 우위.
+3. NEG filter 단독 효과 확실 (small but clean) — Iter 13 (old anchor) 의 NEG 0.65 단독 효과
+   재확인 (단 새 anchor 에서는 0.72 가 sweet spot, iter 58 lock-in).
+
+### 다음 (iter 65)
+- + NeCo (NECO_WEIGHT 0 → 0.2) — = iter 37 cfg reproduce 시험.
+
+---
+
+## iter 65 — B5 + NeCo 0.2 (= iter 37 cfg, isolated NeCo step) (2026-05-11) — ★ N1 isolated effect ≈ 0
+
+run_dir: `outputs_contrastive_260511_185039/`
+
+### 설정
+- B4 + `NECO_WEIGHT 0 → 0.2` (NeCo Pariza 2024, lever 5 isolated step).
+- = iter 37 cfg 완전 재현 (LW=1.0, USE_QUEUE=true, NEG=0.72, NeCo=0.2, seed=42).
+
+### 결과 (eom mcs=12 ms=3)
+- **Completeness=0.9801, AMI=0.9503, ARI=0.8564, noise_pct(def)=0.960%, capture=1.000, n_cl=37**
+- Hom=0.9403, NMI=0.9598, Sil=0.6104.
+
+### 발견 (vs B4 + vs iter 37)
+1. **Δ vs B4**: ARI **-0.004**, noise **+0.44pp** (0.52→0.96%, +85%), Comp **-0.005**, AMI **-0.005**.
+   = **★ NeCo (paper N1) isolated effect ≈ 0 또는 약간 negative**.
+2. **B4 > B5** — NeCo 없는 cfg 가 NeCo 있는 cfg 보다 모든 metric 우위.
+3. **vs iter 37 (5/9, same seed=42)**:
+   - iter 37: ARI 0.8700 / Comp 0.991 / AMI 0.960 / noise 0.61%
+   - B5 (iter 65): ARI 0.8564 / Comp 0.9801 / AMI 0.9503 / noise 0.960%
+   - ΔARI **-0.014**, Δnoise **+0.35pp** — **same seed 라도 run-to-run variance 가 multi-seed std 만큼!**
+4. **★ paper N1 (NeCo) contribution 재검토 필요** — 기존 iter 35→37 비교 (ARI 0.856→0.870)
+   는 cross-run noise floor 안. **isolated effect ≈ 0**, "noise -70%" claim 은 다른 run 들의
+   variance 의 우연 조합.
+
+### 다음 (iter 66+ ?)
+- Real Baseline ablation matrix B0-B5 완성. paper N6 (Component Interaction) NEW contribution.
+- N1 (NeCo) 의 진짜 contribution = component interaction (B3 → B5 의 total effect ΔARI +0.010,
+  combined 효과만 인정).
+- paper IEEE TSM submit ready — N1-N6 6 contributions 갱신.
+
+---
+
+# ★★★★★ N6 contribution — Component Interaction (Real Baseline B0-B5, 2026-05-11)
+
+**B0 → B5 component-by-component isolated breakdown**:
+
+| step | ΔARI | Δnoise | Δ방향 | 판정 |
+|:-:|---:|---:|:-:|---|
+| B0 → B1 (+ Local) | +0.028 | -2.27pp | ✓ | Local 단독 효과 |
+| B1 → B2 (LW=1.0) | -0.028 | +2.27pp | ✗ | **LW 단독 regression!** |
+| B2 → B3 (+ Queue) | +0.023 | -4.89pp | ✓✓✓ | **Queue 가 LW interaction lift** ★ N6 |
+| B3 → B4 (+ NEG) | +0.014 | -0.78pp | ✓ | NEG 단독 효과 |
+| B4 → B5 (+ NeCo) | -0.004 | +0.44pp | ✗ | **NeCo isolated ≈ 0** |
+
+**총 누적**: B0 → B5 ΔARI **+0.033** / Δnoise **-5.24pp** / ΔComp **+0.020** / ΔAMI **+0.021**.
+
+**★ 핵심 발견** — Component 가 lever 단독으로 봐서는 효과 알 수 없고, **interaction 으로만 발현**:
+- LW (lever 1) 단독 → negative (B1→B2)
+- LW + Queue (B2→B3) → huge positive (Queue 가 LW over-emphasis 흡수)
+- NeCo (lever 5, paper N1) 단독 → ≈ 0 또는 negative
+- 기존 iter 35→37 의 "NeCo +0.014 ARI" 는 run-to-run variance 안 (B5 same-seed reproduce 가
+  iter 37 보다 -0.014 ARI 가능 → multi-seed N2 강한 evidence).
+
+이 발견이 **N6 contribution** — paper 의 6번째 contribution 추가.

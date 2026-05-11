@@ -92,7 +92,7 @@ for the wafer-defect setting:
 
 ## 1.4 Contributions
 
-This paper contributes the following five items:
+This paper contributes the following six items:
 
 **(C1) A 43-class open-set wafer benchmark synthesized from WM-811K**.
 The benchmark uses 8 base WM-811K distribution classes as priors, applies
@@ -156,6 +156,23 @@ hyperparameter axis. We publish this saturation map as the
 practitioner's "do not bother sweeping these" guide and as the
 empirical justification for the Cluster-Aware Synthesis Loop being
 the natural next paradigm rather than another encoder-side sweep.
+
+**(C6) Component Interaction matters — a Real Baseline isolation
+map (NEW, 2026-05-11)**. A six-step Real Baseline ablation (B0 to B5)
+isolates each contrastive component from a minimal Global-InfoNCE-only
+baseline. LW lever's isolated atomic step (B1 LW=0.5 to B2 LW=1.0)
+is **negative** (ARI -0.028, noise +2.27pp); its real contribution
+**only materializes through Queue interaction** (B2 to B3: ARI +0.023,
+noise -4.89pp). NeCo's isolated effect (B4 to B5) is **-0.004 ARI**,
+within same-seed run-to-run variance; B4 (no NeCo) is in fact the
+best single-step Real Baseline configuration. The B0 Global-only
+baseline already reaches ARI 0.8231, capture 1.000, indicating that
+the TAPT ConvNeXtV2 backbone alone delivers 94.6% of the iter-37 ARI.
+This Component Interaction lesson sharpens the contribution map and
+exposes a hazard of lever-isolated atomic ablation on top of a
+non-minimal baseline (which the original Iter A0 baseline was). The
+full B0-to-B5 matrix with Tier 1+2 metrics is published as RESULTS
+table 13.
 
 ## 1.5 Paper outline
 

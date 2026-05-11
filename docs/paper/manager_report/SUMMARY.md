@@ -31,6 +31,79 @@
 
 ---
 
+## 0.5 Real Baseline Component Isolation (★ 2026-05-11 NEW)
+
+> 사용자 지적: "기존 Iter A0 baseline 에 이미 Local/Queue/NEG 활성. 진짜 component 단독
+> 효과 (isolated effect) 분리 필요" → Real Baseline B0 (Global InfoNCE only) 부터 단계별
+> component 추가하는 ablation 6 step (B0→B5) 실시.
+
+### 측정 결과 표 (eom mcs=12 ms=3, seed=42)
+
+| step | cfg | P1 cap | P2 noise | P3 Comp | P4 Hom | AMI | ARI | Sil(cos) | n_cl |
+|:-:|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **B0** | Global InfoNCE only | 1.000 | 6.20% | 0.9602 | 0.929 | 0.9290 | 0.8231 | 0.582 | 37 |
+| B1 | + Local DenseCL (LW=0.5) | 1.000 | 3.93% | 0.9665 | 0.9351 | 0.9387 | 0.8514 | 0.5139 | 37 |
+| B2 | LW=1.0 (lever 1 isolated) | 1.000 | 6.20% | 0.9602 | 0.9257 | 0.9290 | 0.8231 | 0.5089 | 37 |
+| B3 | + MoCo Queue 4096 | 1.000 | 1.31% | 0.9828 | 0.9365 | 0.9496 | 0.8464 | 0.5727 | 36 |
+| **B4** ★ | + NEG=0.72 | 1.000 | **0.52%** | **0.9852** | 0.9439 | 0.9557 | **0.8605** | 0.6109 | 37 |
+| B5 | + NeCo 0.2 (=iter 37 cfg) | 1.000 | 0.96% | 0.9801 | 0.9403 | 0.9503 | 0.8564 | 0.6104 | 37 |
+
+### Component isolated effect (Δ vs 직전 step)
+
+```
+B0 → B1   + Local DenseCL  ΔARI +0.028 / Δnoise -2.27pp   ✓ Local 단독 효과
+B1 → B2   + LW strong       ΔARI -0.028 / Δnoise +2.27pp   ✗ LW 단독 regression!
+B2 → B3   + MoCo Queue      ΔARI +0.023 / Δnoise -4.89pp   ★★★ N6 huge (LW+Queue 결합)
+B3 → B4   + NEG=0.72        ΔARI +0.014 / Δnoise -0.78pp   ✓ NEG 단독 효과
+B4 → B5   + NeCo 0.2        ΔARI -0.004 / Δnoise +0.44pp   ✗ NeCo isolated ≈ 0!
+
+누적 B0 → B5:   ΔARI +0.033 / Δnoise -5.24pp
+```
+
+### 5가지 paper-grade 핵심 발견
+
+```
+1. TAPT backbone 의 강력함
+   B0 (Global InfoNCE only) 이미 ARI 0.823 = iter 37 ARI (0.870) 의 94.6%
+   → 우리 contrastive head + HDBSCAN tuning total isolated effect = 5%
+
+2. LW=1.0 lever isolated regression
+   B1 (LW=0.5) → B2 (LW=1.0) ARI -0.028, noise +2.27pp
+   = "Iter A0→1 의 LW lever 효과 -50%" 는 Local+Queue+NEG 활성 위에서만
+
+3. ★★★ Component Interaction (paper N6 NEW)
+   B2→B3 + Queue: ARI +0.023 / noise -4.89pp
+   = Queue 가 LW over-emphasis 흡수
+   = paper community "lever isolated" 보고 함정 입증
+
+4. NeCo (paper N1) isolated effect ≈ 0
+   B4→B5 + NeCo 0.2: ARI -0.004 / noise +0.44pp
+   B4 > B5 (NeCo 없는 cfg 가 NeCo 있는 cfg 보다 우위)
+   = 기존 "iter 35→37 NeCo -70% noise" claim 은 cross-run variance
+
+5. same-seed run-to-run variance
+   B5 (seed=42) vs iter 37 (seed=42, same cfg):
+      iter 37: ARI 0.870 / noise 0.61%
+      B5:      ARI 0.856 / noise 0.96%
+      ΔARI 0.014 (multi-seed std 만큼!)
+   = paper N2 (multi-seed honesty) 강한 evidence
+```
+
+### paper contribution 갱신: N1-N5 → N1-N6
+
+```
+N1 NeCo (Pariza 2024) — wafer first      ← reframe: isolated ≈ 0, combined 효과만
+N2 Multi-seed honesty                     ← B5 reproduce variance 강화
+N3 HDBSCAN eom + ms=3 tuning              ← encoder 무관 (paper N3)
+N4 NeCo mechanism reinterpretation        ← Normal-defect boundary repulsion
+N5 6-axis saturation point                ← iter 50-58 sweep
+★ N6 (NEW) Component Interaction Matters  ← Real Baseline B0-B5 isolation
+```
+
+상세: `RESULTS.md` 표 13, `ABLATION_PLAN.md`, `DISCUSSION.md` §7.9, `ITERATIONS.md` iter 60-65.
+
+---
+
 ## 1. 프로젝트 한 줄 설명
 
 > **반도체 wafer 사진 수천 장을 컴퓨터에게 "비슷한 것끼리 묶어라" 시키는 시스템.**
