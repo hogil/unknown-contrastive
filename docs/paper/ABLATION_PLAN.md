@@ -83,9 +83,83 @@ python _dispatch_iter.py --tag iter_60_B0_real_baseline \
 | **B0** | Global only | **1.000** | 6.195% | 0.9602 | 0.929* | 0.9290 | 0.949* | 0.8231 | 0.582* | 37 |
 | B1 | + Local LW=0.5 | 1.000 | 3.927% | 0.9665 | 0.9351 | 0.9387 | 0.9505 | 0.8514 | 0.5139 | 37 |
 | B2 | LW=1.0 | 1.000 | 6.195% | 0.9602 | 0.9257 | 0.9290 | 0.9427 | 0.8231 | 0.5089 | 37 |
+| **iter 67** ★ | **B2 + NeCo (no Queue)** | **1.000** | **3.93%** | **0.9659** | n/a | **0.9390** | n/a | **0.8508** | n/a | n/a |
 | B3 | + Queue | 1.000 | 1.309% | 0.9828 | 0.9365 | 0.9496 | 0.9591 | 0.8464 | 0.5727 | 36 |
 | **B4** ★ | + NEG=0.72 | 1.000 | **0.524%** | **0.9852** | 0.9439 | 0.9557 | 0.9641 | **0.8605** | 0.6109 | 37 |
 | B5 | + NeCo (=iter 37) | 1.000 | 0.960% | 0.9801 | 0.9403 | 0.9503 | 0.9598 | 0.8564 | 0.6104 | 37 |
+
+### ★ iter 67 — N6 Component Interaction 강화 evidence
+
+iter 67 (B2 + NeCo, no Queue) 가 B3 (Queue, no NeCo) 를 ARI 에서 outperform:
+- iter 67 ARI **0.8508** > B3 ARI 0.8464
+- iter 67 noise **3.93%** > B3 noise 1.31% (Queue 의 noise 감소 효과는 NeCo 가 부분만 대체)
+- = **NeCo 와 Queue 는 부분 substitutes (interchangeable)** — neighbor consistency 가 queue 의 large negative pool 일부 대체 가능
+- 그러나 **noise reduction** 측면에서는 Queue 가 NeCo 보다 우위 (1.31% < 3.93%)
+- ARI 측면에서는 NeCo 단독 (no Queue) 이 Queue 단독 (no NeCo) 보다 약간 우위
+
+→ paper N6 (Component Interaction) 의 **두 번째 evidence**: components 가 monotonic 추가가 아니라 partial substitution + interaction
+
+### ★★★ iter 68 — N6 세 번째 evidence (가장 강한)
+
+iter 68 (B3 + NeCo, no NEG) ARI **0.8464** = **exact B3 reproduce** (0.8464). NeCo Queue-redundant 결정적:
+
+| cfg | NeCo Δ ARI |
+|---|---:|
+| B2 → +NeCo (iter 67, no Queue) | **+0.028** |
+| B3 → +NeCo (iter 68, Queue) | **+0.000** ← exact zero |
+| B4 → +NeCo (B5, Queue+NEG) | **-0.004** |
+
+→ **NeCo 효과 monotonic decay** as negative-handling components added.
+→ NeCo 의 mechanism = Queue 의 negative diversity 부분 대체. Queue 가 present 면 NeCo redundant, Queue+NEG 면 slightly harmful.
+
+**paper N1 (NeCo) 의 진짜 contribution** 재정의:
+- NeCo standalone value = **0** (Queue 가 있으면 흡수)
+- NeCo's role = **Queue 가 없을 때 substitute** (B2 → iter 67 +0.028)
+- paper 의 NeCo claim 은 "implicit Queue substitute" 로 honest reframe
+
+### ★★★★ iter 69 — NeCo ≡ Local DenseCL (paper-grade 발견)
+
+iter 69 (B0 + NeCo only) **ARI 0.8514 = B1 (B0 + Local LW=0.5) 0.8514** 정확히 동일 (4자리, noise 3.93% 동일, n_cl 37 동일).
+
+→ **NeCo (Pariza 2024) ≡ DenseCL Local InfoNCE (Wang 2021)** functionally equivalent.
+   서로 다른 implementation, **identical magnitude (+0.028 ARI standalone)**.
+
+| Component class | members | 효과 |
+|---|---|---|
+| Global InfoNCE | global view-level contrast | baseline |
+| **patch-neighbor consistency** | **{Local DenseCL, NeCo}** — substitutes | **+0.028** |
+| negative diversity | MoCo Queue | +0.023 (LW=1.0 interaction) |
+| false-negative protection | NV-Retriever NEG filter | +0.014 |
+
+paper Methods 재구성:
+- baseline 의 patch-neighbor 는 **둘 중 하나만 충분**.
+- 둘 다 사용 = no gain (iter 67 = iter 69 = 0.8514).
+- 우리 paper N1 (NeCo) 의 진짜 novelty 는 "implementation alternative to DenseCL with equivalent effect".
+
+### ★★★★★ iter 70 — NEW SOTA ARI 0.8797 (NeCo replaces Local entirely)
+
+iter 70 (Global + NeCo + Queue + NEG, **no Local**) = ARI **0.8797**, Comp 0.9872, noise 0.87%, Sil 0.7860.
+
+**B0-B5 추가** (B6 신설):
+
+| # | cfg | ARI | noise | Δ vs prev |
+|:-:|---|---:|---:|---:|
+| B0 | Global only | 0.8230 | 6.20% | (base) |
+| B1 | + Local LW=0.5 | 0.8514 | 3.93% | +0.028 |
+| B2 | LW=1.0 | 0.8231 | 6.20% | -0.028 |
+| B3 | + Queue | 0.8464 | 1.31% | +0.023 |
+| B4 | + NEG=0.72 | 0.8605 | 0.52% | +0.014 |
+| B5 | + NeCo (=iter 37) | 0.8564 | 0.96% | -0.004 |
+| **B6** ★ NEW | **B4 - Local + NeCo** | **0.8797** | **0.87%** | **+0.019** |
+
+**B6 cfg**: Global + NeCo + Queue + NEG (Local 완전 제거).
+
+### paper N1 (NeCo) 최종 contribution (post-iter 70)
+
+NeCo 는 **strictly superior substitute** for DenseCL Local InfoNCE.
+- Local 대신 NeCo 사용 → ARI +0.019, noise +0.35pp (margin within Sil 0.79 floor)
+- Local 과 NeCo 동시 사용 → redundancy + slight interference (B5 < B4)
+- **paper recommendation**: deprecate Local, use NeCo + Queue + NEG only.
 
 \* Hom/NMI/Sil 은 B0 별도 reporting (sklearn 직접 계산).
 
@@ -167,3 +241,56 @@ GPU 자원: chip_multilabel 와 공존 가능 (batch=8 image=384 = ~6GB)
 ✓ "결과 폴더 절대 삭제 금지" — 기존 iter 37 등 보존
 ✓ 학습 dispatch — chip_multilabel 공존 가능 (small batch)
 ```
+
+---
+
+## ★ Roadmap Step 1 (eval-only) — ★ COMPLETED 2026-05-13
+
+Plan reference: `C:\Users\hgcho\.claude\plans\floating-splashing-key.md` Roadmap Step 1.
+Single source-of-truth: `docs/paper/manager_report/step1_eval_only_summary_260513.md`.
+
+**Protocol**: eval-only (no encoder retraining). Same NEW recipe 3-seed runs
+(iter 70/71/72), defect-only Tier1 HDBSCAN (eom mcs=12 ms=3). Three orthogonal
+post-hoc refinements.
+
+### Step 1 results matrix (P1 capture = 1.000 across all steps)
+
+| Step | Method | ARI avg ± std | noise % | RankMe | Verdict |
+|:-:|---|---:|---:|---:|---|
+| 0 (baseline) | NEW (Global+NeCo+Queue+NEG, 3-seed) | 0.8731 ± 0.0140 | 1.48 | **23.44 ± 1.80** | reference |
+| **1a** | + RankMe representation column | 0.8731 ± 0.0140 | 1.48 | 23.44 ± 1.80 | ✓ paper N10 — NEW CV 7.7 % vs B5 22.6 % (64 % more stable); ρ(RankMe, ARI) = −0.429 → stability column, NOT ARI arbiter |
+| **1b** | + HDBSCAN ε sweep × 7 values | 0.8731 ± 0.0140 | 1.48 | — | ✓ paper N9 reinforcement — **zero effect across 21 cells**, ε deprecated for NEW |
+| **1c τ = 0.9** | + soft KNN-softmax τ-reassign | 0.8709 ± 0.0132 | 0.49 | — | ✓ paper N9 ext. — noise −67 %, ARI −0.0022 |
+| **1c τ = 0.7** | + soft τ-reassign | 0.8696 ± **0.0123** | 0.15 | — | ✓ best std (12 % improvement), noise −90 %, ARI −0.0035 |
+| **1c τ = 0.5** | + soft τ-reassign | 0.8681 ± 0.0125 | **0.00** ★★ | — | ✓✓ production cfg lock — **0 % noise**, ARI −0.0050 (well within seed std) |
+
+### Paper claims locked-in by Step 1
+
+| # | claim | location |
+|:-:|---|---|
+| N9 reinforcement | "HDBSCAN ε parameter is redundant on NEW embedding — cluster tree determined by (method, mcs, ms) triple alone" | RESULTS §19.2, METHOD §4c |
+| N9 extension | "Soft KNN-softmax noise reassignment achieves 0 % noise rate at marginal ARI cost (Δ = −0.005), production-deployable" | RESULTS §19.3, METHOD §4c |
+| N10 | "RankMe (Garrido et al. 2023) is informative for cross-seed stability (NEW std 1.80 vs B5 std 4.99 → 64 % more stable), NOT for ARI ranking (ρ = −0.429)" | RESULTS §19.1 |
+
+### Next step gating
+
+| outcome | next-step status |
+|---|---|
+| Step 1a — RankMe stability column locked | Reported in paper §19, N10 contribution |
+| Step 1b — ε zero-effect (21 cells) | Epsilon deprecated; locked into production cfg |
+| Step 1c — τ = 0.5 noise 0 % | **Production cfg lock**: τ = 0.5 KNN-softmax reassign for every-wafer labeling |
+| Step 2 (EMA target encoder) | requires training dispatch — pending user approval |
+
+### Source files (Step 1)
+
+- `_step1b_hdbscan_eps_sweep.json` (21-cell raw)
+- `_step1c_soft_tau_reassign.json` (12-cell raw)
+- `step1_eval_only_summary_260513.md` (source-of-truth)
+- `step1_paper_addition_260513.md` (this completion record's edit summary)
+
+### Affected paper sections
+
+- RESULTS.md §19 (NEW section "Step-by-step performance improvement, Step 1 eval-only")
+- METHOD.md §4c (NEW subsection "Post-process refinement — soft τ-reassignment")
+- ITERATIONS.md iter 86 entry (append-only)
+- ABLATION_PLAN.md this section (completion record)

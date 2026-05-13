@@ -1,0 +1,35 @@
+{
+  "dataset": "WM-811K_cca",
+  "n_total": 1779,
+  "n_classes": 8,
+  "classes": [
+    "Center",
+    "Donut",
+    "Edge-Loc",
+    "Edge-Ring",
+    "Loc",
+    "Near-full",
+    "Random",
+    "Scratch"
+  ],
+  "per_class_count": {
+    "Center": 290,
+    "Donut": 47,
+    "Edge-Loc": 382,
+    "Edge-Ring": 609,
+    "Loc": 279,
+    "Near-full": 9,
+    "Random": 75,
+    "Scratch": 88
+  },
+  "p1_capture": 1.0,
+  "p2_noise_pct": 55.98650927487352,
+  "p3_completeness": 0.3832839140961599,
+  "p4_homogeneity": 0.814363153444538,
+  "ari": 0.23753990172659797,
+  "ami": 0.4999179057635196,
+  "sil": 0.5398648977279663,
+  "n_clusters": 23,
+  "ich_wm1k_hom_baseline": 0.9,
+  "ckpt": "D:/project/unknown-contrastive/outputs_contrastive_260512_001719/checkpoints/final_infer.pt"
+}

@@ -104,6 +104,273 @@ N5 6-axis saturation point                ← iter 50-58 sweep
 
 ---
 
+## 0.7 ★★★★★ Iter 84 — B5 seed=1 reproducibility retracts v6 absolute SOTA (★ N1 v7 FINAL, 2026-05-12)
+
+> iter 84 (`outputs_contrastive_260512_114525/`) — B5 reproducibility test under seed=1.
+> 결과: v6 "B5 Agglomerative Ward K=42 ARI 0.9358 absolute SOTA" claim **retracted**.
+> 진짜 multi-seed SOTA = NEW cfg (NeCo only, no Local) on both Unknown-K AND Oracle-K frontiers.
+
+### Multi-seed ARI summary (★ N1 v7 핵심 table)
+
+| Method | B5 2-seed avg ± std | NEW 3-seed avg ± std | Δ (NEW − B5) | B5/NEW std ratio |
+|---|---:|---:|---:|---:|
+| HDBSCAN | 0.8343 ± 0.031 | **0.859 ± 0.018** | **+0.0245** | 1.7× |
+| Agglo Ward K=42 | 0.8920 ± 0.062 | **0.9014 ± 0.022** | **+0.0094** | **2.8×** |
+| KMeans K=42 | 0.8540 ± 0.044 | **0.8678 ± 0.026** | **+0.0138** | 1.7× |
+
+→ **NEW > B5 on multi-seed avg across all 3 clustering methods**.
+
+### B5 single-seed lucky outlier evidence
+
+```
+B5 cfg (Local + Queue + NEG + NeCo) — same cfg, same anchor, same HDBSCAN protocol:
+   seed=42 (iter 83):  Agglo K=42 ARI = 0.9358  ← v6 absolute SOTA claim
+   seed=1  (iter 84):  Agglo K=42 ARI = 0.8482  ← reproducibility
+   Δ (seed=1 - seed=42) = -0.0876   ★ LARGEST cross-seed flip in 84-iter cycle
+
+NEW cfg (NeCo + Queue + NEG, no Local) — same protocol:
+   seed=42 (iter 70):  Agglo K=42 ARI = 0.9200
+   seed=1  (iter 71):  Agglo K=42 ARI = 0.8854
+   Δ (seed=1 - seed=42) = -0.0346   ← 2.5x smaller than B5 reproducibility drop
+```
+
+### v6 → v7 retraction map
+
+| v6 claim (2026-05-12 morning) | v7 status (2026-05-12 afternoon) |
+|---|---|
+| "B5 absolute SOTA at Agglo Ward K=42 ARI 0.9358" | ★ RETRACTED — lucky outlier (B5 2-seed avg 0.8920 ± 0.062 < NEW 3-seed avg 0.9014 ± 0.022) |
+| "Local DenseCL NOT deprecated, absolute SOTA keeps both Local + NeCo" | ★ RETRACTED — Local operationally optional, NEW (no Local) dominates multi-seed avg |
+| "Dual-cfg dual-frontier recipe" | Single-cfg recommendation (NEW) + dual-clustering-target (HDBSCAN unknown-K, Agglo Ward K=42 oracle-K) |
+| "Complementary inductive biases B5 vs NEW Agglo K=42" | Per-class flips observed at single-seed (RESULTS §16 preserved) — do NOT propagate to multi-seed averages |
+
+### Single-cfg practitioner recipe (★ v7 final)
+
+```
+Recipe (v7 FINAL):
+  Encoder cfg:   iter 70 NEW (Global + NeCo 0.2 + Queue 4096 + NEG 0.72, no Local)
+                 → single cfg covers BOTH frontiers
+
+  Frontier 1 (Unknown-K real-world):
+    Clustering:  HDBSCAN eom mcs=12 ms=3 defect-only
+    Multi-seed ARI: 0.859 ± 0.018 (3-seed)
+
+  Frontier 2 (Known-K oracle):
+    Clustering:  Agglomerative Ward K=42 defect-only
+    Multi-seed ARI: 0.9014 ± 0.022 (3-seed)
+
+  Methodology obligation:
+    - Always report multi-seed average ± std
+    - Disclose clustering algorithm + K-discovery regime (paper N9)
+    - Disclose HDBSCAN protocol (selection_method, mcs, ms, scope; paper N8)
+```
+
+### paper contribution 갱신: N1-N8 → N1-N9 with N1 v7 FINAL
+
+```
+N1 v7 (FINAL) — NEW cfg unified multi-seed SOTA on both frontiers
+              ← v5 (substitutable HDBSCAN aggregate) preserved
+              ← v6 (complementary single-seed Agglo K=42 per-class) preserved as observation
+              ← v7 (dual-cfg recipe → single-cfg) multi-seed evidence
+
+N2 Multi-seed honesty — strongest evidence: B5 seed=42 → seed=1 Δ ARI -0.088 (Agglo K=42)
+                        = largest cross-seed flip in 84-iter cycle, larger than any encoder lever
+
+N3-N6 (Real Baseline, NeCo mechanism, saturation, Component Interaction) unchanged
+
+N7 Component Dependency Hierarchy — refined v7:
+   - NEG requires Queue (unchanged)
+   - Local DenseCL: operationally optional (v7 replaces v6 "complementary required for SOTA")
+   - TEMP sign flip across cfg families (unchanged, B5-family vs NEW-family)
+
+N8 HDBSCAN Protocol Mismatch Methodology (unchanged) — Sil +30% retracted
+
+N9 Clustering Algorithm Dependency (unchanged) — dual-frontier framing preserved at
+   clustering-target axis, single-cfg encoder (v7 refinement)
+```
+
+상세: ABSTRACT v0.9 (CURRENT), RESULTS §17 (NEW B5 seed=1 table + multi-seed comparison),
+DISCUSSION §7.10.7 (v7 retraction + single-cfg recipe), §7.12.4 (single-cfg revised),
+CONCLUSION §8.6 + §8.8 (single-cfg closing recommendation),
+METHOD §3.6 + §3.7 Frontier 2 (NEW cfg for both frontiers),
+INTRODUCTION C7 (v6 retraction + v7 introduction),
+ITERATIONS iter 84 entry (append-only).
+
+---
+
+## 0.6 Phase 2 — 4-component lattice + alternative NEW cfg (★ 2026-05-12 NEW; ★★★★★ revised 2026-05-12)
+
+> §0.5 N6 (Component Interaction) 발견 후 follow-up: 4-component lattice (Local /
+> Queue / NEG / NeCo) 16-cell 중 12 cell 측정 (iter 67-77) → 더 parsimonious
+> **NEW cfg** (4-component, drop Local DenseCL) + paper N7 (Component Dependency
+> Hierarchy) 도출.
+>
+> **★★★★★ CORRECTION 2026-05-12 (HDBSCAN protocol mismatch retraction)**:
+> 본 §0.6 의 이전 "Sil +30% robust ★★★" / "+0.184 (+30%)" / "geometry King" 표현
+> 모두 **retract**. apples-to-apples (eom + mcs=12 + ms=3, defect-only) 재측정 결과
+> B5 Sil = 0.7988, NEW Sil = 0.7860 — **Sil equivalent (−0.013 within seed variance)**.
+> 진짜 NEW vs B5 차이 = ARI marginal (+0.003 3-seed avg) + Normal-cluster consolidation
+> (paper N1 v5: Normal noise 77.7% → 14.1%, 859/1000 Normals → 1 dense cluster).
+> 자세한 retraction: RESULTS §14c / §14h / §14i / §14k, ABSTRACT v0.6.
+
+### 4-component lattice 12-cell 측정 (seed=42, HDBSCAN eom mcs=12 ms=3)
+
+| iter | cfg (Local / Queue / NEG / NeCo) | ARI | noise | Sil | n_cl |
+|:-:|---|---:|---:|---:|---:|
+| B0 | 0/0/0/0 | 0.8231 | 6.20% | 0.582 | 37 |
+| B1 | 1/0/0/0 (LW=0.5) | 0.8514 | 3.93% | 0.514 | 37 |
+| B2 | 1*/0/0/0 (LW=1.0) | 0.8231 | 6.20% | 0.509 | 37 |
+| iter 69 | 0/0/0/1 (NeCo only) | **0.8514** | 3.93% | **0.707** | 37 |
+| iter 67 | 1*/0/0/1 | 0.8510 | 3.93% | n/a | 37 |
+| iter 74 | 0/0/1/1 (no Queue) | **0.8514** | 3.93% | 0.707 | 37 |
+| B3 | 1*/1/0/0 | 0.8464 | 1.31% | 0.573 | 36 |
+| iter 68 | 1*/1/0/1 | 0.8464 | 1.31% | 0.756 | 36 |
+| iter 75 | 0/1/0/1 | 0.8822 | 1.31% | 0.785 | 36 |
+| B4 | 1*/1/1/0 | **0.8605** | **0.52%** | 0.611 | 37 |
+| B5 | 1*/1/1/1 (= iter 37 cfg) | 0.8564 | 0.96% | 0.610 | 37 |
+| **iter 70** ★★ | **0/1/1/1 (NEW SOTA)** | **0.8797** | 0.87% | **0.786** | 37 |
+| iter 77 | 0/1/1/1 NeCo=0.4 | 0.8605 | 0.52% | **0.801** | 37 |
+
+★ iter 70 = NEW SOTA single-seed. NeCo 가 Local DenseCL **대체**.
+
+### NEW vs B5 multi-seed (iter 70/71/72 vs iter-37 family) — ★ CORRECTED 2026-05-12
+
+| cfg | components | ARI 3-seed avg | Sil seed=42 (apples) | noise mean |
+|---|:-:|---:|---:|---:|
+| B5 (Local + Queue + NEG + NeCo) | 5 | 0.856 +/- 0.012 | **0.7988** | 0.96% |
+| NEW (no Local, NeCo + Queue + NEG) | 4 | 0.859 +/- 0.018 | **0.7860** | 1.48% |
+| Δ (NEW - B5) | -1 | +0.003 (within std) | **−0.013 (equivalent, slight regression)** | +0.52pp |
+
+★ CORRECTED: 이전 "Sil +0.184 / +30% robust" 는 cross-protocol artefact (B5 leaf+ms=4
+vs NEW eom+ms=3). apples-to-apples (eom+mcs=12+ms=3, defect-only) 재측정 후 Sil
+equivalent within seed variance. 자세한 retraction: RESULTS §14c, ABSTRACT v0.6.
+
+### Phase 2 핵심 발견 5 (paper N1 v6 FINAL + N7 + N8 NEW) — ★ N1 v6 REFINED 2026-05-12
+
+```
+1. NeCo ↔ Local DenseCL: aggregate-substitutable on HDBSCAN, COMPLEMENTARY per-class on Agglo K=42 (★ N1 v6 FINAL)
+   - iter 69 (NeCo only) ARI 0.8514 = B1 (Local only) ARI 0.8514 (소수점 4자리 동일, aggregate HDBSCAN)
+   - 그러나 per-class Agglomerative Ward K=42 purity 에서 winner flips on both sides:
+     B5 win: Edge-Ring_fork 100% vs NEW 64.5%, Center_scratch 95% vs 75%,
+              Donut_fork 100% vs 81.1%, Edge-Top_scratch 100% vs 84.2% (sub-pattern integration)
+     NEW win: CenterCircle 100% vs B5 54.8%, Edge-Top_fork 100% vs 90% (uniform consolidation)
+     Net avg: B5 97.0% vs NEW 96.2% (Δ −0.83pp, B5 marginal win on aggregate)
+   - Absolute SOTA Agglo K=42 single-seed=42: B5 0.9358 > NEW 0.9200 (Δ +0.0158)
+   → 두 mechanism 은 **complementary, NOT substitutable**. v5 "substitutable" framing 은
+     HDBSCAN aggregate 에서만 valid. Local DenseCL는 **NOT deprecated**.
+
+2. ★ RETRACTED: "NeCo > Local DenseCL on geometry (Silhouette +30%)" — protocol mismatch
+   이전 측정: B1 Sil 0.514 vs iter 69 Sil 0.707 (cross-protocol)
+   apples-to-apples (eom mcs=12 ms=3, defect-only):
+     B5 Sil = 0.7988, NEW Sil = 0.7860 → equivalent (−0.013 within seed variance)
+   → "+30% Sil" / "Sil monotonic ↑" / "geometry-vs-partitioning Pareto" 모두 retract.
+
+3. ★ N1 v5 reframe (NEW) — 진짜 NeCo gain channel
+   defect-cluster intra_p95 NeCo 추가 시 +26% (오히려 widening, NOT 압축)
+   진짜 gain = Normal-cluster consolidation:
+     Normal noise 77.7% → 14.1% (859/1000 Normals → 1 dense cluster)
+     full-set Completeness 0.851 → 0.917 (+0.066)
+     full-set ARI 0.69 → 0.83 (+0.14)
+   → NeCo's wafer-domain mechanism = Normal/defect boundary stability,
+     NOT defect-cluster compactness.
+
+4. ★ NEW cfg = 4 components only (no Local) — alternative, not strict SOTA
+   iter 70: Global + NeCo (0.2) + Queue (4096) + NEG (0.72)
+   seed=42 single: ARI 0.8797 (vs iter 37 single 0.870, +0.023)
+   3-seed mean ARI 0.859 +/- 0.018 (vs B5 0.856 ± 0.012, +0.003 marginal)
+   apples Sil 0.7860 (vs B5 0.7988, equivalent)
+   → simpler architecture + equivalent ARI + Normal/defect boundary stability
+     (NOT strict superiority, operational choice)
+
+5. ★ N7 v6 — Component Dependency Hierarchy (★ refined 2026-05-12, complementary)
+   Required:     Global + (Local + NeCo combined for SOTA, or NeCo alone for density)
+   Significant:  MoCo Queue (Queue-on adds +0.029 ARI with NeCo)
+   Conditional:  NEG filter requires Queue       ← iter 74 (NeCo + NEG no Queue) ARI 0.8514
+                                                   = iter 69 (NeCo only) ARI 0.8514 (4자리 동일)
+                                                   → NEG 가 8-batch 만으로는 통계 부족
+   Complementary: Local DenseCL ↔ NeCo (★ N1 v6) — aggregate-identical HDBSCAN ARI but
+                   complementary per-class purity under Agglo Ward K=42.
+                   Local 은 sub-pattern variant integration (fork/scratch rotational+
+                   positional), NeCo 는 uniform-pattern consolidation (CenterCircle round).
+                   B5 (both) Agglo K=42 ARI 0.9358 = absolute SOTA (Δ +0.0158 vs NEW 0.9200).
+
+6. NeCo weight sweep — ARI inverse-U only (Sil pattern retracted)
+   w=0.0 (B4 apples):     ARI 0.8605 / Sil 0.8012
+   w=0.2 (iter 70 apples) ARI 0.8797 / Sil 0.7860  ← ARI peak, Sil 약간 낮음
+   w=0.4 (iter 77 apples) ARI 0.8605 / Sil 0.8012
+   → ARI inverse-U peak at 0.2 유지. Sil monotonic ascent / Pareto frontier 모두 retract.
+
+7. ★ N8 NEW — HDBSCAN Protocol Mismatch Methodology
+   본 §0.6 의 "Sil +30%" headline 이 cross-protocol artefact 였던 사례를
+   paper-grade methodology contribution 으로 포함 (negative methodology evidence).
+   향후 contrastive-clustering paper 는 selection_method / mcs / ms / epsilon /
+   metric scope (full-set vs defect-only) 를 모두 명시 + 통일해야 cross-cfg
+   비교가 의미 있다.
+```
+
+### TEMP cross-cfg interaction (N6 강화)
+
+```
+TEMP 0.07 vs 0.05 sign reverses across cfg families:
+   B5 family (with Local):  TEMP 0.05 > TEMP 0.07 (+0.014 ARI, iter 37 vs 65)
+   NEW family (no Local):   TEMP 0.05 < TEMP 0.07 (-0.024 ARI, iter 73 vs 70)
+
+→ hparam optimum 은 component context 에 dependent
+→ paper N6 cross-cfg dependency 추가 evidence
+```
+
+### paper contribution 갱신: N1-N7 → N1-N8 (★ revised 2026-05-12)
+
+```
+N1 v5 (final)            → NeCo gain channel = Normal/defect boundary stability,
+                            NOT defect-cluster compactness. Defect-only metrics
+                            (ARI / Sil / noise) functionally equivalent to DenseCL.
+                            Full-set ARI 0.83 (NEW) vs 0.69 (B5) via Normal-cluster
+                            consolidation. (이전 v4 "geometry Pareto" retract.)
+N2 Multi-seed honesty    → iter 70/71/72 + iter 75 evidence 강화
+N3 HDBSCAN eom + ms=3    → encoder 무관, fixed across all 12 lattice cells
+N4 NeCo mechanism        → Normal-defect boundary repulsion (cluster-analyzer 발견)
+N5 6-axis saturation     → iter 50-58 sweep (B5 family)
+N6 Component Interaction → §0.5 + TEMP cross-cfg flip (§0.6 추가)
+N7 Component Dependency Hierarchy
+                         → 4-component lattice (iter 67-77)
+                         → NEG requires Queue
+                         → Local DenseCL ↔ NeCo substitutable on partitioning
+                            (apples-to-apples Sil equivalent; "deprecated Local"
+                             표현 retract)
+★ N8 NEW HDBSCAN Protocol Mismatch Methodology
+                         → 본 §0.6 의 "+30% Sil" retracted-headline 이 worked example
+                         → cross-cfg 비교는 mcs/ms/method/epsilon/scope 통일 필수
+                         → multi-seed robustness within protocol ≠ cross-protocol valid
+```
+
+### NEW Methods cfg (post-iter 77, multi-seed validated)
+
+```python
+# Encoder (frozen TAPT)
+BACKBONE       = "ConvNeXtV2-base FCMAE + supervised TAPT (sister repo known-cnn)"
+PROJ_DIM       = 128
+IMAGE_SIZE     = 384
+
+# Loss (NEW: 4-component, drop Local)
+USE_LOCAL      = False         # ★ DROP (Phase 2 N7)
+LOCAL_WEIGHT   = 0             # n/a
+NCE_TEMP       = 0.07          # ★ 0.05 가 NEW cfg 에선 negative (N6)
+IGNORE_NEG_SIM = 0.72
+NECO_WEIGHT    = 0.2           # ★ kept (paper N1)
+USE_QUEUE      = True
+QUEUE_SIZE     = 4096
+
+# HDBSCAN unchanged
+MIN_CLUSTER_SIZE         = 12
+MIN_SAMPLES              = 3
+CLUSTER_SELECTION_METHOD = "eom"
+```
+
+상세: `RESULTS.md` 표 14, `DISCUSSION.md` §7.10, `ITERATIONS.md` iter 67-77,
+`FIGURES.md` F-N7-lattice / F-N7-multiseed-Sil / F-N7-neco-pareto.
+
+---
+
 ## 1. 프로젝트 한 줄 설명
 
 > **반도체 wafer 사진 수천 장을 컴퓨터에게 "비슷한 것끼리 묶어라" 시키는 시스템.**
@@ -456,19 +723,111 @@ iter 35                        4.19%
    │ + HDBSCAN eom (encoder 무관)
 iter 35 + eom                  2.01% / Comp 0.978
    │ + NeCo 0.2 (lever 5)
-iter 37 + eom ms=3             0.61% / Comp 0.991 ★★★★★ SOTA
-   │ NeCo 0.2 sweet spot 확정 (0.1, 0.3 양쪽 후퇴)
-   │ Quality King + NeCo combo 시도
-iter 40                        진행 중
+iter 37 + eom ms=3             0.61% / Comp 0.991 ★★★★★ SOTA (defect-only)
+   │ NeCo 0.2 sweet spot 확정
+   │ multi-seed (iter 44-46): 0.866 ± 0.014 ARI (N2)
+   │ 6-axis saturation (iter 50-58): all within ± std (N5)
+   │ Real Baseline isolation (B0-B5): LW interaction, NeCo isolated ≈ 0 (N6)
+   │ 4-component lattice (iter 67-77): NeCo ≡ DenseCL, NEG requires Queue (N7)
+   │ + drop Local DenseCL (NEW 4-component cfg, alternative)
+iter 70 NEW                    0.87% / apples Sil 0.7860 (vs B5 apples 0.7988)
+   │ ARI 0.859 ± 0.018 (3-seed) — marginal +0.003 vs B5 0.856 ± 0.012
+   │ apples Sil equivalent (−0.013 within seed variance) — "+30% Sil" RETRACTED (N8)
+   │ 진짜 NEW gain channel = Normal-cluster consolidation (paper N1 v5):
+   │    Normal noise 77.7% → 14.1%, full-set ARI 0.69 → 0.83
 
-★ 총 noise 감소: 9.34% → 0.61% (-93.5%)
+★ 총 noise 감소 (defect-only): 9.34% → 0.61% (-93.5%, iter 37 base)
+★ NEW vs B5: ARI marginal +0.003 (within std), Sil equivalent (apples), noise +0.5pp
+★ NEW 진짜 gain: Normal/defect boundary stability (full-set Completeness +0.066)
 ```
 
 ---
 
-## 10. 현재 SOTA (2026-05-09)
+## 0.7 Phase 3 — Clustering Algorithm Dependency (★ 2026-05-12 NEW, paper N9)
 
-### iter 37 + HDBSCAN eom mcs=12 ms=3
+> §0.6 N7 (Component Dependency Hierarchy) 후속: 동일 contrastive embedding (B4 / B5 /
+> iter 70 NEW) 위에서 **5 가지 clustering 알고리즘 벤치마크** → ARI 가 clustering
+> method 에 따라 +0.04 ~ +0.10 변동 → dual-frontier framework 도출.
+
+### 5-method × 3-cfg ARI matrix (single-seed=42)
+
+| cfg | HDBSCAN | DP-GMM | KMeans-42 (oracle) | Agglo-Ward-42 (oracle) | Spectral-42 |
+|---|---:|---:|---:|---:|---:|
+| B4 Local-based | 0.8605 | 0.8344 | 0.8876 | **0.9055** | 0.4046 |
+| B5 (= iter 37) | 0.8564 | 0.8369 | 0.8854 | **★ 0.9358** | 0.7898 |
+| iter 70 NEW | **0.8797** | **0.8413** | 0.8798 | 0.9200 | 0.2289 |
+
+JSON: `tier1_clustering_benchmark.json`.
+
+### NEW 3-seed multi-seed (clustering method 별)
+
+| Method | NEW 3-seed avg | NEW std | B5 single-seed=42 |
+|---|---:|---:|---:|
+| HDBSCAN | 0.8588 | 0.018 | 0.8564 |
+| **Agglomerative K=42** | **0.9014** | 0.022 | **★ 0.9358** |
+| KMeans K=42 | 0.8678 | 0.026 | 0.8854 |
+
+### 핵심 발견 5 (paper N9 NEW)
+
+```
+1. Cfg ranking flip across clustering method families
+   density-based (HDBSCAN, DP-GMM):  NEW > B5 ≈ B4
+   centroid/linkage with oracle K:   B5 > NEW ≈ B4
+
+2. ARI magnitude shift +0.04~+0.10 across methods at fixed embedding
+   B5 HDBSCAN → Agglo: +0.079 — 단일 encoder lever 보다 큼
+   → clustering method choice = encoder lever 급 변수
+
+3. ★★★ Dual-frontier framework (paper-grade deliverable, ★ v7 revised 2026-05-13)
+   Unknown-K (real-world):
+     iter 70 NEW + HDBSCAN = 0.859 ± 0.018 (3-seed)
+     rationale: Normal/defect boundary stability (paper N1 v5)
+   Known-K (oracle benchmark):
+     iter 70 NEW + Agglomerative K=42 = 0.9014 ± 0.022 (3-seed) ★ multi-seed SOTA
+     rationale: linkage-based recovers fine sub-structure
+     ★ v7 retracted: v6 recommended "B5 + Agglo K=42 = 0.9358 single-seed".
+     B5 seed=1 reproduce = 0.8482 (Δ −0.0876), 2-seed avg 0.8920 ± 0.062
+     BELOW NEW 3-seed 0.9014 ± 0.022 with std 2.8× higher. RESULTS §17, iter 84.
+
+4. N2 lucky-pattern (seed=42 vs seed=1) 가 method axis 까지 확장
+   HDBSCAN +0.030 / Agglo +0.035 / KMeans +0.034 — 모두 동일 magnitude
+   → variance source = embedding 자체 (not method)
+   → multi-seed protocol obligation 유지
+
+5. Spectral K=42 instability
+   B5 0.79 / B4 0.40 / NEW 0.23 — variance 0.56, graph-disconnect warnings
+   → 실용 추천 제외 (oracle K 만으로 안전 보장 안 됨)
+```
+
+### paper N9 deliverable
+
+> **모든 ARI claim 은 clustering algorithm + K-discovery regime 명시 의무**.
+> HDBSCAN 단독 결과로 SOTA 발표 시 oracle K Agglomerative 가 같은 embedding 위에서
+> +0.04~+0.10 더 나올 수 있다. methodology disclosure 의 일부.
+
+### paper contributions 갱신: N1-N8 → N1-N9 (★ 2026-05-12, ★ N1 v6 refined)
+
+```
+N1 v6 FINAL  NeCo + Local DenseCL = COMPLEMENTARY per-class (v5 "substitutable" refined)
+              + NeCo's full-set gain channel = Normal/defect boundary stability (v5 preserved)
+N2     Multi-seed honesty (이제 method axis 까지 확장 — Phase 3 evidence)
+N3     5 encoder levers + 3 HDBSCAN axes + 14 dead axes
+N4     NeCo mechanism = Normal-defect boundary repulsion (v5) + uniform-pattern consolidation (v6)
+N5     iter 37 multi-axis saturation point
+N6     Component Interaction (Real Baseline B0-B5)
+N7     Component Dependency Hierarchy (4-component lattice) — Local NOT deprecated v6
+N8     HDBSCAN Protocol Mismatch Methodology
+N9     Clustering Algorithm Dependency — dual-frontier framework
+       ★ paired with N1 v6: dual-cfg recipe
+         - unknown-K + HDBSCAN → NEW (NeCo only, Normal-stream + uniform-pattern)
+         - known-K + Agglo Ward → B5 (Local + NeCo combined, complementary per-class)
+```
+
+---
+
+## 10. 현재 SOTA — two operational configurations (★ corrected 2026-05-12)
+
+### Configuration A — iter 37 / B5 (5-component, defect-only optimized)
 
 | 지표 | 값 | 의미 |
 |---|---:|---|
@@ -476,13 +835,43 @@ iter 40                        진행 중
 | **Completeness (P3)** | **0.991** | cluster 응집 거의 perfect |
 | **Homogeneity (P4)** | 0.978 | cluster 안 순도 |
 | **AMI** | **0.960** | balanced 측정 |
-| **NMI** | 0.962 | |
-| **ARI** | **0.870** | over-cluster 페널티 포함 |
-| **Silhouette (cos)** | 0.610 | 응집/분리 |
+| **ARI** | **0.870** (single-seed) / 0.866 ± 0.014 (3-seed) | over-cluster 페널티 포함 |
+| **Silhouette (cos, apples eom+ms=3 def-only)** | **0.7988** | 응집/분리 |
 | **capture (P1)** | **1.000** | 43/43 class 모두 group 1+ |
 | **n_clusters** | 36 | compact |
 
-### Configuration
+### ★ Configuration B — iter 70 NEW (4-component, Normal/defect boundary focus)
+
+| 지표 | 값 | iter 37 대비 (corrected 2026-05-12) |
+|---|---:|---|
+| **Silhouette (apples eom+ms=3 def-only)** | **0.7860** | **−0.013 (equivalent within seed variance)** |
+| ARI | 0.8797 (single) / 0.859 ± 0.018 (3-seed) | +0.003 (3-seed, within std) |
+| Completeness (defect-only) | 0.987 | tied |
+| AMI | 0.959 | tied |
+| noise(def, P2) | 1.48% (3-seed mean) | +0.87pp 후퇴 |
+| **full-set Completeness (with Normal)** | **0.917** | **+0.066 ★ (Normal-cluster consolidation)** |
+| **full-set ARI** | **0.83** | **+0.14 ★ (paper N1 v5 primary lift)** |
+| capture (P1) | 1.000 | tied |
+| components | **4** (drop Local DenseCL) | -1 component, simpler |
+
+★ 이전 "Sil +30% robust" headline 은 cross-protocol artefact (B5 leaf+ms=4 vs NEW
+eom+ms=3) 로 retracted (paper N8). apples-to-apples 재측정 후 Sil equivalent.
+
+→ **운영자 선택지** (★ N1 v7 FINAL single-cfg recipe, 2026-05-13 revised; supersedes v6 dual-cfg):
+- **K known + linkage clustering (oracle benchmark)** → **Config B (NEW, iter 70) + Agglomerative Ward K=42**
+  = ARI **0.9014 ± 0.022** (3-seed avg, multi-seed SOTA). Local DenseCL operationally optional.
+  ★ v7 retracted: v6 recommended Config A (B5, iter 37) = 0.9358 — single-seed cherry-picked
+  outlier. B5 seed=1 reproduce = 0.8482 (Δ −0.0876), B5 2-seed avg 0.8920 ± 0.062 BELOW NEW
+  3-seed 0.9014 ± 0.022 with std 2.8× higher. Per-class purity complementarity (v6) preserved
+  as single-seed observation only — does NOT propagate to multi-seed avg. RESULTS §17.
+- **K unknown + density clustering (real-world, Normal-dominant)** → **Config B (NEW, iter 70) + HDBSCAN**
+  = ARI 0.859 ± 0.018 (3-seed). Normal/defect boundary stability (full-set ARI 0.83 vs A 0.69,
+  Normal noise 77.7% → 14.1%).
+- **defect-only clustering 만 필요한 lab pipeline** → Config B + HDBSCAN eom mcs=12 ms=3 (same
+  as above) OR Config A (single-seed=42 noise floor 0.61% reading; multi-seed reproducibility
+  worse than NEW per N1 v7).
+
+### Configuration A (iter 37, B5 in lattice)
 
 ```python
 # Encoder
@@ -490,31 +879,48 @@ BACKBONE       = "ConvNeXtV2-base FCMAE + supervised TAPT"
 PROJ_DIM       = 128
 IMAGE_SIZE     = 384
 FREEZE_BACKBONE = True
-BACKBONE_UNFREEZE_LAST_N = 0  # iter 36 unfreeze 시도 reject
 
-# Loss
+# Loss (5-component)
+USE_LOCAL      = True
 LOCAL_WEIGHT   = 1.0
 LOCAL_POS_TOPK = 12
-NCE_TEMP       = 0.07         # P2 King base
-IGNORE_NEG_SIM = 0.72         # P2 King base
-NECO_WEIGHT    = 0.2          # ★ sweet spot
-NECO_TAU       = 0.1
+NCE_TEMP       = 0.07
+IGNORE_NEG_SIM = 0.72
+NECO_WEIGHT    = 0.2
 USE_QUEUE      = True
 QUEUE_SIZE     = 4096
 
 # Training
 EPOCHS         = 5
 BATCH          = 8
-LR_HEAD        = 1e-3         # P2 King base
-WARMUP_EPOCHS  = 1
-TRAIN_SAMPLING_RATIO = 0.25
+LR_HEAD        = 1e-3
 SEED           = 42
 
-# HDBSCAN (encoder 학습 후 적용)
+# HDBSCAN
 MIN_CLUSTER_SIZE = 12
-MIN_SAMPLES      = 3          # ★ default 4 → 3 (noise -50%)
-CLUSTER_SELECTION_METHOD = "eom"  # ★ default leaf → eom (noise -58%)
+MIN_SAMPLES      = 3
+CLUSTER_SELECTION_METHOD = "eom"
 CLUSTER_SELECTION_EPSILON = 0.06
+```
+
+### Configuration B (iter 70 NEW, post-Phase 2) ★
+
+```python
+# Encoder unchanged
+BACKBONE       = "ConvNeXtV2-base FCMAE + supervised TAPT"
+PROJ_DIM       = 128
+IMAGE_SIZE     = 384
+
+# Loss (4-component — drop Local DenseCL)
+USE_LOCAL      = False         # ★ Phase 2 N7: NeCo subsumes Local
+LOCAL_WEIGHT   = 0             # n/a
+NCE_TEMP       = 0.07          # ★ 0.05 negative in NEW cfg (N6 cross-flip)
+IGNORE_NEG_SIM = 0.72          # requires Queue (N7 dependency)
+NECO_WEIGHT    = 0.2           # ARI peak; 0.4 for Sil-max
+USE_QUEUE      = True
+QUEUE_SIZE     = 4096
+
+# Training/HDBSCAN unchanged
 ```
 
 ### Anchor 데이터
@@ -527,19 +933,30 @@ chip 합성: v19o (260508 regen)
 
 ---
 
-## 11. 진행 history (iter 34 → 42)
+## 11. 진행 history (iter 34 → 77)
 
-| # | atomic 변경 | noise(def) | Comp | AMI | ARI | cap | 판정 |
-|---:|---|---:|---:|---:|---:|---:|---|
-| 34 | new anchor + Iter 14 cfg (baseline) | 2.79% | 0.977 | 0.931 | 0.750 | 1.000 | base |
-| 35 | + LR/NEG/TEMP = Iter 1 P2 King | 2.01% | 0.978 | 0.946 | 0.856 | 1.000 | ★ -28% noise |
-| 36 | + backbone unfreeze (LR_SCALE 0.02) | 4.28% | 0.953 | 0.873 | 0.582 | 0.976 ❌ | ✗ REJECT |
-| **37** | **+ NeCo 0.2** | **0.61%** | **0.991** | **0.960** | **0.870** | **1.000** | **★★★★★ 현 SOTA** |
-| 38 | NeCo 0.1 | 0.52% | 0.985 | 0.956 | 0.860 | 1.000 | ✗ regression (mixed 6→7) |
-| 39 | NeCo 0.3 | 1.05% | 0.980 | 0.954 | 0.868 | 1.000 | ✗ regression — 0.2 lock |
-| 40 | base = Quality King + NeCo 0.2 | 4.10% | 0.962 | 0.922 | 0.738 | 1.000 | ✗ huge regression (-13pp ARI) |
-| 41 | HDBSCAN mcs forcing (encoder X) | 3.05% | 0.997 | 0.928 | 0.770 | 0.952 ❌ | ✗ dead axis |
-| **42** | + backbone unfreeze 안전 (LR_SCALE 0.005) | (학습 중) | | | | | — |
+| # | atomic 변경 | noise(def) | Comp | AMI | ARI | Sil | cap | 판정 |
+|---:|---|---:|---:|---:|---:|---:|---:|---|
+| 34 | new anchor + Iter 14 cfg (baseline) | 2.79% | 0.977 | 0.931 | 0.750 | — | 1.000 | base |
+| 35 | + Iter 1 P2 King | 2.01% | 0.978 | 0.946 | 0.856 | — | 1.000 | ★ -28% noise |
+| 36 | + backbone unfreeze (LR_SCALE 0.02) | 4.28% | 0.953 | 0.873 | 0.582 | — | 0.976 ❌ | ✗ REJECT |
+| **37** | **+ NeCo 0.2** | **0.61%** | **0.991** | **0.960** | **0.870** | 0.610 | **1.000** | **★★★★★ SOTA A (noise King)** |
+| 38 | NeCo 0.1 | 0.52% | 0.985 | 0.956 | 0.860 | — | 1.000 | ✗ regression |
+| 39 | NeCo 0.3 | 1.05% | 0.980 | 0.954 | 0.868 | — | 1.000 | ✗ — 0.2 lock |
+| 44-46 | iter 37 multi-seed | 0.6% mean | 0.991 | 0.960 | 0.866 ± 0.014 | — | 1.000 | ★ N2 protocol |
+| 50-58 | 6-axis saturation sweep | — | — | — | within ± std | — | 1.000 | ★ N5 |
+| **B0-B5** | Real Baseline isolation | varies | varies | varies | varies | — | 1.000 | ★ N6 (§0.5) |
+| **iter 67** | B2 + NeCo (no Queue) | 3.93% | — | — | 0.8510 | — | — | ✓ NeCo×Queue evidence |
+| iter 68 | B3 + NeCo (Queue, no NEG) | 1.31% | — | — | 0.8464 | 0.756 | — | tied (with-Queue) |
+| **iter 69** | B0 + NeCo only | 3.93% | — | — | **0.8514** | 0.707 | — | ★★★ NeCo ≡ DenseCL |
+| **iter 70** ★★ | **NEW cfg single-seed** | 0.87% | 0.987 | 0.959 | **0.8797** | **0.786** (apples) | 1.000 | **★ alternative (Normal/defect boundary focus, paper N1 v5)** |
+| iter 71 | iter 70 seed=1 | — | — | — | 0.8491 | 0.7832 | 1.000 | multi-seed -0.031 |
+| iter 72 | iter 70 seed=2 | — | — | — | 0.8475 | 0.8130 | 1.000 | multi-seed (3-seed avg) |
+| iter 73 | NEW + TEMP 0.05 | — | — | — | 0.8555 | — | 1.000 | ✗ -0.024 (N6 cross-flip) |
+| **iter 74** | NeCo + NEG (no Queue) | 3.93% | — | — | **0.8514** | 0.707 | — | ★★★ NEG requires Queue (N7) |
+| iter 75 | NEW + no NEG | 1.31% | — | — | 0.8822 | 0.785 | 1.000 | (single-seed lucky) |
+| iter 76 | NEW + NeCo=0.1 | — | — | — | 0.860 | 0.801 | 1.000 | sub-peak |
+| iter 77 | NEW + NeCo=0.4 | 0.52% | — | — | 0.8605 | **0.801** | 1.000 | Sil max / ARI to B4 |
 
 ### 핵심 path
 

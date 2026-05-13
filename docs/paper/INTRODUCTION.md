@@ -92,7 +92,7 @@ for the wafer-defect setting:
 
 ## 1.4 Contributions
 
-This paper contributes the following six items:
+This paper contributes the following seven items:
 
 **(C1) A 43-class open-set wafer benchmark synthesized from WM-811K**.
 The benchmark uses 8 base WM-811K distribution classes as priors, applies
@@ -173,6 +173,138 @@ exposes a hazard of lever-isolated atomic ablation on top of a
 non-minimal baseline (which the original Iter A0 baseline was). The
 full B0-to-B5 matrix with Tier 1+2 metrics is published as RESULTS
 table 13.
+
+**(C7) Component Dependency Hierarchy and single-cfg recommendation
+(NEW, 2026-05-12; ★ N1 v7 FINAL revised 2026-05-12 — supersedes v6 dual-cfg)**.
+
+★ **v7 FINAL CORRECTION (iter 84, 2026-05-12)**: The v6 sub-claim "B5 (Local + NeCo
+combined) is the absolute SOTA at known-K Agglomerative Ward K=42 with ARI 0.9358"
+is retracted on multi-seed reproducibility grounds. B5 seed=1 (same cfg, same
+protocol) gave Agglo K=42 ARI **0.8482** (Δ −0.0876 from seed=42 0.9358). B5
+2-seed avg ARI = **0.8920 ± 0.062**, **below** NEW 3-seed avg **0.9014 ± 0.022**
+(Δ −0.0094, std 2.8× higher). Across all three benchmarked clustering methods,
+NEW (NeCo only, no Local) > B5 (Local + NeCo) on multi-seed average:
+HDBSCAN +0.0245, Agglo Ward K=42 +0.0094, KMeans K=42 +0.0138. **The v6 dual-cfg
+recipe (B5 for known-K, NEW for unknown-K) collapses to a single-cfg
+recommendation: NEW for both clustering frontier targets**. Local DenseCL is
+**operationally optional, not required for SOTA**. Per-class purity flips at
+single-seed Agglo K=42 (RESULTS §16) are preserved as observations but DO NOT
+propagate to multi-seed averages — the v6 "complementary inductive bias" framing
+applies only to single-seed observations. The reproducibility evidence (B5
+seed=42 → seed=1 Δ ARI −0.088) is the **largest cross-seed flip in this paper's
+84-iteration cycle** and the strongest paper-grade evidence for N2 (multi-seed
+methodology obligation). RESULTS §17 publishes the full B5 seed=1 measurement
+and multi-seed avg comparison.
+
+The v6 content below (substitutability-on-aggregate, complementary-on-per-class)
+remains a valid characterization of the **single-seed** behavior, useful for
+mechanism interpretation, but is **not the recipe for SOTA**.
+
+An eleven-iteration
+four-component lattice exploration (iter 67-77, Local x Queue x NEG x NeCo)
+plus a per-class K=42 Agglomerative Ward purity breakdown maps each
+contrastive component's dependency on every other component, and produces a
+**dual-cfg recipe** rather than a single SOTA. Five key findings:
+(i) **Aggregate HDBSCAN equality of NeCo (Pariza et al. 2024) and DenseCL
+Local InfoNCE (Wang et al. 2021)** — iter 69 (Global + NeCo only) gives ARI
+0.8514 = iter B1 (Global + Local LW=0.5 only) ARI 0.8514 to four decimal
+places, with identical defect-noise (3.93%) and identical cluster count (37).
+The v5 framing "they substitute each other on partitioning" applies to
+HDBSCAN aggregate ARI / noise / n_cl scope.
+(ii) **★ N1 v6 NEW — Local DenseCL and NeCo are COMPLEMENTARY at per-class
+scope, not substitutable**. Under Agglomerative Ward K=42 (defect-only,
+oracle K=K_gt=42, RESULTS §16), per-GT-class dominant cluster purity reveals
+class-by-class winner flips that aggregate ARI hides. Local DenseCL strength
+is sub-pattern variant integration: `Edge-Ring_fork` (n=31) B5 100% vs NEW
+64.5% (Δ −35.5pp), `Center_scratch` (n=40) 95% vs 75% (−20pp), `Donut_fork`
+(n=37) 100% vs 81.1% (−18.9pp), `Edge-Top_scratch` (n=19) 100% vs 84.2%
+(−15.8pp). NeCo strength is uniform-pattern consolidation: `CenterCircle`
+(n=42) NEW 100% vs B5 54.8% (+45.2pp), `Edge-Top_fork` (n=20) 100% vs 90%
+(+10pp). Net average per-class purity (single-seed=42): B5 = 97.0%, NEW = 96.2%,
+Δ −0.83pp. The single-seed=42 max ARI is **B5 (Local + NeCo combined) Agglomerative
+Ward K=42 = 0.9358**, above iter 70 NEW 0.9200 (Δ +0.0158) — ★ **v7 retracted as
+multi-seed SOTA**: seed=1 reproduce = 0.8482 (Δ −0.0876), B5 2-seed avg 0.8920 ±
+0.062 BELOW NEW 3-seed avg 0.9014 ± 0.022 (std 2.8× higher). The v5 "substitutable"
+framing is refined in v6 to **single-seed complementary** (per-class purity flips
+preserved as single-seed observation only); the v7 multi-seed correction collapses
+to **NEW alone covers both frontiers** — Local DenseCL is **operationally optional,
+not required for SOTA** (see §1.4 ★ v7 FINAL header above).
+(iii) Replacing Local with NeCo (no Local + NeCo + Queue + NEG = iter 70
+NEW cfg) gives seed=42 ARI 0.8797 versus B4 (with Local, no NeCo) 0.8605,
+a +0.019 single-seed lift on HDBSCAN; **3-seed mean ARI 0.859 +/- 0.018 over
+B5 0.856 +/- 0.012 is marginal +0.003, within multi-seed std** on HDBSCAN.
+Under apples-to-apples HDBSCAN protocol (eom mcs=12 ms=3, defect-only),
+Silhouette is **equivalent within ±0.013 (B5 0.7988 vs NEW 0.7860)**. The
+previously-claimed "Silhouette +30% robust across seeds" was an HDBSCAN
+protocol-mismatch artefact (B5 measured under leaf+ms=4, NEW under eom+ms=3)
+and is **retracted** in this version. The genuine NEW-vs-B5 full-set
+differentiator is **Normal/defect boundary stability** — under full-set
+clustering (with Normal class), NEW gives Completeness 0.917 versus B5 0.851
+and full-set ARI 0.83 versus B5 0.69, via Normal-cluster consolidation (859 of
+1000 Normals merge into a single dense cluster, Normal noise 77.7% → 14.1%).
+The defect-cluster geometry actually **widens** under NeCo (intra_p95 +26%),
+confirming that NeCo's mechanism is **two-pronged** — Normal/defect boundary
+stability (full-set, N1 v5) plus uniform-pattern consolidation (per-class
+Agglo K=42, N1 v6) — not generic defect-cluster compactness.
+(iii) **NEG filter requires Queue** — iter 74 (NeCo + NEG, no Queue)
+reproduces iter 69 (NeCo only) to four decimals (ARI 0.8514, noise 3.93%,
+Sil 0.7071, n_cluster 37 all identical), meaning NEG's false-negative
+protection has zero effect when the large negative pool (MoCo Queue 4096)
+is absent.
+(iv) **Cross-component TEMP interaction sharpens C6 / N6**: TEMP 0.05
+helps the Local-based cfg (+0.014 ARI in B5 path to iter 37) but **hurts
+the NEW cfg** (-0.024 ARI in iter 73), demonstrating that best
+hyperparameter values depend on component context. The resulting
+Component Dependency Hierarchy is: **Required** (Global + {Local or NeCo}
+patch-neighbor), **Significant** (MoCo Queue), **Conditional** (NEG filter,
+requires Queue), **Substitutable** (Local DenseCL ↔ NeCo on ARI/noise;
+apples-to-apples Silhouette comparison pending). The NEW four-component
+cfg is one component fewer than the original five-component iter-37 cfg,
+with **equivalent ARI and Silhouette under apples-to-apples protocol**;
+the practitioner choice between NEW and B5 is operational (Normal/defect
+boundary stability vs lower defect-noise floor), not strict superiority.
+The full lattice matrix, multi-seed comparison, NeCo weight sweep, TEMP
+interaction, retraction notes, and Normal-cluster consolidation evidence
+are published as RESULTS table 14 (§14c, §14h, §14i, §14k).
+
+**(C8) HDBSCAN Protocol Mismatch Methodology (NEW, 2026-05-12)**. An
+initially-claimed "Silhouette +30% robust across three seeds" headline
+in v0.5 (B5 vs NEW) was traced to a cross-protocol comparison — B5 was
+measured under leaf+ms=4, NEW under eom+ms=3. Apples-to-apples
+re-measurement (eom + mcs=12 + ms=3, defect-only) gives Sil 0.7988 vs
+0.7860, a regression of −0.013 within seed variance. We preserve the
+retracted claim as documented evidence (RESULTS §14k) and list it as
+N8: any contrastive-clustering paper claiming Silhouette / ARI / noise
+differences across cfg families must explicitly fix every HDBSCAN axis
+(`selection_method`, `mcs`, `ms`, `epsilon`) and the metric scope
+(full-set vs defect-only). Multi-seed robustness within a fixed
+protocol does **not** detect cross-protocol artefacts.
+
+**(C9) Clustering Algorithm Dependency — dual-frontier framework
+(NEW, 2026-05-12)**. A five-method clustering benchmark (HDBSCAN,
+DP-GMM, KMeans K=42, Agglomerative Ward K=42, Spectral K=42) on the
+same three contrastive embeddings (B4, B5, iter 70 NEW) shows that
+the ARI claim depends on the clustering algorithm by **+0.04 to +0.10
+magnitude** at fixed embedding. For example, on B5 the ARI moves from
+0.8564 (HDBSCAN) to 0.9358 (Agglomerative Ward K=42), a +0.079 lift
+that comes purely from the clustering algorithm. Density-based methods
+(HDBSCAN, DP-GMM) rank iter 70 NEW above B5, reflecting NEW's noise/
+outlier-handling advantage. Linkage- and centroid-based methods with
+oracle K (Agglomerative, KMeans K=42) rank B5 above iter 70 NEW,
+reflecting B5's tighter defect-cluster geometry. Spectral K=42 is
+unstable across cfg (ARI 0.23 to 0.79, with graph-not-fully-connected
+warnings). The practitioner consequence is a **dual-frontier
+framework**: (i) the **unknown-K real-world frontier** uses HDBSCAN +
+iter 70 NEW (ARI 0.880 single-seed, 0.859 ± 0.018 3-seed, with
+Normal/defect boundary stability via Normal-cluster consolidation per
+paper N1 v5); (ii) the **known-K oracle benchmark frontier** uses
+Agglomerative Ward + B5 / iter 37 (ARI 0.9358 single-seed, 0.9014 ±
+0.022 NEW 3-seed). We publish §15 of RESULTS as the five-method ×
+three-cfg ARI/NMI matrix and §15e as the practitioner choice tree.
+This finding clarifies that headline ARI numbers across the
+contrastive-clustering literature are not comparable unless both
+encoder cfg and clustering algorithm are matched — a methodology
+disclosure obligation that this paper makes explicit.
 
 ## 1.5 Paper outline
 

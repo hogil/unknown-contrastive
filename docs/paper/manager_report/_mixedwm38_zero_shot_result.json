@@ -1,0 +1,20 @@
+{
+  "dataset": "MixedWM38",
+  "n_total": 38015,
+  "n_defect": 37015,
+  "n_unique_composite": 37,
+  "n_clusters_found": 2,
+  "p1_capture": 1.0,
+  "p2_noise_pct": 1.1211670944211807,
+  "p3_completeness": 0.7651079842229906,
+  "p4_homogeneity": 0.001460967660235309,
+  "ari": 9.320437981614475e-05,
+  "ami": 0.0026112323089340877,
+  "nmi": 0.0029163665415655768,
+  "silhouette": 0.26672881841659546,
+  "decor_baseline_ari": 0.296,
+  "delta_vs_decor": -0.29590679562018385,
+  "ratio_vs_decor": 0.0003148796615410296,
+  "ckpt": "outputs_contrastive_260512_001719 (NEW SOTA seed=42)",
+  "protocol": "defect-only post-hoc HDBSCAN, eom mcs=12 ms=3, no eps"
+}

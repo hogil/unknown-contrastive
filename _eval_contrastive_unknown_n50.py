@@ -421,6 +421,36 @@ def retrieval_report_records(emb: np.ndarray, classes: list[str],
     return records
 
 
+def resolve_normal_class(classes: list[str], requested: str, logger) -> str:
+    """Resolve actual Normal class folder name from dataset.
+
+    Bug history: default `--normal-class` was historically `Normal_bank_boundary`
+    (old wafer-level naming) but current data uses simply `Normal`. When the
+    requested name is absent from the dataset, `without_normal` filtering became
+    a no-op → with_normal and without_normal blocks bit-identical.
+
+    Resolution order:
+      1. Exact match (requested name in dataset) → use as-is.
+      2. Case-insensitive `startswith("normal")` class found → fallback + WARN.
+      3. Nothing matches → return requested (preserve current behaviour, WARN).
+    """
+    uniq = sorted(set(classes))
+    if requested in uniq:
+        return requested
+    candidates = [c for c in uniq if c.lower().startswith("normal")]
+    if candidates:
+        chosen = candidates[0]
+        logger.warning(
+            f"[normal-resolve] requested '{requested}' not found in dataset "
+            f"({len(uniq)} classes); falling back to '{chosen}' "
+            f"(candidates={candidates})")
+        return chosen
+    logger.warning(
+        f"[normal-resolve] requested '{requested}' not found in dataset and "
+        f"no class starts with 'Normal'; without_normal will equal with_normal")
+    return requested
+
+
 def normal_leakage_metrics(cluster_ids: np.ndarray, classes: list[str],
                            normal_class: str, dominant: dict[int, str]) -> dict:
     cls_arr = np.array(classes)
@@ -736,15 +766,18 @@ def main():
         logger.info(f"[export] embedding.npy {emb.shape} + meta")
 
     cluster_ids = run_hdbscan(emb, cfg, logger, label="hdbscan_full")
+    normal_class = resolve_normal_class(list(classes), args.normal_class, logger)
+    if normal_class != args.normal_class:
+        logger.info(f"[main] normal_class resolved: '{args.normal_class}' -> '{normal_class}'")
     cluster_records, dominant_by_cluster = cluster_report_records(
-        cluster_ids, list(classes), args.normal_class)
+        cluster_ids, list(classes), normal_class)
     normal_metrics = normal_leakage_metrics(
-        cluster_ids, list(classes), args.normal_class, dominant_by_cluster)
+        cluster_ids, list(classes), normal_class, dominant_by_cluster)
     class_records = class_fragmentation_records(
-        cluster_ids, list(classes), args.normal_class)
+        cluster_ids, list(classes), normal_class)
     class_frag_summary = class_fragmentation_summary(class_records)                       # docs/contrastive-eval/METRICS.md
     retrieval_records = retrieval_report_records(
-        emb, list(classes), args.normal_class)
+        emb, list(classes), normal_class)
     _write_table(cluster_records, eval_dir / "cluster_report.parquet", logger)
     _write_table(class_records, eval_dir / "class_fragmentation.parquet", logger)
     _write_table(retrieval_records, eval_dir / "retrieval_report.parquet", logger)
@@ -759,7 +792,7 @@ def main():
                 f"noise={m_with['noise_pct']:.1f}%")
 
     logger.info("[eval] === Set 2: without-Normal ===")
-    keep = np.array([c != args.normal_class for c in classes])
+    keep = np.array([c != normal_class for c in classes])
     m_without = None
     if keep.sum() == 0:
         logger.warning("[eval] no non-Normal samples; skipping Set 2")
@@ -777,7 +810,7 @@ def main():
     cls_stress = None
     if args.stress_test:
         logger.info("[eval] === Set 3: stress-test ===")
-        normal_mask = np.array([c == args.normal_class for c in classes])
+        normal_mask = np.array([c == normal_class for c in classes])
         defect_mask = ~normal_mask
         defect_idx_keep = []; per_cls_count = {}
         for i in np.where(defect_mask)[0]:
