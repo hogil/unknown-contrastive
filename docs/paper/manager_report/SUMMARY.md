@@ -31,6 +31,188 @@
 
 ---
 
+## 0.3 SOTA 가는 길 — 초보자 친화 단계별 시각 가이드 (★ 2026-05-14 NEW)
+
+> **이 섹션은 contrastive / clustering 처음 보는 사람도 이해할 수 있게 비유·인포그램·실제 이미지로 풀어쓴 SOTA 진화 가이드다.** 자세한 수식·table 은 §0.5~§10 참조.
+
+### 🎯 우리가 풀려는 문제 — "도서관 분류" 비유
+
+```
+도서관에 책 9250 권이 마구잡이로 쌓여있다 (= wafer 9250 장).
+사서가 정답 라벨 한 권도 안 보고, 책 표지(=결함 패턴)만 보고
+비슷한 책끼리 알아서 묶어야 한다 → "그룹 1: 추리소설 200권",
+"그룹 2: 만화책 162권", "그룹 3: 백과사전 41권"...
+```
+
+| 도서관 비유 | wafer 비유 | 실제 의미 |
+|---|---|---|
+| 책 표지 | wafer 결함 PNG | 384×384 input image |
+| 사서가 외운 패턴 | encoder (ConvNeXtV2) | 384-D feature vector |
+| 책끼리 비슷한 정도 | 두 wafer 의 cosine 거리 | embedding similarity |
+| 그룹 묶기 | HDBSCAN clustering | 자동 그룹화 |
+| 사서가 못 묶고 따로 둔 책 | noise points | clustered=-1 (unassigned) |
+
+→ **목표**: 사서(encoder)가 라벨 안 보고도 "같은 결함끼리 같은 그룹" 으로 묶도록 학습.
+
+---
+
+### 🧰 5 가지 학습 도구 (recipe 재료) — 인포그램
+
+contrastive learning 의 학습 도구는 5 종. **각 도구가 다른 역할**.
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  도구              한 줄 요약                              비유       │
+├──────────────────────────────────────────────────────────────────────┤
+│ ① Global InfoNCE   같은 wafer 두 view = 가깝게,            "쌍둥이를 │
+│                    다른 wafer = 멀게                       알아봐"    │
+│                                                                       │
+│ ② Local DenseCL    wafer 안 부분-부분 일치까지 매칭         "팔만 보고│
+│                    (32×32 grid pixel-level)                같은 사람" │
+│                                                                       │
+│ ③ MoCo Queue       지난 batch 의 4096 wafer 도              "기억력   │
+│                    "다른 wafer"(negative) 로 활용           4096 명"  │
+│                                                                       │
+│ ④ NV-Retriever NEG 너무 비슷한 wafer(cos>0.72) 는           "헷갈리는│
+│                    negative 에서 제외 (false neg ↓)         애 빼고"  │
+│                                                                       │
+│ ⑤ NeCo (2024)      cluster centroid 가 위치 일관성을         "그룹    │
+│                    유지하도록 (cyclic pooling)              자리 fix" │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+핵심 직관:
+- ①, ② = **positive (같은 wafer) 잘 끌어당기기**
+- ③, ④ = **negative (다른 wafer) 잘 밀어내기**
+- ⑤ = **cluster 안정성 잡기** (paper N1)
+
+---
+
+### 📈 Baseline B0 → SOTA NEW: 6 단계 진화 (★ 핵심)
+
+각 단계마다 도구 하나씩 추가. ARI (정답 라벨과 cluster 일치도) + noise% (못 묶인 비율) 변화 추적.
+
+#### 진화 표 (seed=42, defect-only HDBSCAN eom mcs=12 ms=3)
+
+| 단계 | recipe (켜진 도구) | ARI | noise% | n_clu | 비고 |
+|:-:|---|---:|---:|---:|---|
+| **B0** | ①만 (Global InfoNCE only) | 0.823 | 6.20% | 37 | 진짜 baseline — TAPT backbone 만으로 ARI 0.823 이미 강함 |
+| B1 | ①+② (Local LW=0.5) | 0.851 | 3.93% | 37 | Local 단독 효과 ✓ |
+| B2 | ①+② LW=1.0 | 0.823 | 6.20% | 37 | **LW 강화 → regression!** (Local 만 강하면 부작용) |
+| B3 | ②+③ (MoCo Queue 4096) | 0.846 | **1.31%** | 36 | Queue 가 Local 과 함께 "기억" → noise 4× 감소 ★ |
+| **B4** | ②+③+④ (NEG 0.72) | **0.860** | **0.52%** | 37 | NEG 추가, noise 최소 — 가장 깔끔한 cluster |
+| B5 | ②+③+④+⑤ (NeCo 0.2, =iter 37) | 0.856 | 0.96% | 37 | NeCo 추가, 단독 효과 ≈ 0 (combined 효과는 +) |
+| **★ NEW** | ①+③+④+⑤ (Local 제거!) | **0.880** | 0.87% | 37 | **B5 − Local — paper SOTA. NeCo 가 Local 대체** |
+
+#### ASCII bar chart — ARI 진화
+
+```
+B0  ARI 0.823  ████████████████████████████████████████          (baseline)
+B1  ARI 0.851  █████████████████████████████████████████████     (+Local)
+B2  ARI 0.823  ████████████████████████████████████████          (LW too strong)
+B3  ARI 0.846  ████████████████████████████████████████████      (+Queue)
+B4  ARI 0.860  ██████████████████████████████████████████████    (+NEG)
+B5  ARI 0.856  █████████████████████████████████████████████     (+NeCo)
+NEW ARI 0.880  ████████████████████████████████████████████████  ★ SOTA (-Local +NeCo)
+                     0.82                          0.86       0.88
+```
+
+#### ASCII bar chart — noise% 감소 (lower = 좋음)
+
+```
+B0  noise 6.20% ██████████████████████████████████             (worst)
+B1  noise 3.93% █████████████████████
+B2  noise 6.20% ██████████████████████████████████             (regression)
+B3  noise 1.31% ██████                                          ← Queue 의 힘
+B4  noise 0.52% ██                                              ★ best
+B5  noise 0.96% █████
+NEW noise 0.87% ████                                            production SOTA
+```
+
+---
+
+### 💡 단계별 직관 (왜 ARI / noise 가 그렇게 변하나)
+
+#### B0 → B1: Local DenseCL 추가
+> "쌍둥이 전체 얼굴만 비교하다가, 손·발·코까지 다 비교하기 시작" → 더 fine-grained matching → 같은 wafer 안에서도 sub-pattern (Edge-Ring 의 8시 vs 9시 방향 정도까지) 구분 가능 → noise -2.27pp.
+
+#### B1 → B2: LW=0.5 → 1.0 (regression!)
+> "손/발 비교 비중을 너무 높이면 전체 얼굴 매칭이 흐려진다" — Local 만 강하면 Global signal 망가짐. ★ **Hyperparameter sweet spot 의 존재 입증** (paper N5).
+
+#### B2 → B3: MoCo Queue 추가
+> "이번 batch 의 16 wafer 만 보고 negative 결정 → 너무 좁음. 지난 4096 wafer 기억하면 negative pool 256× ↑" → false-positive cluster 합병 사라짐 → **noise 4.89pp 감소** (가장 큰 단일 효과). Local 의 부작용도 Queue 가 흡수 (★ paper N6 Component Interaction).
+
+#### B3 → B4: NV-Retriever NEG (0.72)
+> "Queue 의 4096 wafer 중 너무 비슷한 (cos>0.72) 애들은 사실 같은 class 일 가능성 있음 → negative 에서 제외." → false negative 제거 → noise 0.78pp 추가 감소. **최저 noise 달성**.
+
+#### B4 → B5: NeCo 추가 (Pariza 2024)
+> "cluster centroid 들이 매 batch 마다 흔들리지 않게 cyclic pooling 으로 ordering 고정" → 단독 효과는 거의 0 (B4 = B5 거의 동일). **그러나** NEW 에서는 Local 대체.
+
+#### ★ B5 → NEW: Local 제거 (paper SOTA)
+> "Local DenseCL = 무거운 도구 (학습 시간 2×). NeCo 가 cluster 안정성을 잡아주면 Local 빼도 됨" → **더 가벼우면서 더 좋은 결과** (ARI +0.024 vs B5). 4 가지 도구만 (Global + Queue + NEG + NeCo).
+
+```
+교훈: SOTA 는 도구를 "더하기" 보다 "맞바꾸기" 로 도달.
+      B5 (5도구) → NEW (4도구, Local↔NeCo 교체) = 가벼움 + 정확함 둘 다.
+```
+
+---
+
+### 🖼 실제 SOTA 모델 (NEW recipe) 가 만든 cluster — 5 예시
+
+학습된 모델이 D:/project/data/wm-811k/unknown (9250 wafer) 를 보고 **라벨 한 번도 안 보고** 자동으로 만든 cluster:
+
+| cluster (purity) | medoid 거리 | 시각 |
+|:---:|:---:|:---:|
+| **ParallelScratches** size 200 (100%) | 0.073 | ![](figs/sota_cluster_ParallelScratches_size200.png) |
+| **BrokenRing** size 160 (~100%) | **0.032** ★ tight | ![](figs/sota_cluster_BrokenRing_size160.png) |
+| **RingDots** size 160 | 0.064 | ![](figs/sota_cluster_RingDots_size160.png) |
+| **Starburst** size 162 | 0.058 | ![](figs/sota_cluster_Starburst_size162.png) |
+| **CenterDonut** size 39 (small but pure) | 0.061 | ![](figs/sota_cluster_CenterDonut_size39.png) |
+
+→ ★ medoid 거리 0.03~0.07 = cluster 안 wafer 들이 embedding space 에서 **매우 밀집**. cluster purity 가 단일 class 거의 100%.
+
+---
+
+### 🏆 paper SOTA 최종 metric (3-seed avg ± std)
+
+```
+NEW recipe (Global + MoCo Queue 4096 + NV-Retriever NEG 0.72 + NeCo 0.2)
+- 학습 backbone:   ConvNeXtV2-base TAPT (자매 repo known-cnn supervised)
+- 학습 시간:        ~40 분 / seed × 3 seed = 2 시간
+- 학습 데이터:      9250 wafer (43 class + Normal 1000)
+- 추론 속도:        14.3 ms/wafer (40+ wps)
+
+┌────────────────────────────────────────────────┐
+│ P1 capture            1.000 ± 0.000  (★ 완벽)  │
+│ P2 noise % (τ=0.5)    0.00 ± 0.00    (★ post) │
+│ P3 Completeness       0.9938 ± 0.003           │
+│ P4 Homogeneity        0.9424 ± 0.007           │
+│ ARI                   0.8681 ± 0.013           │
+│ AMI                   0.9600 ± 0.005           │
+│ Silhouette (cosine)   0.7807 ± 0.008           │
+└────────────────────────────────────────────────┘
+
+cross-domain zero-shot:
+  WM-811K cca/ (8-class):   Hom 0.811   ← ICH 0.90 baseline 근접
+  MixedWM38 (38-class):     ARI 0.002   ← domain mismatch 한계 (paper limitations)
+```
+
+---
+
+### 📚 더 깊이 알고 싶으면
+
+| 궁금증 | 가서 보세요 |
+|---|---|
+| "InfoNCE 가 정확히 뭐고 수식은?" | `METHOD.md` §3.2, §3 |
+| "왜 5-도구 ablation 표가 paper-grade 인가?" | `RESULTS.md` §13 + §0.5 이 문서 |
+| "단일 seed 가 아닌 3-seed 가 왜 중요?" | `DISCUSSION.md` §7.10 (N2 multi-seed honesty) |
+| "HDBSCAN eom vs leaf?" | §7. HDBSCAN 섹션 (이 문서) + RESULTS §11 |
+| "post-process τ-reassignment 이 뭐야?" | `manager_report/step1_paper_addition_260513.md` Step 1c |
+| "왜 ARI 1.000 가 아니야?" | `manager_report/cluster_analysis_b4_noNeCo_3seed.md` (under-segmentation 분석) |
+
+---
+
 ## 0.5 Real Baseline Component Isolation (★ 2026-05-11 NEW)
 
 > 사용자 지적: "기존 Iter A0 baseline 에 이미 Local/Queue/NEG 활성. 진짜 component 단독
