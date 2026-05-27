@@ -41,6 +41,84 @@ pip install torch==2.6.0 torchvision==0.21.0 \
 pip install -r requirements.txt
 ```
 
+---
+
+### 한 줄 setup (H100 / H200 둘 다)
+
+```bash
+git clone https://github.com/hogil/unknown-contrastive.git && cd unknown-contrastive
+bash setup.sh                 # CUDA 12.4 + PyTorch 2.6 (★ tested)
+# bash setup.sh --cuda 126    # CUDA 12.6 + PyTorch 2.7
+# bash setup.sh --cpu         # CPU only
+```
+
+→ Python 3.10+ check + venv + PyTorch + requirements + CUDA/NCCL 검증 자동.
+
+---
+
+### Server 환경 별 setup (Ubuntu 24.04 + H200 / RHEL 9 + H100)
+
+#### Ubuntu 24.04 LTS + H200
+
+```bash
+# 1. Python 확인 (Ubuntu 24.04 기본 = 3.12 ★)
+python3 --version
+sudo apt update && sudo apt install -y python3-venv python3-pip
+
+# 2. NVIDIA driver + CUDA 12.4+ (이미 설치돼 있다고 가정)
+nvidia-smi   # H200 인식 + driver 535+ 확인
+
+# 3. venv + setup
+git clone https://github.com/hogil/unknown-contrastive.git
+cd unknown-contrastive
+python3 -m venv .venv && source .venv/bin/activate
+
+# 4. PyTorch (H200 권장)
+pip install torch==2.6.0 torchvision==0.21.0 \
+            --index-url https://download.pytorch.org/whl/cu124
+pip install -r requirements.txt
+
+# 5. NCCL check (DDP 위해)
+python -c "import torch; print(f'cuda={torch.cuda.is_available()} nccl={torch.distributed.is_nccl_available()}')"
+# 출력: cuda=True nccl=True
+```
+
+#### RHEL 9 + H100
+
+```bash
+# 1. Python 3.11 install (RHEL 9 기본 = 3.9 — 우리 최소 3.10 부족)
+sudo dnf module install -y python3.11
+python3.11 --version    # 3.11.x 확인
+
+# 2. NVIDIA driver + CUDA (NVIDIA repo 추가 후)
+#    https://developer.download.nvidia.com/compute/cuda/repos/rhel9/
+nvidia-smi   # H100 인식
+
+# 3. venv + setup
+git clone https://github.com/hogil/unknown-contrastive.git
+cd unknown-contrastive
+python3.11 -m venv .venv && source .venv/bin/activate
+
+# 4. PyTorch (H100 권장)
+pip install torch==2.6.0 torchvision==0.21.0 \
+            --index-url https://download.pytorch.org/whl/cu124
+pip install -r requirements.txt
+
+# 5. NCCL check
+python -c "import torch; print(f'cuda={torch.cuda.is_available()} nccl={torch.distributed.is_nccl_available()}')"
+```
+
+#### 8 GPU DDP 학습 (H100/H200 server 표준)
+
+```bash
+# 8 GPU 한방에
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python scripts/train_pipeline_ddp.py
+# → world_size=8 자동, total_batch = BATCH_PER_GPU × 8
+# Linux NCCL backend (Windows 는 gloo fallback)
+```
+
+---
+
 **GPU 호환 표** (Hopper architecture):
 
 | GPU | CUDA min | 권장 wheel | PyTorch |
