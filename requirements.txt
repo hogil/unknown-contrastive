@@ -1,0 +1,21 @@
+# PyTorch — CUDA 사용 시 아래 명령 별도 (README §0 참조)
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+torch>=2.0
+torchvision>=0.15
+
+# 모델 + augmentation
+timm>=1.0
+Pillow>=10.0
+
+# Clustering + metric
+hdbscan>=0.8
+scikit-learn>=1.3
+
+# Data + serialization
+numpy>=1.24
+pandas>=2.0
+pyarrow>=14.0          # parquet (현업 grouping 산출)
+pyyaml>=6.0
+
+# Optional — resource monitor / system
+psutil>=5.9

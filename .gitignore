@@ -5,6 +5,12 @@ logs/
 log/
 _watch_tmp/
 
+# scripts/ 통합 pipeline 산출
+weights/
+runs/
+result_grouping/
+_dispatch_logs/
+
 # ===== python =====
 __pycache__/
 *.pyc
