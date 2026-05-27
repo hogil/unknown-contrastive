@@ -10,6 +10,12 @@ weights/
 runs/
 result_grouping/
 _dispatch_logs/
+data/
+
+# ===== 다른 repo 으로 이관된 모듈 (절대 commit 금지) =====
+chip_multilabel/             # → known-cnn 으로 이관 (CLAUDE.md:383)
+sota_h100/                   # unknown-contrastive 와 무관 (chip multi-label)
+_watch_tmp/
 
 # ===== python =====
 __pycache__/
