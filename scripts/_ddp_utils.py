@@ -107,35 +107,14 @@ def all_gather_concat(local: torch.Tensor, device) -> torch.Tensor:
     return torch.cat(parts, dim=0)
 
 
-def _worker_wrapper(rank: int, worker_fn: Callable, world_size: int, args: tuple) -> None:
-    """자식 process 의 unhandled exception 을 stderr 으로 명시 출력.
-
-    mp.spawn 의 default 동작은 자식 traceback 을 ProcessExitedException 으로
-    wrap 해서 부모로 전달 — 부모는 'exit code 1' 만 보고 실제 원인은 모름.
-    이 wrapper 가 자식 안에서 traceback.print_exc() 으로 명시 출력 후 re-raise.
-    """
-    import sys
-    import traceback
-    try:
-        worker_fn(rank, world_size, *args)
-    except BaseException as e:
-        sys.stderr.write(f"\n{'='*60}\n[DDP RANK {rank}] ERROR — {type(e).__name__}: {e}\n{'='*60}\n")
-        traceback.print_exc(file=sys.stderr)
-        sys.stderr.flush()
-        raise
-
-
 def launch_ddp(worker_fn: Callable, *args, world_size: int | None = None) -> None:
     """spawn world_size workers. single-GPU 면 직접 호출."""
     if world_size is None:
         world_size = world_size_from_env()
-    print(f"[DDP] CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES','(unset)')}  → world_size={world_size}",
-          flush=True)
+    print(f"[DDP] CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES','(unset)')}  → world_size={world_size}")
     if world_size <= 1:
         worker_fn(0, 1, *args)
     else:
         # MASTER_PORT 자동 할당 (충돌 방지)
         os.environ["MASTER_PORT"] = str(find_free_port())
-        # 각 자식 안에서 traceback 출력하도록 wrapper 통해 spawn
-        mp.spawn(_worker_wrapper, args=(worker_fn, world_size, args),
-                 nprocs=world_size, join=True)
+        mp.spawn(worker_fn, args=(world_size, *args), nprocs=world_size, join=True)

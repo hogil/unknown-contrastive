@@ -1,0 +1,41 @@
+# 30 active class target (synth-aligned, 2026-05-15)
+#
+# Wafer-canvas 10 (CANVAS_CLASSES, _sample_canvas_gen.py):
+#   DiagonalSmear CrossScratch CrescentArc ParallelScratches BrokenRing
+#   RingDots CenterDonut Row Starburst CenterCircle
+# Obj-active 20 (_sample_gen.py CLASSES × OBJECTS subset):
+#   Edge-Bottom/Edge-Top/Donut × 5 obj (bank_boundary, fork, scratch,
+#                                       scratch_rot, invalid_main) = 15
+#   Center/Edge-Ring/Full/Thick-Edge _invalid_main = 4
+#   Edge-Ring_fork = 1
+classes:
+  - DiagonalSmear
+  - CrossScratch
+  - CrescentArc
+  - ParallelScratches
+  - BrokenRing
+  - RingDots
+  - CenterDonut
+  - Row
+  - Starburst
+  - CenterCircle
+  - Edge-Bottom_bank_boundary
+  - Edge-Bottom_fork
+  - Edge-Bottom_invalid_main
+  - Edge-Bottom_scratch
+  - Edge-Bottom_scratch_rot
+  - Edge-Top_bank_boundary
+  - Edge-Top_fork
+  - Edge-Top_invalid_main
+  - Edge-Top_scratch
+  - Edge-Top_scratch_rot
+  - Donut_bank_boundary
+  - Donut_fork
+  - Donut_invalid_main
+  - Donut_scratch
+  - Donut_scratch_rot
+  - Center_invalid_main
+  - Edge-Ring_invalid_main
+  - Full_invalid_main
+  - Thick-Edge_invalid_main
+  - Edge-Ring_fork

@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
-"""Synthetic wafer image generator — class 별 distinct pattern.
+"""Synthetic wafer generator — known-cnn 의 _sample_gen / _sample_canvas_gen 그대로 사용.
 
-CONFIG 의 N_PER_CLASS 만큼 각 class 마다 PNG 생성.
-산출: data/images/unknown/<class>/wafer_<seed>.png
+사용자 정책 (260527):
+  "wafer 생성 코드에서 chip 내부 불량 모양만 known-cnn 참조"
+  → wafer-level 알고리즘 자체 작성 X. known-cnn 의 정본 (_sample_gen / _sample_canvas_gen)
+    그대로 호출. heatmap 의존도 mirror.
 
-real WM-811K 데이터 없을 때 demo / pipeline 검증용. paper 결과 측면은
-실제 데이터로 진행해야 함.
+산출: data/images/unknown/<class>/wafer_<idx>.png
 """
 from __future__ import annotations
 
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
-OUTPUT_DIR          = "data/images/unknown"     # 프로젝트 상대
-IMG_SIZE            = 384
-N_PER_CLASS         = 100                        # 각 class 당 PNG 수 (43 class × 100 = 4300)
-N_NORMAL            = 200                        # Normal class 만 더 많이
+OUTPUT_DIR          = "data/images/unknown"
+OUTPUT_PX           = 0                    # 0 = 6400 원본 유지, >0 = resize
 SEED                = 42
+N_PER_CLASS         = 100
+N_NORMAL            = 200
 
-# Split A 21 class (CNN supervised) + Split B 22 class (Contrastive) — 동일 def
 CLASSES = [
-    # main pattern × sub-class (Center/Donut/Edge-Bottom/Edge-Ring/Edge-Top/Full)
     "Center_bank_boundary", "Center_fork", "Center_invalid_main",
     "Center_scratch", "Center_scratch_rot",
     "Donut_bank_boundary", "Donut_fork", "Donut_invalid_main",
@@ -35,201 +34,77 @@ CLASSES = [
     "Full_scratch", "Full_scratch_rot",
     "Thick-Edge_fork", "Thick-Edge_invalid_main",
     "Normal",
-    # canvas 10
     "BrokenRing", "CenterCircle", "CenterDonut", "CrescentArc",
     "CrossScratch", "DiagonalSmear", "ParallelScratches",
     "RingDots", "Row", "Starburst",
 ]
 # ===================================================================
 
-import math
-import random
+import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
-import numpy as np
-from PIL import Image, ImageDraw
-
-sys.path.insert(0, str(Path(__file__).parent))
+# import path + env (heatmap / out_dir) — _sample_gen import 전 설정
+_SCRIPTS = Path(__file__).resolve().parent
+_REPO = _SCRIPTS.parent
+sys.path.insert(0, str(_SCRIPTS))
 from _common import resolve_path
 
+os.environ["HEATMAP_DIR"] = str(_REPO / "dist_learn" / "_dist_heatmaps")
+_TMP = _REPO / "_tmp_wafer_gen"
+(_TMP / "png").mkdir(parents=True, exist_ok=True)
+(_TMP / "json").mkdir(parents=True, exist_ok=True)
+(_TMP / "chips").mkdir(parents=True, exist_ok=True)
+os.environ["WAFER_PNG_OUT_DIR"] = str(_TMP / "png")
+os.environ["WAFER_JSON_OUT_DIR"] = str(_TMP / "json")
+os.environ["CLASSIFICATION_CHIPS_ROOT"] = str(_TMP / "chips")
+os.environ["SKIP_CHIP_CROPS"] = "1"
 
-def main_pattern_of(cls: str) -> str:
+from PIL import Image  # noqa: E402
+
+import _sample_gen as sg                  # noqa: E402
+import _sample_canvas_gen as cg           # noqa: E402
+
+
+def split_main_sub(cls: str) -> tuple[str, str]:
     if cls == "Normal":
-        return "normal"
-    if cls in {"BrokenRing","CenterCircle","CenterDonut","CrescentArc","CrossScratch",
-               "DiagonalSmear","ParallelScratches","RingDots","Row","Starburst"}:
-        return cls   # canvas — 자기 자신
-    return cls.split("_")[0]
+        return "Normal", "normal"
+    parts = cls.split("_", 1)
+    return (parts[0], parts[1]) if len(parts) == 2 else (cls, cls)
 
 
-def sub_pattern_of(cls: str) -> str:
-    if "_" in cls:
-        return "_".join(cls.split("_")[1:])
-    return ""
+def render_wafer(cls: str, seed: int, dst_path: Path) -> bool:
+    """class 별 wafer 합성 → dst_path 저장."""
+    try:
+        if cls in cg.CANVAS_CLASSES:
+            canvas, chip_meta, palette = cg.render_canvas_in_memory(cls, seed)
+            img_p = Image.frombytes("P", (sg.SIZE, sg.SIZE), canvas.tobytes())
+            img_p.putpalette(palette)
+            img = img_p.convert("RGB")
+            try:
+                Path(dst_path).parent.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+        else:
+            main, sub = split_main_sub(cls)
+            png_path, _, _, _, _, _ = sg.render(main, sub, seed)
+            img = Image.open(png_path).convert("RGB")
+            try:
+                Path(png_path).unlink()
+            except Exception:
+                pass
 
-
-def make_base():
-    """wafer base — circular gray plate."""
-    img = Image.new("RGB", (IMG_SIZE, IMG_SIZE), color=(40, 40, 40))
-    draw = ImageDraw.Draw(img)
-    cx = cy = IMG_SIZE // 2
-    r = IMG_SIZE // 2 - 8
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(95, 70, 80))
-    return img
-
-
-def add_main_region(draw, main: str, color):
-    """main pattern 의 영역에 base color 적용."""
-    cx = cy = IMG_SIZE // 2
-    r = IMG_SIZE // 2 - 8
-    if main == "Center":
-        cr = r // 2
-        draw.ellipse([cx - cr, cy - cr, cx + cr, cy + cr], fill=color)
-    elif main == "Donut":
-        for rad in range(r // 3, int(r * 0.75)):
-            if rad % 6 < 4:
-                draw.ellipse([cx - rad, cy - rad, cx + rad, cy + rad], outline=color, width=1)
-    elif main == "Edge-Top":
-        draw.pieslice([cx - r, cy - r, cx + r, cy + r], -120, -60, fill=color)
-    elif main == "Edge-Bottom":
-        draw.pieslice([cx - r, cy - r, cx + r, cy + r], 60, 120, fill=color)
-    elif main == "Edge-Ring":
-        # ring band 전체 둘레
-        for ang in range(0, 360, 5):
-            x1 = cx + int(r * 0.85 * math.cos(math.radians(ang)))
-            y1 = cy + int(r * 0.85 * math.sin(math.radians(ang)))
-            draw.ellipse([x1 - 4, y1 - 4, x1 + 4, y1 + 4], fill=color)
-    elif main == "Full":
-        # 전체 dot density
-        for _ in range(800):
-            x = random.randint(0, IMG_SIZE - 1); y = random.randint(0, IMG_SIZE - 1)
-            if (x - cx) ** 2 + (y - cy) ** 2 < r * r:
-                draw.ellipse([x - 2, y - 2, x + 2, y + 2], fill=color)
-    elif main == "Thick-Edge":
-        # 두꺼운 ring band
-        for rad in range(int(r * 0.7), r):
-            draw.ellipse([cx - rad, cy - rad, cx + rad, cy + rad], outline=color, width=1)
-
-
-def add_sub_pattern(draw, main: str, sub: str, color):
-    """sub-pattern: bank_boundary, fork, invalid_main, scratch, scratch_rot."""
-    cx = cy = IMG_SIZE // 2
-    if sub == "bank_boundary":
-        # 수직 bank 선
-        draw.line([cx, 20, cx, IMG_SIZE - 20], fill=color, width=3)
-        draw.line([cx + 60, 20, cx + 60, IMG_SIZE - 20], fill=(180, 100, 60), width=2)
-    elif sub == "fork":
-        # Y 모양
-        draw.line([cx, IMG_SIZE // 4, cx, IMG_SIZE * 3 // 4], fill=color, width=4)
-        draw.line([cx, IMG_SIZE // 2, cx - 60, IMG_SIZE * 3 // 4], fill=color, width=3)
-        draw.line([cx, IMG_SIZE // 2, cx + 60, IMG_SIZE * 3 // 4], fill=color, width=3)
-    elif sub == "invalid_main":
-        # 빈 영역 + 텍스트 같은 점
-        for _ in range(15):
-            x = random.randint(50, IMG_SIZE - 50)
-            y = random.randint(50, IMG_SIZE - 50)
-            draw.rectangle([x, y, x + 8, y + 8], fill=(220, 200, 60))
-    elif sub == "scratch":
-        # 대각선
-        draw.line([60, 60, IMG_SIZE - 60, IMG_SIZE - 60], fill=color, width=3)
-    elif sub == "scratch_rot":
-        # 다른 각도 대각선 (-21°)
-        rad = math.radians(-21)
-        x1 = cx - 100 * math.cos(rad); y1 = cy - 100 * math.sin(rad)
-        x2 = cx + 100 * math.cos(rad); y2 = cy + 100 * math.sin(rad)
-        draw.line([(x1, y1), (x2, y2)], fill=color, width=4)
-
-
-def render_canvas(cls: str, color):
-    """Canvas patterns — 각자 고유 패턴."""
-    img = make_base()
-    draw = ImageDraw.Draw(img)
-    cx = cy = IMG_SIZE // 2
-    r = IMG_SIZE // 2 - 20
-
-    if cls == "BrokenRing":
-        for ang in range(0, 360, 12):
-            if random.random() > 0.4: continue
-            x = cx + int(r * math.cos(math.radians(ang)))
-            y = cy + int(r * math.sin(math.radians(ang)))
-            draw.ellipse([x - 5, y - 5, x + 5, y + 5], fill=color)
-    elif cls == "CenterCircle":
-        draw.ellipse([cx - 50, cy - 50, cx + 50, cy + 50], outline=color, width=5)
-    elif cls == "CenterDonut":
-        draw.ellipse([cx - 70, cy - 70, cx + 70, cy + 70], outline=color, width=10)
-        draw.ellipse([cx - 30, cy - 30, cx + 30, cy + 30], fill=(40, 40, 40))
-    elif cls == "CrescentArc":
-        draw.arc([cx - r, cy - r, cx + r, cy + r], -45, 135, fill=color, width=8)
-    elif cls == "CrossScratch":
-        draw.line([60, 60, IMG_SIZE - 60, IMG_SIZE - 60], fill=color, width=4)
-        draw.line([IMG_SIZE - 60, 60, 60, IMG_SIZE - 60], fill=color, width=4)
-    elif cls == "DiagonalSmear":
-        for off in range(-100, 100, 8):
-            draw.line([60 + off, 60, IMG_SIZE - 60 + off, IMG_SIZE - 60],
-                      fill=color, width=2)
-    elif cls == "ParallelScratches":
-        for off in range(-80, 81, 30):
-            draw.line([60, cy + off, IMG_SIZE - 60, cy + off], fill=color, width=3)
-    elif cls == "RingDots":
-        for ang in range(0, 360, 18):
-            x = cx + int(r * 0.7 * math.cos(math.radians(ang)))
-            y = cy + int(r * 0.7 * math.sin(math.radians(ang)))
-            draw.ellipse([x - 6, y - 6, x + 6, y + 6], fill=color)
-    elif cls == "Row":
-        for y in range(80, IMG_SIZE - 80, 30):
-            draw.line([60, y, IMG_SIZE - 60, y], fill=color, width=2)
-    elif cls == "Starburst":
-        for ang in range(0, 360, 15):
-            x = cx + int(r * math.cos(math.radians(ang)))
-            y = cy + int(r * math.sin(math.radians(ang)))
-            draw.line([(cx, cy), (x, y)], fill=color, width=2)
-    return img
-
-
-def render_class(cls: str, seed: int):
-    """class 별 wafer image."""
-    random.seed(seed)
-    np.random.seed(seed)
-    main = main_pattern_of(cls)
-    sub = sub_pattern_of(cls)
-
-    # 색상 — main pattern 별 distinct
-    color_map = {
-        "Center": (220, 80, 80), "Donut": (80, 220, 80),
-        "Edge-Bottom": (80, 80, 220), "Edge-Ring": (220, 220, 80),
-        "Edge-Top": (220, 80, 220), "Full": (80, 220, 220),
-        "Thick-Edge": (200, 140, 60),
-        "normal": (95, 70, 80),
-    }
-
-    if main == "normal":
-        img = make_base()
-        # 약간의 random noise 만
-        arr = np.array(img)
-        noise = np.random.normal(0, 8, arr.shape).astype(np.int16)
-        arr = np.clip(arr.astype(np.int16) + noise, 0, 255).astype(np.uint8)
-        return Image.fromarray(arr)
-
-    if main in {"BrokenRing","CenterCircle","CenterDonut","CrescentArc","CrossScratch",
-                "DiagonalSmear","ParallelScratches","RingDots","Row","Starburst"}:
-        # canvas
-        color = (180, 180, 100)
-        return render_canvas(cls, color)
-
-    # main + sub
-    img = make_base()
-    draw = ImageDraw.Draw(img)
-    main_color = color_map.get(main, (200, 100, 100))
-    add_main_region(draw, main, main_color)
-    if sub:
-        sub_color = (240, 240, 240)
-        add_sub_pattern(draw, main, sub, sub_color)
-    # noise
-    arr = np.array(img)
-    noise = np.random.normal(0, 4, arr.shape).astype(np.int16)
-    arr = np.clip(arr.astype(np.int16) + noise, 0, 255).astype(np.uint8)
-    return Image.fromarray(arr)
+        if OUTPUT_PX > 0 and img.size != (OUTPUT_PX, OUTPUT_PX):
+            img = img.resize((OUTPUT_PX, OUTPUT_PX), Image.LANCZOS)
+        img.save(dst_path, optimize=False)
+        return True
+    except Exception as e:
+        import traceback
+        print(f"  [ERR] {cls} seed={seed}: {type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
+        return False
 
 
 def main():
@@ -237,27 +112,29 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     total = 0
     for cls in CLASSES:
-        sub = out / cls
-        sub.mkdir(exist_ok=True)
-        n = N_NORMAL if cls == "Normal" else N_PER_CLASS
-        existing = len(list(sub.glob("*.png")))
-        if existing >= n:
-            print(f"[skip] {cls}: already has {existing} ≥ {n}")
+        sub_dir = out / cls
+        sub_dir.mkdir(exist_ok=True)
+        n_target = N_NORMAL if cls == "Normal" else N_PER_CLASS
+        existing = len(list(sub_dir.glob("*.png")))
+        if existing >= n_target:
+            print(f"[skip] {cls}: {existing} >= {n_target}")
             total += existing
             continue
-        print(f"[gen ] {cls}: {existing}/{n}", flush=True)
-        for i in range(existing, n):
-            img = render_class(cls, seed=SEED + hash(cls) % 10000 + i)
-            img.save(sub / f"wafer_{i:04d}.png", optimize=False)
-            total += 1
-        if (CLASSES.index(cls) + 1) % 5 == 0:
-            print(f"  ({CLASSES.index(cls) + 1}/{len(CLASSES)} classes done)")
+        print(f"[gen ] {cls}: {existing} -> {n_target}", flush=True)
+        for i in range(existing, n_target):
+            seed = SEED + abs(hash(cls)) % 10000 + i
+            dst = sub_dir / f"wafer_{i:04d}.png"
+            if render_wafer(cls, seed, dst):
+                total += 1
+
+    if _TMP.exists():
+        try:
+            shutil.rmtree(_TMP)
+        except Exception:
+            pass
+
     print(f"\n[OUT] {out.resolve()}")
-    print(f"  total images: {total}")
-    print(f"  classes: {len(CLASSES)}")
-    print(f"\n다음 단계:")
-    print(f"  python scripts/_split_data.py    # CNN/Contrastive train/eval 분리")
-    print(f"  python scripts/train_pipeline.py # 학습")
+    print(f"  total images: {total}, classes: {len(CLASSES)}")
 
 
 if __name__ == "__main__":

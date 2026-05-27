@@ -1,0 +1,24 @@
+classes:
+- CenterCircle
+- Center_fork
+- Center_invalid_main
+- Center_scratch
+- CrescentArc
+- CrossScratch
+- DiagonalSmear
+- Donut_invalid_main
+- Donut_scratch
+- Edge-Bottom_fork
+- Edge-Bottom_invalid_main
+- Edge-Bottom_scratch
+- Edge-Ring_fork
+- Edge-Ring_invalid_main
+- Edge-Top_invalid_main
+- Edge-Top_scratch
+- Edge-Top_scratch_rot
+- Full_fork
+- Full_invalid_main
+- Starburst
+- Thick-Edge_fork
+description: 'Split A: CNN backbone supervised training (21 of 43 wafer class)'
+seed: 42

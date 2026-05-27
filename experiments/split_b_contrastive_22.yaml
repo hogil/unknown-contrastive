@@ -1,0 +1,26 @@
+classes:
+- BrokenRing
+- CenterDonut
+- Center_bank_boundary
+- Center_scratch_rot
+- Donut_bank_boundary
+- Donut_fork
+- Donut_scratch_rot
+- Edge-Bottom_bank_boundary
+- Edge-Bottom_scratch_rot
+- Edge-Ring_bank_boundary
+- Edge-Ring_scratch
+- Edge-Ring_scratch_rot
+- Edge-Top_bank_boundary
+- Edge-Top_fork
+- Full_bank_boundary
+- Full_scratch
+- Full_scratch_rot
+- Normal
+- ParallelScratches
+- RingDots
+- Row
+- Thick-Edge_invalid_main
+description: 'Split B: Contrastive learning + HDBSCAN clustering eval (22 of 43 wafer
+  class, disjoint from split A)'
+seed: 42
