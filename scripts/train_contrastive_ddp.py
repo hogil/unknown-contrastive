@@ -7,8 +7,8 @@
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
-TRAIN_DATA_DIR        = "E:/data/images/contrastive_train"   # flat (class 숨김)
-EVAL_DATA_DIR         = "E:/data/images/contrastive_eval"    # ImageFolder
+TRAIN_DATA_DIR        = "data/images/contrastive_train"   # 프로젝트 상대, flat
+EVAL_DATA_DIR         = "data/images/contrastive_eval"    # 프로젝트 상대, ImageFolder
 ACTIVE_CLASSES_YAML   = None
 EXCLUDE_CLASSES       = {"classification", "classification_chips"}
 
@@ -79,6 +79,7 @@ from _common import (
     ensure_backbone_weights,
     log_stage_metric,
     make_run_dir,
+    resolve_path,
     snapshot_config,
     system_info,
 )
@@ -279,9 +280,14 @@ def train_worker(rank, world_size):
             active_classes = yaml.safe_load(f).get("classes")
 
     # train
+    train_dir = resolve_path(TRAIN_DATA_DIR); eval_dir = resolve_path(EVAL_DATA_DIR)
+    if not train_dir.exists():
+        raise SystemExit(f"TRAIN_DATA_DIR not found: {train_dir}\n  python scripts/generate_data.py && python scripts/_split_data.py")
+    if not eval_dir.exists():
+        raise SystemExit(f"EVAL_DATA_DIR not found: {eval_dir}")
     train_aug = build_aug(); eval_tf = build_eval_tf()
-    train_ds = FlatPairDataset(TRAIN_DATA_DIR, train_aug)
-    eval_base = SafeImageFolder(EVAL_DATA_DIR, transform=eval_tf,
+    train_ds = FlatPairDataset(str(train_dir), train_aug)
+    eval_base = SafeImageFolder(str(eval_dir), transform=eval_tf,
                                 exclude=EXCLUDE_CLASSES, active_classes=active_classes,
                                 per_class_cap=PER_CLASS_CAP, normal_cap=NORMAL_CAP)
     classes = eval_base.classes

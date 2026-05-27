@@ -15,9 +15,9 @@
 #   CL_TRAIN_DIR  : flat (Split B wafer 80%, class label hidden)
 #   CL_EVAL_DIR   : ImageFolder (Split B wafer 20%, class for metric)
 # 먼저 scripts/_split_data.py 실행해 폴더 생성 필요.
-CNN_DATA_DIR          = "E:/data/images/cnn_train"
-CL_TRAIN_DIR          = "E:/data/images/contrastive_train"
-CL_EVAL_DIR           = "E:/data/images/contrastive_eval"
+CNN_DATA_DIR          = "data/images/cnn_train"           # 프로젝트 상대
+CL_TRAIN_DIR          = "data/images/contrastive_train"
+CL_EVAL_DIR           = "data/images/contrastive_eval"
 
 CNN_ACTIVE_YAML       = None        # CNN_DATA_DIR 이 이미 split 됐으면 None
 CONTRASTIVE_ACTIVE_YAML = None

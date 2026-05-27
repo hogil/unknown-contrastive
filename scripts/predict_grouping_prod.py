@@ -19,11 +19,11 @@
 # === CONFIG (실행 시 이 부분만 수정) ===
 # ===================================================================
 # 입력 — 옵션 A: 단일 폴더 지정 (모든 .png 하위 walk)
-IMAGE_ROOT          = "E:/prod/AA/K1AA/20260502"
+IMAGE_ROOT          = "data/prod/AA/K1AA/20260502"   # 프로젝트 상대 (또는 절대)
 
 # 옵션 B: 여러 (product, line, date) 자동 walk
 # IMAGE_BASE 만 주면 IMAGE_BASE/<product>/<line>/<date>/*.png 자동 enum
-IMAGE_BASE          = None         # 예: "E:/prod" — 비우면 IMAGE_ROOT 만 사용
+IMAGE_BASE          = None         # 예: "data/prod" — 비우면 IMAGE_ROOT 만 사용
 PRODUCT_FILTER      = None         # 예: ["AA", "BB"] — None=all
 LINE_FILTER         = None
 DATE_FILTER         = None
@@ -72,6 +72,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _common import (
     log_stage_metric,
     make_run_dir,
+    resolve_path,
     snapshot_config,
     system_info,
 )
@@ -134,8 +135,8 @@ class ContrastiveInferModel(nn.Module):
 def enumerate_targets():
     """IMAGE_BASE 가 있으면 (product, line, date) tuple 들 walk, 아니면 IMAGE_ROOT 하나."""
     if not IMAGE_BASE:
-        return [(None, None, None, Path(IMAGE_ROOT))]
-    base = Path(IMAGE_BASE)
+        return [(None, None, None, resolve_path(IMAGE_ROOT))]
+    base = resolve_path(IMAGE_BASE)
     targets = []
     for prod in sorted(base.iterdir()):
         if not prod.is_dir(): continue
@@ -255,13 +256,14 @@ def main():
     snapshot_config(run_dir, cfg)
     system_info(run_dir)
 
-    if not Path(MODEL_PATH).exists():
-        raise SystemExit(f"MODEL_PATH not found: {MODEL_PATH}\n"
-                         f"contrastive best_model.pt 학습 후 path 수정 필요")
+    model_path = resolve_path(MODEL_PATH)
+    if not model_path.exists():
+        raise SystemExit(f"MODEL_PATH not found: {model_path}\n"
+                         f"먼저 학습: python scripts/train_pipeline.py")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ContrastiveInferModel(BACKBONE, PROJ_DIM).to(device)
-    ck = torch.load(MODEL_PATH, map_location=device, weights_only=False)
+    ck = torch.load(model_path, map_location=device, weights_only=False)
     sd = ck["state_dict"] if isinstance(ck, dict) and "state_dict" in ck else ck
     missing = model.load_state_dict(sd, strict=False)
     print(f"[model] loaded from {MODEL_PATH}, missing={len(missing.missing_keys)}, "

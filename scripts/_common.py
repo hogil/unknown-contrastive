@@ -19,11 +19,28 @@ from typing import Any
 import torch
 
 
+# ===================== Project root =====================
+PROJECT_ROOT = Path(__file__).resolve().parent.parent  # scripts/_common.py → repo root
+
+def project_path(*parts) -> Path:
+    """프로젝트 루트 기준 경로 — 어떤 머신에서도 clone 후 동일."""
+    return PROJECT_ROOT.joinpath(*parts)
+
+
+def resolve_path(p) -> Path:
+    """absolute 면 그대로, relative 면 PROJECT_ROOT 기준으로."""
+    p = Path(p)
+    return p if p.is_absolute() else (PROJECT_ROOT / p)
+
+
 # ===================== Run directory =====================
-def make_run_dir(output_root: str, tag: str) -> Path:
-    """runs/<YYMMDD_HHMMSS>_<tag>/ 폴더 생성 (이미 있으면 그대로 사용)."""
+def make_run_dir(output_root, tag: str) -> Path:
+    """runs/<YYMMDD_HHMMSS>_<tag>/ 폴더 생성. output_root 가 상대면 PROJECT_ROOT 기준."""
     ts = datetime.now().strftime("%y%m%d_%H%M%S")
-    rd = Path(output_root) / f"{ts}_{tag}"
+    p = Path(output_root)
+    if not p.is_absolute():
+        p = PROJECT_ROOT / p
+    rd = p / f"{ts}_{tag}"
     rd.mkdir(parents=True, exist_ok=True)
     return rd
 
@@ -107,10 +124,12 @@ def update_report_md(run_dir: Path):
 
 
 # ===================== Backbone weights =====================
-def ensure_backbone_weights(weights_dir: str | Path,
+def ensure_backbone_weights(weights_dir,
                             backbone: str = "convnextv2_base.fcmae_ft_in22k_in1k_384") -> Path:
-    """프로젝트의 weights/ 폴더에 backbone 다운로드 (이미 있으면 그대로)."""
+    """프로젝트의 weights/ 폴더에 backbone 다운로드 (이미 있으면 그대로). 상대경로면 PROJECT_ROOT 기준."""
     weights_dir = Path(weights_dir)
+    if not weights_dir.is_absolute():
+        weights_dir = PROJECT_ROOT / weights_dir
     weights_dir.mkdir(parents=True, exist_ok=True)
     target = weights_dir / f"{backbone}.pth"
     if target.exists() and target.stat().st_size > 1024 * 1024:

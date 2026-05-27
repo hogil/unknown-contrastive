@@ -10,7 +10,7 @@
 # ===================================================================
 # === CONFIG (실행 시 이 부분만 수정) ===
 # ===================================================================
-DATA_DIR             = "E:/data/images/unknown"
+DATA_DIR             = "data/images/cnn_train"     # 프로젝트 상대 — _split_data.py 출력
 ACTIVE_CLASSES_YAML  = None              # 선택 — class subset YAML path
 EXCLUDE_CLASSES      = {"classification", "classification_chips"}
 
@@ -62,6 +62,7 @@ from _common import (
     ensure_backbone_weights,
     log_stage_metric,
     make_run_dir,
+    resolve_path,
     snapshot_config,
     system_info,
 )
@@ -235,16 +236,24 @@ def main():
     active_classes = None
     if ACTIVE_CLASSES_YAML:
         import yaml
-        with open(ACTIVE_CLASSES_YAML, "r", encoding="utf-8") as f:
+        with open(resolve_path(ACTIVE_CLASSES_YAML), "r", encoding="utf-8") as f:
             active_classes = yaml.safe_load(f).get("classes")
 
     # --- dataset
+    data_dir = resolve_path(DATA_DIR)
+    if not data_dir.exists():
+        raise SystemExit(
+            f"DATA_DIR not found: {data_dir}\n"
+            f"먼저 데이터 준비:\n"
+            f"  python scripts/generate_data.py   # 합성 demo 데이터\n"
+            f"  python scripts/_split_data.py     # 분리\n"
+        )
     train_tf, eval_tf = build_transforms()
-    ds_train_full = SafeImageFolder(DATA_DIR, transform=train_tf,
+    ds_train_full = SafeImageFolder(str(data_dir), transform=train_tf,
                                     exclude=EXCLUDE_CLASSES,
                                     active_classes=active_classes,
                                     allow_missing=True)
-    ds_eval_full = SafeImageFolder(DATA_DIR, transform=eval_tf,
+    ds_eval_full = SafeImageFolder(str(data_dir), transform=eval_tf,
                                    exclude=EXCLUDE_CLASSES,
                                    active_classes=active_classes,
                                    allow_missing=True)

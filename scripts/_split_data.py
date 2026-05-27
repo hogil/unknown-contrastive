@@ -15,17 +15,17 @@ wafer 단위 disjoint:
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
-SOURCE_ROOT         = "E:/data/images/unknown"
+SOURCE_ROOT         = "data/images/unknown"          # 프로젝트 상대 (없으면 generate_data.py 먼저)
 EXCLUDE_CLASSES     = {"classification", "classification_chips"}
 
 # Class split YAML — 어떤 class 가 CNN 또는 Contrastive 인지
 CNN_ACTIVE_YAML        = "experiments/split_a_cnn_21.yaml"
 CONTRASTIVE_ACTIVE_YAML = "experiments/split_b_contrastive_22.yaml"
 
-# 출력 폴더
-CNN_TRAIN_DIR       = "E:/data/images/cnn_train"           # ImageFolder (class subdir)
-CL_TRAIN_DIR        = "E:/data/images/contrastive_train"   # flat (no class subdir)
-CL_EVAL_DIR         = "E:/data/images/contrastive_eval"    # ImageFolder (class subdir)
+# 출력 폴더 (프로젝트 상대)
+CNN_TRAIN_DIR       = "data/images/cnn_train"           # ImageFolder (class subdir)
+CL_TRAIN_DIR        = "data/images/contrastive_train"   # flat (no class subdir)
+CL_EVAL_DIR         = "data/images/contrastive_eval"    # ImageFolder (class subdir)
 
 # Contrastive train vs eval split (wafer disjoint)
 CL_TRAIN_RATIO      = 0.8                                   # 80% train / 20% eval
@@ -44,20 +44,28 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).parent))
+from _common import resolve_path
+
 
 def main():
-    src = Path(SOURCE_ROOT)
+    src = resolve_path(SOURCE_ROOT)
     if not src.exists():
-        raise SystemExit(f"SOURCE_ROOT not found: {src}")
+        raise SystemExit(
+            f"SOURCE_ROOT not found: {src}\n\n"
+            f"먼저 wafer 이미지를 생성하거나 복사하세요:\n"
+            f"  python scripts/generate_data.py          # 합성 demo 데이터\n"
+            f"  또는 직접 SOURCE_ROOT 폴더에 <class>/*.png 배치\n"
+        )
 
-    cnn_classes = set(yaml.safe_load(open(CNN_ACTIVE_YAML)).get("classes", []))
-    cl_classes = set(yaml.safe_load(open(CONTRASTIVE_ACTIVE_YAML)).get("classes", []))
+    cnn_classes = set(yaml.safe_load(open(resolve_path(CNN_ACTIVE_YAML))).get("classes", []))
+    cl_classes = set(yaml.safe_load(open(resolve_path(CONTRASTIVE_ACTIVE_YAML))).get("classes", []))
     overlap = cnn_classes & cl_classes
     if overlap:
         raise SystemExit(f"[ERR] CNN ↔ Contrastive class OVERLAP detected: {sorted(overlap)}")
     print(f"[classes] CNN: {len(cnn_classes)}, Contrastive: {len(cl_classes)}, overlap: 0")
 
-    cnn_train = Path(CNN_TRAIN_DIR); cl_train = Path(CL_TRAIN_DIR); cl_eval = Path(CL_EVAL_DIR)
+    cnn_train = resolve_path(CNN_TRAIN_DIR); cl_train = resolve_path(CL_TRAIN_DIR); cl_eval = resolve_path(CL_EVAL_DIR)
     if not DRY_RUN:
         for d in (cnn_train, cl_train, cl_eval):
             d.mkdir(parents=True, exist_ok=True)

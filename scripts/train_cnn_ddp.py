@@ -13,7 +13,7 @@
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
-DATA_DIR             = "E:/data/images/cnn_train"     # ImageFolder
+DATA_DIR             = "data/images/cnn_train"     # 프로젝트 상대, ImageFolder
 ACTIVE_CLASSES_YAML  = None
 EXCLUDE_CLASSES      = {"classification", "classification_chips"}
 
@@ -66,6 +66,7 @@ from _common import (
     ensure_backbone_weights,
     log_stage_metric,
     make_run_dir,
+    resolve_path,
     snapshot_config,
     system_info,
 )
@@ -248,10 +249,14 @@ def train_worker(rank: int, world_size: int):
         with open(ACTIVE_CLASSES_YAML) as f:
             active_classes = yaml.safe_load(f).get("classes")
 
+    data_dir = resolve_path(DATA_DIR)
+    if not data_dir.exists():
+        raise SystemExit(f"DATA_DIR not found: {data_dir}\n"
+                         f"  python scripts/generate_data.py && python scripts/_split_data.py")
     train_tf, eval_tf = build_transforms()
-    ds_train_full = SafeImageFolder(DATA_DIR, transform=train_tf,
+    ds_train_full = SafeImageFolder(str(data_dir), transform=train_tf,
                                     exclude=EXCLUDE_CLASSES, active_classes=active_classes)
-    ds_eval_full = SafeImageFolder(DATA_DIR, transform=eval_tf,
+    ds_eval_full = SafeImageFolder(str(data_dir), transform=eval_tf,
                                    exclude=EXCLUDE_CLASSES, active_classes=active_classes)
     classes = ds_train_full.classes
     n_cls = len(classes)

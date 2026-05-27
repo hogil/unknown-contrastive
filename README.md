@@ -29,12 +29,20 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 
 ---
 
-## 1. 데이터 폴더 분리 (한 번만)
+## 1. 이미지 생성 (실제 데이터 없으면)
+
+```bash
+python scripts/generate_data.py
+# → data/images/unknown/<class>/wafer_*.png (43 class × 100 + Normal × 200 ≈ 4400 장)
+```
+
+각 class 별 distinct synthetic pattern. real WM-811K 데이터 있으면 그걸 `data/images/unknown/<class>/` 에 두면 됨.
+
+## 2. 데이터 폴더 분리 (한 번만)
 
 이미지 생성 단계부터 폴더 분리 (사용자 정책: "class 보는 건 치팅"):
 
 ```bash
-# scripts/_split_data.py 최상단 CONFIG block 의 SOURCE_ROOT 수정 후
 python scripts/_split_data.py
 ```
 
@@ -48,7 +56,7 @@ python scripts/_split_data.py
 
 ---
 
-## 2. 한방에 학습 (pipeline)
+## 3. 한방에 학습 (pipeline)
 
 ```bash
 # scripts/train_pipeline.py 의 CONFIG block 확인 후
@@ -111,7 +119,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_pipeline_ddp.py
 
 ---
 
-## 3. 현업 데이터 grouping
+## 4. 현업 데이터 grouping
 
 **폴더 구조**: `<image_base>/<product>/<line>/<date>/*.png`
 
@@ -174,7 +182,7 @@ result_grouping/<YYMMDD_HHMMSS>_grouping/
 
 ---
 
-## 4. CONFIG 정책
+## 5. CONFIG 정책
 
 **모든 script** 의 hyperparam + path 는 파일 최상단 `# === CONFIG ===` block 에 있음.
 실행 시 그 부분만 수정.
@@ -206,7 +214,10 @@ WEIGHT_DECAY         = 0.01
 
 ---
 
-## 5. 단계별 성능 기록 (paper-friendly)
+**모든 path 는 프로젝트 상대경로** (PROJECT_ROOT 자동 detect via `_common.resolve_path`).
+absolute path 도 OK (예: `E:/prod/...`) — 그 경우 그대로 사용.
+
+## 6. 단계별 성능 기록 (paper-friendly)
 
 각 stage 끝나면 `metrics.json` 에 자동 append + `report.md` 표 자동 생성:
 
@@ -225,7 +236,7 @@ WEIGHT_DECAY         = 0.01
 
 ---
 
-## 6. 폴더 구조 요약
+## 7. 폴더 구조 요약
 
 ```
 unknown-contrastive/
@@ -248,11 +259,12 @@ unknown-contrastive/
 
 ---
 
-## 7. Quick reference
+## 8. Quick reference
 
 | 작업 | 명령 |
 |---|---|
 | 첫 setup | `pip install -r requirements.txt` |
+| 이미지 생성 (없으면) | `python scripts/generate_data.py` |
 | 데이터 분리 (한 번만) | `python scripts/_split_data.py` |
 | 한방에 학습 | `python scripts/train_pipeline.py` |
 | CNN 만 | `python scripts/train_cnn.py` |
