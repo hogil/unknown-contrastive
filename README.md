@@ -24,15 +24,40 @@ source .venv/Scripts/activate     # Windows Git Bash
 # 또는: .venv\Scripts\activate      # Windows cmd / PowerShell
 # 또는: source .venv/bin/activate   # Linux / Mac
 
-# 3. PyTorch 먼저 (CUDA 버전 맞춤)
-# GPU CUDA 12.4:
-pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
-# CPU only:
+# 3. PyTorch 먼저 (H100/H200 호환 — CUDA 12.4+)
+
+# ★ 권장 (H100 + H200 둘 다 OK, tested):
+pip install torch==2.6.0 torchvision==0.21.0 \
+            --index-url https://download.pytorch.org/whl/cu124
+
+# 또는 최신 (H100 + H200, CUDA 12.6):
+# pip install torch==2.7.0 torchvision==0.22.0 \
+#             --index-url https://download.pytorch.org/whl/cu126
+
+# CPU only (학습 X, 코드 확인용):
 # pip install torch==2.6.0 torchvision==0.21.0
 
 # 4. 나머지 dependency
 pip install -r requirements.txt
 ```
+
+**GPU 호환 표** (Hopper architecture):
+
+| GPU | CUDA min | 권장 wheel | PyTorch |
+|---|---|---|---|
+| H100 | 11.8 | cu124 (12.4) | 2.4 ~ 2.7 |
+| H200 | 12.2 | cu124 (12.4) | 2.4 ~ 2.7 |
+| A100 | 11.0 | cu124 | 2.4 ~ 2.7 |
+| RTX 40xx | 11.8 | cu124 | 2.4 ~ 2.7 |
+
+**torch ↔ torchvision 짝** (절대 misversion 안 됨):
+
+| torch | torchvision |
+|---|---|
+| 2.4 | 0.19 |
+| 2.5 | 0.20 |
+| **2.6** ★ tested | **0.21** ★ tested |
+| 2.7 | 0.22 |
 
 **Python 버전 확인 표**:
 
