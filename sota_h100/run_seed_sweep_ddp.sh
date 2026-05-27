@@ -42,7 +42,7 @@ fi
 BACKBONE="${BACKBONE:-convnextv2_base.fcmae_ft_in22k_in1k_384}"
 IMG_SIZE="${IMG_SIZE:-384}"
 WEIGHTS="${WEIGHTS:-models/${BACKBONE}.pth}"
-IMAGES_ROOT="${IMAGES_ROOT:-$PROJ_ROOT/data/images/sota_h100}"
+IMAGES_ROOT="${IMAGES_ROOT:-data/images/sota_h100}"
 TRAIN_ROOT="${TRAIN_ROOT:-$IMAGES_ROOT/classification_chips}"
 EVAL_SET="${EVAL_SET:-$IMAGES_ROOT/eval_set}"
 TRAIN_PER_CLASS="${TRAIN_PER_CLASS:-200}"
