@@ -89,6 +89,26 @@ python scripts/train_cnn.py            # CNN 만
 python scripts/train_contrastive.py    # Contrastive 만 (backbone path 별도 지정)
 ```
 
+### Multi-GPU (DDP) 학습 — 별도 파일 (option 아님)
+
+```bash
+# 4 GPU CNN 학습
+CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_cnn_ddp.py
+
+# 4 GPU Contrastive 학습
+CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_contrastive_ddp.py
+
+# 4 GPU 한방에 (CNN_DDP → Contrastive_DDP sequential)
+CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_pipeline_ddp.py
+```
+
+- `CUDA_VISIBLE_DEVICES` 의 device 수 = `world_size` 자동
+- `mp.spawn` 으로 worker 자동 launch (torchrun 불필요)
+- 단일 GPU 면 single-GPU fallback (DDP wrap skip)
+- Windows: NCCL 미지원 → gloo backend 자동 fallback
+- 각 script CONFIG 의 `BATCH_PER_GPU` × world_size = total batch
+- rank=0 만 save/print/metric log, 나머지 rank 는 동기화만
+
 ---
 
 ## 3. 현업 데이터 grouping
@@ -237,4 +257,7 @@ unknown-contrastive/
 | 한방에 학습 | `python scripts/train_pipeline.py` |
 | CNN 만 | `python scripts/train_cnn.py` |
 | Contrastive 만 | `python scripts/train_contrastive.py` |
+| 4-GPU CNN | `CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_cnn_ddp.py` |
+| 4-GPU Contrastive | `CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_contrastive_ddp.py` |
+| 4-GPU 한방에 | `CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_pipeline_ddp.py` |
 | 현업 grouping | `python scripts/predict_grouping_prod.py` |
