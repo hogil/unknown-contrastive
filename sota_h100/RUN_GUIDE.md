@@ -20,15 +20,14 @@ ls models/convnextv2_base.fcmae_ft_in22k_in1k_384.pth
 # 3) deps
 pip install torch timm numpy pandas pillow scikit-learn pyarrow
 
-# 4) ONE command, NO options — gen data (auto, deterministic) + seed-sweep
-#    train + eval + RESULTS.md. DDP auto-detects all GPUs; data path defaults
-#    to data/images/sota_h100.
-nohup bash sota_h100/run_seed_sweep_ddp.sh > sweep.out 2>&1 &     # multi-GPU (all GPUs)
-
-bash sota_h100/run_seed_sweep_1gpu.sh                            # single GPU (GPU 0)
+# 4) dedicated no-option scripts — pick one:
+CUDA_VISIBLE_DEVICES=0,1,2,3 bash sota_h100/train_ddp.sh    # multi-GPU DDP (auto nproc)
+bash sota_h100/train_ddp.sh                                # DDP on ALL GPUs
+bash sota_h100/train_1gpu.sh                               # single GPU
 ```
 
-(optional GPU pick: `CUDA_VISIBLE_DEVICES=0,1,2,3 bash sota_h100/run_seed_sweep_ddp.sh`)
+Each script auto-generates data if missing, trains the iter116J seed sweep, evals,
+and writes `outputs/sota_h100_seedsweep_*/RESULTS.md`. (Data only: `bash sota_h100/gen.sh`.)
 
 Result: `outputs/sota_h100_seedsweep_*/RESULTS.md` (per-seed + mean±std + best;
 bit_F1 / NI·OOD·Total FAR for I10+I13). Best checkpoint: `seed_<N>/<tag>_*/best_model.pth`.
@@ -50,11 +49,10 @@ cannot separate OOD from a weak real combo — NB on the joint distribution does
 demonstrated: real fork log-lik ≈ +16 vs OOD/Normal ≈ −90…−478).
 
 ```bash
-# only --input is needed; --model and --nb-fit auto-resolve to the latest
-# sota_h100 seed-sweep checkpoint / eval parquet.
-python -m sota_h100.predict --input /path/to/real_chips
+# dedicated script — one arg = the chip folder. model + NB-fit auto-resolve.
+bash sota_h100/predict.sh /path/to/real_chips        # -> preds_real.csv
 
-# explicit (override auto):
+# (equivalent explicit form)
 python -m sota_h100.predict --input /path/to/real_chips \
   --model outputs/sota_h100_seedsweep_*/seed_1/<tag>_*/best_model.pth \
   --nb-fit outputs/sota_h100_seedsweep_*/seed_1/eval/eval_*/preds_chip.parquet \
