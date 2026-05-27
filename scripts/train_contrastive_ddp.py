@@ -4,6 +4,8 @@
 사용:
     CUDA_VISIBLE_DEVICES=0,1,2,3 python scripts/train_contrastive_ddp.py
 """
+from __future__ import annotations
+
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
@@ -54,8 +56,6 @@ NORMAL_CAP            = 2000
 SEED                  = 42
 SAVE_WRONG_IMAGES     = True
 # ===================================================================
-
-from __future__ import annotations
 
 import json
 import random

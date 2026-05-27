@@ -15,6 +15,8 @@
     OUTPUT_DIR/{product}/{line}/{date}/summary.json
     OUTPUT_DIR/{product}/{line}/{date}/groups/<group_id>/*.png  (옵션 — 시각 review)
 """
+from __future__ import annotations
+
 # ===================================================================
 # === CONFIG (실행 시 이 부분만 수정) ===
 # ===================================================================
@@ -52,8 +54,6 @@ PROJ_DIM            = 128
 
 SEED                = 42
 # ===================================================================
-
-from __future__ import annotations
 
 import json
 import shutil

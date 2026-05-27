@@ -7,6 +7,8 @@
 
 전제: CNN backbone 학습된 best_model.pth 또는 ImageNet FCMAE backbone.
 """
+from __future__ import annotations
+
 # ===================================================================
 # === CONFIG (실행 시 이 부분만 수정) ===
 # ===================================================================
@@ -71,8 +73,6 @@ SEED                  = 42
 # Wrong/outlier 이미지 저장 (eval)
 SAVE_WRONG_IMAGES     = True        # cluster outlier 이미지를 wrong/<true>/<true>_<pred_cluster_class>_<pct>%_<basename>.png
 # ===================================================================
-
-from __future__ import annotations
 
 import json
 import math

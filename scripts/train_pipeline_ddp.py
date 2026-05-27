@@ -7,6 +7,8 @@
 
 내부적으로 subprocess.run 으로 두 스크립트 순차 실행 (각자 mp.spawn 사용).
 """
+from __future__ import annotations
+
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
@@ -21,8 +23,6 @@ CL_EVAL_DIR           = "E:/data/images/contrastive_eval"
 # 이 pipeline 은 CNN best_model.pth path 를 자동 추출 후 Contrastive 에 inject
 PIPELINE_TAG          = "pipeline_ddp"
 # ===================================================================
-
-from __future__ import annotations
 
 import json
 import os

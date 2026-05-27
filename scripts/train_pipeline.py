@@ -7,6 +7,8 @@
 
 핵심: CNN backbone 학습 끝나면 그 best_model.pth 를 contrastive 의 backbone init 으로 사용.
 """
+from __future__ import annotations
+
 # ===================================================================
 # === CONFIG (실행 시 이 부분만 수정) ===
 # ===================================================================
@@ -77,8 +79,6 @@ CLUSTER_SELECTION_EPSILON = 0.0
 
 SEED                  = 42
 # ===================================================================
-
-from __future__ import annotations
 
 import json
 import random

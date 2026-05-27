@@ -7,6 +7,8 @@
 
 데이터: ImageFolder 형식 (DATA_DIR/<class>/*.png)
 """
+from __future__ import annotations
+
 # ===================================================================
 # === CONFIG (실행 시 이 부분만 수정) ===
 # ===================================================================
@@ -42,8 +44,6 @@ SPLIT_RATIOS         = (0.8, 0.1, 0.1)   # train/val/test
 SEED                 = 42
 SAVE_WRONG_IMAGES    = True              # FP/FN 저장 → cnn/wrong/<true>/<true>_<pred>_<pct>%_<basename>.png
 # ===================================================================
-
-from __future__ import annotations
 
 import json
 import random

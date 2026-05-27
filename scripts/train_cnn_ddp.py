@@ -10,6 +10,8 @@
 
 각 worker 가 rank ∈ [0, world_size) 으로 학습. rank=0 만 save/print/metric log.
 """
+from __future__ import annotations
+
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
@@ -43,8 +45,6 @@ SPLIT_RATIOS         = (0.8, 0.1, 0.1)
 SEED                 = 42
 SAVE_WRONG_IMAGES    = True
 # ===================================================================
-
-from __future__ import annotations
 
 import json
 import random

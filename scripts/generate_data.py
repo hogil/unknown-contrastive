@@ -7,6 +7,8 @@ CONFIG 의 N_PER_CLASS 만큼 각 class 마다 PNG 생성.
 real WM-811K 데이터 없을 때 demo / pipeline 검증용. paper 결과 측면은
 실제 데이터로 진행해야 함.
 """
+from __future__ import annotations
+
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
@@ -39,8 +41,6 @@ CLASSES = [
     "RingDots", "Row", "Starburst",
 ]
 # ===================================================================
-
-from __future__ import annotations
 
 import math
 import random

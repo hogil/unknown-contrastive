@@ -12,6 +12,8 @@
 wafer 단위 disjoint:
   CNN_TRAIN ↔ CL_TRAIN ↔ CL_EVAL  완전 disjoint (data leakage 0)
 """
+from __future__ import annotations
+
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
@@ -35,8 +37,6 @@ COPY_MODE           = "link"        # "link" (symlink, 빠름 + disk 절약) or 
 SEED                = 42
 DRY_RUN             = False         # True 면 path 만 print
 # ===================================================================
-
-from __future__ import annotations
 
 import json
 import random
