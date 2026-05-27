@@ -13,6 +13,11 @@
 # ============================================================
 set -e
 
+# ★ script 어디서 실행하든 항상 setup.sh 위치 (= repo root) 기준 — 프로젝트 상대경로 보장
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+echo "[cwd] $SCRIPT_DIR"
+
 CUDA_VER="124"
 TORCH_VER="2.6.0"
 TVIS_VER="0.21.0"
@@ -69,29 +74,34 @@ fi
 echo "[ok] Python ${PY_VER}"
 
 # ---------- venv ----------
-if [[ ! -d ".venv" ]]; then
-  echo "[setup] venv 생성"
-  python3 -m venv .venv
+VENV_DIR="$SCRIPT_DIR/.venv"
+if [[ ! -d "$VENV_DIR" ]]; then
+  echo "[setup] venv 생성: $VENV_DIR"
+  python3 -m venv "$VENV_DIR"
 fi
 # shellcheck disable=SC1091
-source .venv/bin/activate
-echo "[ok] venv activated"
+source "$VENV_DIR/bin/activate"
+echo "[ok] venv activated ($VENV_DIR)"
 
 # ---------- pip ----------
 # 사내 폐쇄망 가정 — 외부 PyPI URL (--index-url) 사용 X.
 # 사내 pip mirror 또는 로컬 wheelhouse 가 wheel 제공.
 if [[ -n "$WHEELHOUSE" ]]; then
+  # wheelhouse 가 relative 면 SCRIPT_DIR 기준
+  if [[ "$WHEELHOUSE" != /* ]]; then
+    WHEELHOUSE="$SCRIPT_DIR/$WHEELHOUSE"
+  fi
   if [[ ! -d "$WHEELHOUSE" ]]; then
     echo "[ERR] wheelhouse 폴더 없음: $WHEELHOUSE"; exit 1
   fi
   echo "[offline] wheelhouse: $WHEELHOUSE"
   pip install --no-index --find-links "$WHEELHOUSE" \
               "torch==${TORCH_VER}" "torchvision==${TVIS_VER}"
-  pip install --no-index --find-links "$WHEELHOUSE" -r requirements.txt
+  pip install --no-index --find-links "$WHEELHOUSE" -r "$SCRIPT_DIR/requirements.txt"
 else
   pip install --upgrade pip
   pip install "torch==${TORCH_VER}" "torchvision==${TVIS_VER}"
-  pip install -r requirements.txt
+  pip install -r "$SCRIPT_DIR/requirements.txt"
 fi
 
 # ---------- 검증 ----------
