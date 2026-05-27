@@ -65,7 +65,7 @@ def _fit_nb(nb_fit_parquet):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True)
+    ap.add_argument("--model", default=None, help="best_model.pth (default: latest sota_h100 seed-sweep)")
     ap.add_argument("--input", required=True, help="folder of real chip PNGs (recursive)")
     ap.add_argument("--out", default="preds_real.csv")
     ap.add_argument("--batch-size", type=int, default=32)
@@ -75,6 +75,21 @@ def main():
     ap.add_argument("--nb-tau", type=float, default=-40.0, help="NB log-lik reject threshold (< tau -> UNKNOWN)")
     ap.add_argument("--no-nb", action="store_true", help="disable NB OOD reject")
     args = ap.parse_args()
+
+    # auto-resolve model / nb-fit when not given (option-less run)
+    if not args.model:
+        cands = sorted(glob.glob("outputs/sota_h100_*/**/best_model.pth", recursive=True),
+                       key=lambda p: Path(p).stat().st_mtime)
+        if not cands:
+            sys.exit("no --model and no outputs/sota_h100_*/**/best_model.pth found")
+        args.model = cands[-1]
+        print(f"[predict] auto model: {args.model}")
+    if args.nb_fit is None and not args.no_nb:
+        cands = sorted(glob.glob("outputs/sota_h100_*/**/preds_chip.parquet", recursive=True),
+                       key=lambda p: Path(p).stat().st_mtime)
+        if cands:
+            args.nb_fit = cands[-1]
+            print(f"[predict] auto nb-fit: {args.nb_fit}")
 
     thr = dict(DEFAULT_THR)
     if args.thresholds:

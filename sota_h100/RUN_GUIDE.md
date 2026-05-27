@@ -20,15 +20,15 @@ ls models/convnextv2_base.fcmae_ft_in22k_in1k_384.pth
 # 3) deps
 pip install torch timm numpy pandas pillow scikit-learn pyarrow
 
-# 4) ONE command — gen data (auto, deterministic) + seed-sweep train + eval + RESULTS.md
-#    multi-GPU true DDP (nproc & per-rank batch auto from device count):
-CUDA_VISIBLE_DEVICES=0,1,2,3 IMAGES_ROOT=data/images/sota_h100 \
-  nohup bash sota_h100/run_seed_sweep_ddp.sh > sweep.out 2>&1 &
+# 4) ONE command, NO options — gen data (auto, deterministic) + seed-sweep
+#    train + eval + RESULTS.md. DDP auto-detects all GPUs; data path defaults
+#    to data/images/sota_h100.
+nohup bash sota_h100/run_seed_sweep_ddp.sh > sweep.out 2>&1 &     # multi-GPU (all GPUs)
 
-#    single GPU:
-CUDA_VISIBLE_DEVICES=0 IMAGES_ROOT=data/images/sota_h100 \
-  nohup bash sota_h100/run_seed_sweep_1gpu.sh > sweep.out 2>&1 &
+bash sota_h100/run_seed_sweep_1gpu.sh                            # single GPU (GPU 0)
 ```
+
+(optional GPU pick: `CUDA_VISIBLE_DEVICES=0,1,2,3 bash sota_h100/run_seed_sweep_ddp.sh`)
 
 Result: `outputs/sota_h100_seedsweep_*/RESULTS.md` (per-seed + mean±std + best;
 bit_F1 / NI·OOD·Total FAR for I10+I13). Best checkpoint: `seed_<N>/<tag>_*/best_model.pth`.
@@ -50,16 +50,15 @@ cannot separate OOD from a weak real combo — NB on the joint distribution does
 demonstrated: real fork log-lik ≈ +16 vs OOD/Normal ≈ −90…−478).
 
 ```bash
-# (one-time) a reference DEFECT prob set to fit the NB OOD-reject.
-# Use any eval run's preds_chip.parquet (defect-class rows are auto-selected):
-NBFIT=outputs/sota_h100_seedsweep_*/seed_1/eval/eval_*/preds_chip.parquet
+# only --input is needed; --model and --nb-fit auto-resolve to the latest
+# sota_h100 seed-sweep checkpoint / eval parquet.
+python -m sota_h100.predict --input /path/to/real_chips
 
-# run on a folder of real chips (recursive *.png)
-python -m sota_h100.predict \
+# explicit (override auto):
+python -m sota_h100.predict --input /path/to/real_chips \
   --model outputs/sota_h100_seedsweep_*/seed_1/<tag>_*/best_model.pth \
-  --input /path/to/real_chips \
-  --nb-fit "$NBFIT" --nb-tau -40 \
-  --out preds_real.csv
+  --nb-fit outputs/sota_h100_seedsweep_*/seed_1/eval/eval_*/preds_chip.parquet \
+  --nb-tau -40 --out preds_real.csv
 ```
 
 Output `preds_real.csv` columns:

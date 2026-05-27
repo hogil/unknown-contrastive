@@ -26,8 +26,11 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 # else GPUS env, else 4. torchrun --nproc_per_node = that count; each rank maps LOCAL_RANK -> visible device.
 if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
     GPUS=$(printf '%s' "$CUDA_VISIBLE_DEVICES" | tr ',' '\n' | grep -c .)
+elif [ -n "${GPUS:-}" ]; then
+    :
 else
-    GPUS="${GPUS:-4}"
+    GPUS=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU')   # auto: all visible GPUs
+    [ -z "$GPUS" ] || [ "$GPUS" -lt 1 ] && GPUS=1
 fi
 SEEDS="${SEEDS:-1 2 3 4 5 6 7 8}"
 EPOCHS="${EPOCHS:-24}"
@@ -39,7 +42,7 @@ fi
 BACKBONE="${BACKBONE:-convnextv2_base.fcmae_ft_in22k_in1k_384}"
 IMG_SIZE="${IMG_SIZE:-384}"
 WEIGHTS="${WEIGHTS:-models/${BACKBONE}.pth}"
-IMAGES_ROOT="${IMAGES_ROOT:-$PROJ_ROOT/data/images}"
+IMAGES_ROOT="${IMAGES_ROOT:-$PROJ_ROOT/data/images/sota_h100}"
 TRAIN_ROOT="${TRAIN_ROOT:-$IMAGES_ROOT/classification_chips}"
 EVAL_SET="${EVAL_SET:-$IMAGES_ROOT/eval_set}"
 TRAIN_PER_CLASS="${TRAIN_PER_CLASS:-200}"
