@@ -36,6 +36,8 @@ SEED                = 42
 DRY_RUN             = False         # True 면 path 만 print
 # ===================================================================
 
+from __future__ import annotations
+
 import json
 import random
 import sys

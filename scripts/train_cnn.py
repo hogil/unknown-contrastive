@@ -43,6 +43,8 @@ SEED                 = 42
 SAVE_WRONG_IMAGES    = True              # FP/FN 저장 → cnn/wrong/<true>/<true>_<pred>_<pct>%_<basename>.png
 # ===================================================================
 
+from __future__ import annotations
+
 import json
 import random
 import sys

@@ -8,22 +8,41 @@ Wafer defect grouping via **CNN backbone supervised + Contrastive head (frozen b
 
 ## 0. Setup (한 번만)
 
+**환경**:
+- **Python 3.10+** 필요 (`str | Path` type hint 등 3.10 문법 사용)
+- 개발/테스트 환경: Python **3.13.7**, PyTorch **2.6.0+cu124**, CUDA **12.4**
+
 ```bash
 # 1. Clone
 git clone https://github.com/hogil/unknown-contrastive.git
 cd unknown-contrastive
 
-# 2. (선택) 가상환경
+# 2. (권장) 가상환경 — Python 3.10+
+python --version          # 3.10+ 확인
 python -m venv .venv
-source .venv/Scripts/activate    # Windows Git Bash
-# 또는: .venv\Scripts\activate     # Windows cmd/PowerShell
+source .venv/Scripts/activate     # Windows Git Bash
+# 또는: .venv\Scripts\activate      # Windows cmd / PowerShell
+# 또는: source .venv/bin/activate   # Linux / Mac
 
-# 3. Dependency 설치
+# 3. PyTorch 먼저 (CUDA 버전 맞춤)
+# GPU CUDA 12.4:
+pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+# CPU only:
+# pip install torch==2.6.0 torchvision==0.21.0
+
+# 4. 나머지 dependency
 pip install -r requirements.txt
-
-# 4. CUDA torch (GPU 있으면)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 ```
+
+**Python 버전 확인 표**:
+
+| Python | 지원 | 비고 |
+|---|:-:|---|
+| 3.9 | ✗ | `str \| Path` type hint 안 됨 |
+| 3.10 | ✓ | 최소 지원 |
+| 3.11 | ✓ | |
+| 3.12 | ✓ | |
+| 3.13 | ✓ | 개발 환경 |
 
 **weights** (ConvNeXtV2 FCMAE backbone) 는 **자동 다운로드** — 첫 실행 시 `weights/` 폴더에 한 번만 받음.
 

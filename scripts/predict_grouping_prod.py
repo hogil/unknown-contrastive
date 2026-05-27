@@ -53,6 +53,8 @@ PROJ_DIM            = 128
 SEED                = 42
 # ===================================================================
 
+from __future__ import annotations
+
 import json
 import shutil
 import sys

@@ -72,6 +72,8 @@ SEED                  = 42
 SAVE_WRONG_IMAGES     = True        # cluster outlier 이미지를 wrong/<true>/<true>_<pred_cluster_class>_<pct>%_<basename>.png
 # ===================================================================
 
+from __future__ import annotations
+
 import json
 import math
 import os

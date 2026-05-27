@@ -78,6 +78,8 @@ CLUSTER_SELECTION_EPSILON = 0.0
 SEED                  = 42
 # ===================================================================
 
+from __future__ import annotations
+
 import json
 import random
 import sys

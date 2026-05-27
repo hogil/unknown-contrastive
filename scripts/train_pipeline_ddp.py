@@ -22,6 +22,8 @@ CL_EVAL_DIR           = "E:/data/images/contrastive_eval"
 PIPELINE_TAG          = "pipeline_ddp"
 # ===================================================================
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess
