@@ -56,32 +56,16 @@ if [[ -n "$WHEELHOUSE" ]]; then
 fi
 echo "============================================================"
 
-# ---------- Python version check ----------
-if ! command -v python3 &> /dev/null; then
-  echo "[ERR] python3 not found"; exit 1
-fi
-
-PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-PY_OK=$(python3 -c "import sys; print(1 if sys.version_info >= (3, 10) else 0)")
-
+# ---------- Python version check (현재 활성 python 사용) ----------
+# venv/conda 등 가상환경은 사용자가 직접 관리 — 이 스크립트는 그 안에서 실행됨
+PY_VER=$(python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')")
+PY_OK=$(python -c "import sys; print(1 if sys.version_info >= (3, 10) else 0)")
 if [[ "$PY_OK" != "1" ]]; then
-  echo "[ERR] Python ${PY_VER} < 3.10. 다음 중 하나 필요:"
-  echo "  - Ubuntu 24.04: python3 (기본 3.12)"
-  echo "  - RHEL 9: 'sudo dnf module install -y python3.11' 후 python3.11 사용"
-  echo "  - conda: 'conda create -n contrastive python=3.11'"
+  echo "[ERR] Python ${PY_VER} < 3.10 (현재 활성)"
+  echo "      Python 3.10+ 환경 활성화 후 다시 실행"
   exit 1
 fi
-echo "[ok] Python ${PY_VER}"
-
-# ---------- venv ----------
-VENV_DIR="$SCRIPT_DIR/.venv"
-if [[ ! -d "$VENV_DIR" ]]; then
-  echo "[setup] venv 생성: $VENV_DIR"
-  python3 -m venv "$VENV_DIR"
-fi
-# shellcheck disable=SC1091
-source "$VENV_DIR/bin/activate"
-echo "[ok] venv activated ($VENV_DIR)"
+echo "[ok] Python ${PY_VER}  ($(which python))"
 
 # ---------- pip ----------
 # 사내 폐쇄망 가정 — 외부 PyPI URL (--index-url) 사용 X.
@@ -132,11 +116,10 @@ echo ""
 echo "============================================================"
 echo "  setup 완료"
 echo "============================================================"
-echo "다음 단계:"
-echo "  source .venv/bin/activate"
-echo "  python scripts/generate_data.py    # synthetic wafer (or 실제 data 가져옴)"
-echo "  python scripts/_split_data.py      # train/eval 분리"
-echo "  python scripts/train_pipeline.py   # single GPU 한방에"
+echo "다음 단계 (어디서든 실행 가능 — scripts 가 PROJECT_ROOT 자동 detect):"
+echo "  python $SCRIPT_DIR/scripts/generate_data.py    # synthetic wafer"
+echo "  python $SCRIPT_DIR/scripts/_split_data.py      # train/eval 분리"
+echo "  python $SCRIPT_DIR/scripts/train_pipeline.py   # single GPU 한방에"
 echo ""
 echo "  # multi-GPU (H100/H200 8장)"
-echo "  CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python scripts/train_pipeline_ddp.py"
+echo "  CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 python $SCRIPT_DIR/scripts/train_pipeline_ddp.py"
