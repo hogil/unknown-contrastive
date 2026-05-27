@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # ============================================================
 #  unknown-contrastive setup — H100 (RHEL 9) / H200 (Ubuntu 24.04) 공용
+#  사내 폐쇄망 호환 — 외부 PyPI URL (--index-url) 사용 안 함.
+#  사내 pip mirror 또는 로컬 wheelhouse 가 wheel 을 제공한다고 가정.
 #
 #  사용:
-#    bash setup.sh           # default: PyTorch 2.6.0 + CUDA 12.4
-#    bash setup.sh --cuda 126 # 또는 CUDA 12.6 (torch 2.7)
-#    bash setup.sh --cpu      # CPU only
+#    bash setup.sh                       # 사내 mirror 사용 (default)
+#    bash setup.sh --cuda 126            # torch 2.7 pin (mirror 가 cu126 wheel 제공)
+#    bash setup.sh --cpu                 # CPU only torch (학습 X)
+#    bash setup.sh --offline             # wheelhouse/ 로컬 wheel
+#    bash setup.sh --wheelhouse /path    # 다른 wheelhouse 폴더
 # ============================================================
 set -e
 
@@ -13,6 +17,7 @@ CUDA_VER="124"
 TORCH_VER="2.6.0"
 TVIS_VER="0.21.0"
 CPU_ONLY=0
+WHEELHOUSE=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -25,6 +30,12 @@ while [[ $# -gt 0 ]]; do
     --cpu)
       CPU_ONLY=1; shift
       ;;
+    --offline)
+      WHEELHOUSE="wheelhouse"; shift
+      ;;
+    --wheelhouse)
+      WHEELHOUSE="$2"; shift 2
+      ;;
     *)
       echo "Unknown option: $1"; exit 1
       ;;
@@ -35,6 +46,9 @@ echo "============================================================"
 echo "  unknown-contrastive setup"
 echo "  CUDA: cu${CUDA_VER}   torch: ${TORCH_VER}   torchvision: ${TVIS_VER}"
 echo "  CPU only: ${CPU_ONLY}"
+if [[ -n "$WHEELHOUSE" ]]; then
+  echo "  ★ Offline (wheelhouse): $WHEELHOUSE"
+fi
 echo "============================================================"
 
 # ---------- Python version check ----------
@@ -63,21 +77,22 @@ fi
 source .venv/bin/activate
 echo "[ok] venv activated"
 
-# ---------- pip upgrade ----------
-pip install --upgrade pip
-
-# ---------- PyTorch ----------
-if [[ "$CPU_ONLY" == "1" ]]; then
-  echo "[setup] PyTorch CPU only"
-  pip install "torch==${TORCH_VER}" "torchvision==${TVIS_VER}"
+# ---------- pip ----------
+# 사내 폐쇄망 가정 — 외부 PyPI URL (--index-url) 사용 X.
+# 사내 pip mirror 또는 로컬 wheelhouse 가 wheel 제공.
+if [[ -n "$WHEELHOUSE" ]]; then
+  if [[ ! -d "$WHEELHOUSE" ]]; then
+    echo "[ERR] wheelhouse 폴더 없음: $WHEELHOUSE"; exit 1
+  fi
+  echo "[offline] wheelhouse: $WHEELHOUSE"
+  pip install --no-index --find-links "$WHEELHOUSE" \
+              "torch==${TORCH_VER}" "torchvision==${TVIS_VER}"
+  pip install --no-index --find-links "$WHEELHOUSE" -r requirements.txt
 else
-  echo "[setup] PyTorch CUDA cu${CUDA_VER}"
-  pip install "torch==${TORCH_VER}" "torchvision==${TVIS_VER}" \
-              --index-url "https://download.pytorch.org/whl/cu${CUDA_VER}"
+  pip install --upgrade pip
+  pip install "torch==${TORCH_VER}" "torchvision==${TVIS_VER}"
+  pip install -r requirements.txt
 fi
-
-# ---------- 나머지 dependency ----------
-pip install -r requirements.txt
 
 # ---------- 검증 ----------
 echo ""
