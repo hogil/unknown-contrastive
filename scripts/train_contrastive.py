@@ -15,8 +15,8 @@ from __future__ import annotations
 # ★ 학습/eval 폴더 분리 (사용자 명시 260527 "클래스 보는건 치팅") ★
 #   TRAIN_DATA_DIR : flat 또는 ImageFolder — label 무시하고 학습용
 #   EVAL_DATA_DIR  : ImageFolder (class subdir) — cluster metric 측정용
-TRAIN_DATA_DIR        = "data/images/contrastive_train"   # 프로젝트 상대, flat
-EVAL_DATA_DIR         = "data/images/contrastive_eval"    # 프로젝트 상대, ImageFolder
+TRAIN_DATA_DIR        = "E:/data/images/contrastive_train"  # ★ 절대규: 모든 이미지 E:/data/images/
+EVAL_DATA_DIR         = "E:/data/images/contrastive_eval"   # ★ 절대규
 ACTIVE_CLASSES_YAML   = None       # eval class subset (선택)
 EXCLUDE_CLASSES       = {"classification", "classification_chips"}
 

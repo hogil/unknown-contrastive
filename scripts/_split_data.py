@@ -25,9 +25,9 @@ CNN_ACTIVE_YAML        = "experiments/split_a_cnn_21.yaml"
 CONTRASTIVE_ACTIVE_YAML = "experiments/split_b_contrastive_22.yaml"
 
 # 출력 폴더 (프로젝트 상대)
-CNN_TRAIN_DIR       = "data/images/cnn_train"           # ImageFolder (class subdir)
-CL_TRAIN_DIR        = "data/images/contrastive_train"   # flat (no class subdir)
-CL_EVAL_DIR         = "data/images/contrastive_eval"    # ImageFolder (class subdir)
+CNN_TRAIN_DIR       = "E:/data/images/cnn_train"           # ★ 절대규: 모든 이미지 E:/data/images/
+CL_TRAIN_DIR        = "E:/data/images/contrastive_train"   # flat (no class subdir)
+CL_EVAL_DIR         = "E:/data/images/contrastive_eval"    # ImageFolder (class subdir)
 
 # Contrastive train vs eval split (wafer disjoint)
 CL_TRAIN_RATIO      = 0.8                                   # 80% train / 20% eval

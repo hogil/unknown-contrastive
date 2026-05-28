@@ -13,7 +13,7 @@ from __future__ import annotations
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
-OUTPUT_DIR          = "data/images/unknown"
+OUTPUT_DIR          = "E:/data/images/unknown"            # ★ 절대규: 모든 이미지 E:/data/images/
 OUTPUT_PX           = 0                    # 0 = 6400 원본 유지, >0 = resize
 SEED                = 42
 N_PER_CLASS         = 100

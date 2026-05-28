@@ -9,8 +9,8 @@ from __future__ import annotations
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
-TRAIN_DATA_DIR        = "data/images/contrastive_train"   # 프로젝트 상대, flat
-EVAL_DATA_DIR         = "data/images/contrastive_eval"    # 프로젝트 상대, ImageFolder
+TRAIN_DATA_DIR        = "E:/data/images/contrastive_train"  # ★ 절대규: 모든 이미지 E:/data/images/
+EVAL_DATA_DIR         = "E:/data/images/contrastive_eval"   # ★ 절대규
 ACTIVE_CLASSES_YAML   = None
 EXCLUDE_CLASSES       = {"classification", "classification_chips"}
 

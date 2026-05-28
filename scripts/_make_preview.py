@@ -17,7 +17,7 @@ from _common import resolve_path
 import generate_data as gen
 
 # ===================================================================
-OUT_DIR    = "data/_preview"     # flat folder (class subdir X)
+OUT_DIR    = "E:/data/images/_preview"  # ★ 절대규: 모든 이미지 E:/data/images/  (flat, class subdir X)
 N_SAMPLES  = 3                    # class 당 sample 수
 TILE_PX    = 0                    # 0 = 6400 원본 유지, 또는 resize 크기
 SEED_BASE  = 42

@@ -21,7 +21,7 @@ from __future__ import annotations
 # === CONFIG (실행 시 이 부분만 수정) ===
 # ===================================================================
 # 입력 — 옵션 A: 단일 폴더 지정 (모든 .png 하위 walk)
-IMAGE_ROOT          = "data/prod/AA/K1AA/20260502"   # 프로젝트 상대 (또는 절대)
+IMAGE_ROOT          = "E:/data/images/prod/AA/K1AA/20260502"  # ★ 절대규: 모든 이미지 E:/data/images/
 
 # 옵션 B: 여러 (product, line, date) 자동 walk
 # IMAGE_BASE 만 주면 IMAGE_BASE/<product>/<line>/<date>/*.png 자동 enum

@@ -12,7 +12,7 @@ from __future__ import annotations
 # ===================================================================
 # === CONFIG (실행 시 이 부분만 수정) ===
 # ===================================================================
-DATA_DIR             = "data/images/cnn_train"     # 프로젝트 상대 — _split_data.py 출력
+DATA_DIR             = "E:/data/images/cnn_train"  # ★ 절대규: 모든 이미지 E:/data/images/
 ACTIVE_CLASSES_YAML  = None              # 선택 — class subset YAML path
 EXCLUDE_CLASSES      = {"classification", "classification_chips"}
 

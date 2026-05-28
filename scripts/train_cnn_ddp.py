@@ -15,7 +15,7 @@ from __future__ import annotations
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
-DATA_DIR             = "data/images/cnn_train"     # 프로젝트 상대, ImageFolder
+DATA_DIR             = "E:/data/images/cnn_train"  # ★ 절대규: 모든 이미지 E:/data/images/
 ACTIVE_CLASSES_YAML  = None
 EXCLUDE_CLASSES      = {"classification", "classification_chips"}
 
