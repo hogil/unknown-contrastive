@@ -50,6 +50,27 @@ while len(PALETTE) < 96:
     PALETTE.append(0)
 PALETTE[31 * 3:31 * 3 + 3] = [255, 255, 255]   # idx 31 = white (invalid fill)
 
+# grade-2 smoothstep lower thresholds (peak grade-2 density tunable per class).
+# Lower = denser grade-2 at the line-core peak. bb 0.42->0.62 (user 260528).
+# fork was 0.53 -> peak grade-2 0.656 (highest single, made fork-combos green-heavy);
+# raised to align with scratch/sr/bb (~0.40-0.44).
+BB_LO_T2 = 0.60         # 0.57 -> 0.60 (user 260528 step4: 미세하게 peak grade-2 줄임)
+FORK_LO_T2 = 0.65       # peak grade-2 0.656 -> 0.524 (user 260528; was 0.53)
+SC_LO_T2 = 0.66         # scratch only (0.60 -> 0.66, user 260528 step4)
+SR_LO_T2 = 0.68         # scratch_rot only (0.66 -> 0.68, user 260528 step12: shadow g2 살짝 줄임, peak 거의 보존)
+SC_HI_T2 = 0.80         # 0.91 -> 0.80 (user 260528 step11: extreme peak g2 빠르게 saturate, shadow 그대로)
+# Hard cap on perpendicular distance from line core for the defect alpha shadow.
+# Lorentzian tails are heavy -> shadow used to extend ~chip-wide. SHADOW_MAX_PX
+# multiplies the perp profile by 0 beyond this distance (smooth fade in the last 5px).
+SHADOW_MAX_PX = 25.0
+BB_SHADOW_MAX_PX = 14.0   # bb seam shadow is narrower (user 260528 step4)
+
+# per-index luminance LUT (256) for the combo grade-space min-blend (keeps mode 'P').
+_PAL_LUM = np.zeros(256, dtype=np.float32)
+_pal_n = len(PALETTE) // 3
+_pal_arr = np.array(PALETTE[: _pal_n * 3], dtype=np.float32).reshape(_pal_n, 3)
+_PAL_LUM[:_pal_n] = _pal_arr @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+
 _BIN_TO_BORDER_KEY = {
     285: "border_b285", 286: "border_b286", 287: "border_b287",
     288: "border_b288", 290: "border_b290", 291: "border_b291",
@@ -80,10 +101,10 @@ EDGE_DIST = np.array([0.50, 0.40, 0.07, 0.02, 0.005, 0.003, 0.001, 0.001], dtype
 EDGE_DIST /= EDGE_DIST.sum()
 CUM_EDGE = np.cumsum(EDGE_DIST)
 
-BASELINE_TIERS = {
-    'clean':  np.array([0.95, 0.040, 0.008, 0.001, 0.0005, 0.0003, 0.0001, 0.0001], dtype=np.float64),
-    'normal': BASELINE.copy(),
-    'hazy':   np.array([0.65, 0.30, 0.040, 0.006, 0.002, 0.001, 0.0005, 0.0005], dtype=np.float64),
+BASELINE_TIERS = {  # 260528 step10: micro-reduce g1+ further
+    'clean':  np.array([0.992, 0.006, 0.0010, 0.0004, 0.0002, 0.0001, 0.0001, 0.0001], dtype=np.float64),
+    'normal': np.array([0.972, 0.024, 0.002,  0.0005, 0.0003, 0.0002, 0.0001, 0.0001], dtype=np.float64),
+    'hazy':   np.array([0.93,  0.060, 0.007,  0.001, 0.0007, 0.0005, 0.0003, 0.0002], dtype=np.float64),
 }
 for _k in BASELINE_TIERS:
     BASELINE_TIERS[_k] /= BASELINE_TIERS[_k].sum()
@@ -102,7 +123,7 @@ for _k in OBJECT_DISTS:
 
 
 def pick_baseline_tier(rng):
-    return str(rng.choice(['clean', 'normal', 'hazy'], p=[0.30, 0.50, 0.20]))
+    return str(rng.choice(['clean', 'normal', 'hazy'], p=[0.92, 0.08, 0.0]))  # 260528 step10: even more clean
 
 
 def pick_intensity_tier(rng):
@@ -130,7 +151,11 @@ def _perp_profile(d, sigma_s=1.5, sigma_m=3.0, sigma_w=6.0):
 
 def _perp_asym_chip(d, sigma_left, sigma_right):
     sigma = np.where(d < 0, sigma_left, sigma_right).astype(np.float32)
-    return (1.0 / (1.0 + (d / sigma) ** 2)).astype(np.float32)
+    prof = (1.0 / (1.0 + (d / sigma) ** 2)).astype(np.float32)
+    # hard cap on shadow extent (smooth 5px fade ending at SHADOW_MAX_PX)
+    ad = np.abs(d).astype(np.float32)
+    cap = np.clip((SHADOW_MAX_PX - ad) / 5.0, 0.0, 1.0).astype(np.float32)
+    return prof * cap
 
 
 def _along_smooth_1d(rng, n_along, length):
@@ -197,7 +222,9 @@ def _bank_line(rng, cx, weak_only):
     ad = np.abs((XC - cx_per_y).astype(np.float32))
     core = 1.0 / (1.0 + (ad / (sigma_core * core_j)) ** 2)
     smear = smear_w / (1.0 + (ad / (sigma_smear * smear_j)) ** 2)
-    line = np.minimum(core + smear, 1.0).astype(np.float32)
+    # bb seam shadow narrower than other defects (5px smooth fade to BB_SHADOW_MAX_PX)
+    cap = np.clip((BB_SHADOW_MAX_PX - ad) / 5.0, 0.0, 1.0).astype(np.float32)
+    line = np.minimum((core + smear) * cap, 1.0).astype(np.float32)
     # along-line up-down distribution: center-peak with HIGH floor -> textured but never breaks
     strength = _along_center_peak(rng, CHIP, 0.0, float(CHIP),
                                   floor=float(rng.uniform(0.66, 0.80)),   # weak part raised (less fade)
@@ -395,7 +422,8 @@ def render_single_chip(obj, rng, intensity_tier=None, bin_id=None, add_border=Tr
         bin_id = int(rng.choice(DEFECT_BIN_POOL['00C'], p=DEFECT_BIN_WEIGHTS))
 
     bg = _normal_bg(rng, (CHIP, CHIP),
-                    bg_range or SINGLE_BG_RANGE_BY_KEY.get(obj, SINGLE_BG_RANGE))   # per-chip noise bg
+                    bg_range or SINGLE_BG_RANGE_BY_KEY.get(obj, SINGLE_BG_RANGE),
+                    noise_g2_ratio=DEFECT_BG_G2_RATIO)   # per-chip noise bg
 
     alpha_scale = INTENSITY_ALPHA_SCALE[intensity_tier]
     alpha = ALPHA_FNS[obj](rng) * alpha_scale * DEFECT_ALPHA_BOOST.get(obj, 1.0)
@@ -409,11 +437,13 @@ def render_single_chip(obj, rng, intensity_tier=None, bin_id=None, add_border=Tr
     u1 = rng.random((CHIP, CHIP))
     is_defect = u1 < alpha
     if obj == 'fork':
-        lo_t2, hi_t2 = 0.53, 0.90
+        lo_t2, hi_t2 = FORK_LO_T2, 0.90
     elif obj == 'bank_boundary':
-        lo_t2, hi_t2 = 0.42, 0.84          # even more/denser grade-2 green at the peak
-    else:                                  # scratch, scratch_rot
-        lo_t2, hi_t2 = 0.60, 0.91
+        lo_t2, hi_t2 = BB_LO_T2, 0.84      # peak grade-2 density tunable (BB_LO_T2)
+    elif obj == 'scratch_rot':
+        lo_t2, hi_t2 = SR_LO_T2, SC_HI_T2  # scratch_rot 음영부 g2 별도 (낮은 prob)
+    else:                                  # scratch
+        lo_t2, hi_t2 = SC_LO_T2, SC_HI_T2
     t2 = np.clip((alpha - lo_t2) / (hi_t2 - lo_t2), 0.0, 1.0).astype(np.float32)
     p_2 = (t2 * t2 * (3.0 - 2.0 * t2)).astype(np.float32)
     u2 = rng.random((CHIP, CHIP))
@@ -437,15 +467,119 @@ def render_single_chip(obj, rng, intensity_tier=None, bin_id=None, add_border=Tr
     return img
 
 
+def _lo_hi_t2(obj):
+    """grade-2 smoothstep (lo, hi) per defect class."""
+    if obj == 'fork':
+        return FORK_LO_T2, 0.90
+    if obj == 'bank_boundary':
+        return BB_LO_T2, 0.84
+    if obj == 'scratch_rot':
+        return SR_LO_T2, SC_HI_T2
+    return SC_LO_T2, SC_HI_T2                  # scratch
+
+
 def render_combo_chip(key, rng):
-    """2-combo = pixel-wise RGB min of two freshly rendered single-defect chips
-    (min keeps the darker/stronger defect per pixel -> 'still a defect, not white')."""
+    """2-combo as an INDEPENDENT (alpha-level) superposition, NOT a grade-map union.
+
+    Each defect's alpha field + grade decision are computed independently; at every
+    pixel the LOCALLY STRONGER defect (higher alpha) supplies its own grade, and grade
+    quantization stays per-pixel. This keeps peak grade-2 density at single-chip level.
+    The old approach quantized two full single chips then kept the darker grade
+    (min-blend / union), which made grade-2 win from EITHER source -> peak grade-2
+    inflated above an independent sum (260528 user: '독립합이 되지 않은거지'). mode 'P'."""
     a, b = key.split('+')
     rng_bg = COMBO_BG_RANGE_BY_KEY.get(key, COMBO_BG_RANGE)
-    img_a = render_single_chip(a, rng, bg_range=rng_bg).convert('RGB')
-    img_b = render_single_chip(b, rng, bg_range=rng_bg).convert('RGB')
-    arr = np.minimum(np.asarray(img_a), np.asarray(img_b)).astype(np.uint8)
-    return Image.fromarray(arr, mode='RGB')
+    tier = pick_intensity_tier(rng)
+    bin_id = int(rng.choice(DEFECT_BIN_POOL['00C'], p=DEFECT_BIN_WEIGHTS))
+    bg = _normal_bg(rng, (CHIP, CHIP), rng_bg, noise_g2_ratio=DEFECT_BG_G2_RATIO)
+
+    def _field(obj):
+        alpha = ALPHA_FNS[obj](rng) * INTENSITY_ALPHA_SCALE[tier] * DEFECT_ALPHA_BOOST.get(obj, 1.0)
+        alpha = np.clip(alpha, 0.0, 1.0).astype(np.float32)
+        lo, hi = _lo_hi_t2(obj)
+        t2 = np.clip((alpha - lo) / (hi - lo), 0.0, 1.0).astype(np.float32)
+        p_2 = (t2 * t2 * (3.0 - 2.0 * t2)).astype(np.float32)
+        is_2 = rng.random((CHIP, CHIP)) < p_2
+        u3 = rng.random((CHIP, CHIP))
+        other = np.where(u3 < 0.95, np.uint8(1), np.where(u3 < 0.99, np.uint8(3), np.uint8(4)))
+        dgrade = np.where(is_2, np.uint8(2), other)
+        return alpha, dgrade
+
+    aA, gA = _field(a)
+    aB, gB = _field(b)
+    # alpha-winner everywhere: occupancy uses max(alpha_A, alpha_B) with a SINGLE
+    # rng draw -> shadow zones don't union-inflate into blobs (the previous
+    # independent occA|occB unioned to 1-(1-aA)(1-aB), filling the gap between lines).
+    a_wins = aA >= aB
+    alpha_eff = np.maximum(aA, aB)
+    occ = rng.random((CHIP, CHIP)) < alpha_eff
+    dgrade = np.where(a_wins, gA, gB)
+    grades = np.where(occ, dgrade, bg).astype(np.uint8)
+
+    border_color = BIN_TO_BORDER_IDX.get(bin_id, KEY_TO_INDEX['border_etc'])
+    grades[:2, :] = border_color
+    grades[-2:, :] = border_color
+    grades[:, :2] = border_color
+    grades[:, -2:] = border_color
+
+    img = Image.frombytes('P', (CHIP, CHIP), grades.tobytes())
+    img.putpalette(PALETTE)
+    return img
+
+
+def render_combo_with_sources(key, rng):
+    """Diagnostic: render the combo AND the two internal source singles using the
+    SAME alpha + grade fields the combo used. Returns (combo, src_A_only, src_B_only)
+    PIL P images so the user can visually verify the combo's green == subset of
+    (src_A green ∪ src_B green). Separate occ draws per output -> independent
+    realizations of occupancy, same defect alpha+grade fields."""
+    a, b = key.split('+')
+    rng_bg = COMBO_BG_RANGE_BY_KEY.get(key, COMBO_BG_RANGE)
+    tier = pick_intensity_tier(rng)
+    bin_id = int(rng.choice(DEFECT_BIN_POOL['00C'], p=DEFECT_BIN_WEIGHTS))
+    bg = _normal_bg(rng, (CHIP, CHIP), rng_bg, noise_g2_ratio=DEFECT_BG_G2_RATIO)
+
+    def _field(obj):
+        alpha = ALPHA_FNS[obj](rng) * INTENSITY_ALPHA_SCALE[tier] * DEFECT_ALPHA_BOOST.get(obj, 1.0)
+        alpha = np.clip(alpha, 0.0, 1.0).astype(np.float32)
+        lo, hi = _lo_hi_t2(obj)
+        t2 = np.clip((alpha - lo) / (hi - lo), 0.0, 1.0).astype(np.float32)
+        p_2 = (t2 * t2 * (3.0 - 2.0 * t2)).astype(np.float32)
+        is_2 = rng.random((CHIP, CHIP)) < p_2
+        u3 = rng.random((CHIP, CHIP))
+        other = np.where(u3 < 0.95, np.uint8(1), np.where(u3 < 0.99, np.uint8(3), np.uint8(4)))
+        dgrade = np.where(is_2, np.uint8(2), other)
+        return alpha, dgrade
+
+    aA, gA = _field(a)
+    aB, gB = _field(b)
+
+    # combo: max-alpha winner (same as render_combo_chip)
+    a_wins = aA >= aB
+    alpha_eff = np.maximum(aA, aB)
+    occ_c = rng.random((CHIP, CHIP)) < alpha_eff
+    dgrade_c = np.where(a_wins, gA, gB)
+    grades_c = np.where(occ_c, dgrade_c, bg).astype(np.uint8)
+    # source A only (combo's aA + gA + bg, fresh occ draw)
+    occ_a = rng.random((CHIP, CHIP)) < aA
+    grades_a = np.where(occ_a, gA, bg).astype(np.uint8)
+    # source B only
+    occ_b = rng.random((CHIP, CHIP)) < aB
+    grades_b = np.where(occ_b, gB, bg).astype(np.uint8)
+
+    border_color = BIN_TO_BORDER_IDX.get(bin_id, KEY_TO_INDEX['border_etc'])
+    for arr in (grades_c, grades_a, grades_b):
+        arr[:2, :] = border_color
+        arr[-2:, :] = border_color
+        arr[:, :2] = border_color
+        arr[:, -2:] = border_color
+
+    out = []
+    for arr in (grades_a, grades_b, grades_c):
+        im = Image.frombytes('P', (CHIP, CHIP), arr.tobytes())
+        im.putpalette(PALETTE)
+        out.append(im)
+    return out[2], out[0], out[1]   # combo, src_A, src_B
 
 
 # Per-chip background noise density ranges. The too-bright / too-clean extreme is
@@ -455,11 +589,24 @@ def render_combo_chip(key, rng):
 #   combo        : per-single BRIGHTER — min-blend of two combines noise (~p1+p2),
 #                  so each piece is rendered light to keep the blended combo from
 #                  going too dark.
-BG_NOISE_RANGE = (0.30, 0.62)          # Normal, OOD (noise IS the signal here)
-SINGLE_BG_RANGE = (0.12, 0.28)         # fork / scratch / scratch_rot: a bit more background noise
+def _env_range(name, default):
+    """Optional 'lo,hi' env override (e.g. SINGLE_BG_RANGE=0.03,0.12) — lets an
+    experiment lower the training single-defect bg noise without editing the
+    canonical default (used by the wafer / realistic generators)."""
+    import os
+    v = os.environ.get(name)
+    if not v:
+        return default
+    lo, hi = (float(x) for x in v.split(","))
+    return (lo, hi)
+
+BG_NOISE_RANGE = _env_range("BG_NOISE_RANGE", (0.03, 0.10))   # Normal/OOD (env-overridable 260528)
+SINGLE_BG_RANGE = _env_range("SINGLE_BG_RANGE", (0.015, 0.06))  # 260528 step10: micro reduce (was 0.02-0.08)
 SINGLE_BG_RANGE_BY_KEY = {             # bank_boundary keeps the lighter background (unchanged)
-    'bank_boundary': (0.08, 0.22),
+    'bank_boundary': _env_range("SINGLE_BG_RANGE_BANK", (0.008, 0.045)),  # 260528 step10: micro reduce (was 0.01-0.06)
 }
+# noise grade-2 ratio for DEFECT-chip clean area. micro-reduce in step10.
+DEFECT_BG_G2_RATIO = 0.003
 COMBO_BG_RANGE = (0.06, 0.14)          # per-single for combos: light (min-blend was too noisy)
 COMBO_BG_RANGE_BY_KEY = {              # bb+scratch_rot lighter still
     'bank_boundary+scratch_rot': (0.05, 0.11),
@@ -470,16 +617,16 @@ COMBO_BG_RANGE_BY_KEY = {              # bb+scratch_rot lighter still
 DEFECT_ALPHA_BOOST = {'fork': 1.15}
 
 
-def _normal_bg(rng, shape=(CHIP, CHIP), bg_range=BG_NOISE_RANGE):
-    """Per-chip noise background (Normal mechanism), density sampled uniformly from
-    bg_range so it is never too bright/clean: grade 0 (white) with prob 1-p_noise,
-    else grade 1 (95%) / grade 2 (5%). Used as the non-defect background for ALL
-    classes (defect / combo / OOD / Normal)."""
+def _normal_bg(rng, shape=(CHIP, CHIP), bg_range=BG_NOISE_RANGE, noise_g2_ratio=0.001):
+    """Per-chip noise background. bg_range = fraction of pixels that are NOT grade 0.
+    Among those noise pixels, `noise_g2_ratio` are grade 2 (rest grade 1).
+    Default 5% g2 keeps Normal/OOD as-is; defect chips pass 1% so the clean
+    non-defect area is mostly grade 0 with rare grey noise (user 260528)."""
     p_noise = float(rng.uniform(*bg_range))
     u = rng.random(shape)
     is_noise = u < p_noise
     u2 = rng.random(shape)
-    noise_grade = np.where(u2 < 0.95, 1, 2).astype(np.uint8)
+    noise_grade = np.where(u2 < (1.0 - noise_g2_ratio), 1, 2).astype(np.uint8)
     return np.where(is_noise, noise_grade, 0).astype(np.uint8)
 
 
@@ -686,7 +833,9 @@ def iter_ood_chips(cls, seed):
                          alpha[..., None] * cum_peak[None, None, :])
             uu = rng.random((CHIP, CHIP)).astype(np.float32)
             grades = (uu[..., None] < cum_mixed).argmax(axis=-1).astype(np.uint8)
-            mask = alpha > 0.01
+            # 260528 step9: probabilistic mask (rng < alpha) instead of binary
+            # (alpha>0.01) -> smooth gradient blend with clean bg, no sharp patch boundary.
+            mask = rng.random((CHIP, CHIP)) < alpha
             chip[mask] = grades[mask]
             b = int(rng.choice(bin_pool, p=DEFECT_BIN_WEIGHTS))
             border = BIN_TO_BORDER_IDX.get(b, KEY_TO_INDEX['border_etc'])

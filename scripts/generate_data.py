@@ -78,26 +78,25 @@ def split_main_sub(cls: str) -> tuple[str, str]:
 def render_wafer(cls: str, seed: int, dst_path: Path) -> bool:
     """class 별 wafer 합성 → dst_path 저장."""
     try:
+        Path(dst_path).parent.mkdir(parents=True, exist_ok=True)
         if cls in cg.CANVAS_CLASSES:
             canvas, chip_meta, palette = cg.render_canvas_in_memory(cls, seed)
-            img_p = Image.frombytes("P", (sg.SIZE, sg.SIZE), canvas.tobytes())
-            img_p.putpalette(palette)
-            img = img_p.convert("RGB")
-            try:
-                Path(dst_path).parent.mkdir(parents=True, exist_ok=True)
-            except Exception:
-                pass
+            img = Image.frombytes("P", (sg.SIZE, sg.SIZE), canvas.tobytes())
+            img.putpalette(palette)                          # palette 'P' 유지 (RGB 변환 X)
         else:
             main, sub = split_main_sub(cls)
             png_path, _, _, _, _, _ = sg.render(main, sub, seed)
-            img = Image.open(png_path).convert("RGB")
+            img = Image.open(png_path).copy()                # palette 'P' 유지 (load + 복사)
             try:
                 Path(png_path).unlink()
             except Exception:
                 pass
 
+        # ★ 정책: 이미지는 항상 palette PNG (mode 'P'). categorical → resize 는 NEAREST.
         if OUTPUT_PX > 0 and img.size != (OUTPUT_PX, OUTPUT_PX):
-            img = img.resize((OUTPUT_PX, OUTPUT_PX), Image.LANCZOS)
+            img = img.resize((OUTPUT_PX, OUTPUT_PX), Image.NEAREST)
+        if img.mode != "P":
+            raise ValueError(f"{cls}: palette PNG 여야 하는데 mode={img.mode}")
         img.save(dst_path, optimize=False)
         return True
     except Exception as e:
@@ -107,10 +106,19 @@ def render_wafer(cls: str, seed: int, dst_path: Path) -> bool:
         return False
 
 
+def _render_one(task):
+    """ProcessPoolExecutor worker — (cls, seed, dst) 한 장 합성."""
+    cls, seed, dst = task
+    return cls, render_wafer(cls, seed, Path(dst))
+
+
 def main():
     out = resolve_path(OUTPUT_DIR)
     out.mkdir(parents=True, exist_ok=True)
-    total = 0
+
+    # 1) 합성 task 수집 (skip 로직 — 가벼워서 순차)
+    tasks = []
+    skipped = 0
     for cls in CLASSES:
         sub_dir = out / cls
         sub_dir.mkdir(exist_ok=True)
@@ -118,14 +126,30 @@ def main():
         existing = len(list(sub_dir.glob("*.png")))
         if existing >= n_target:
             print(f"[skip] {cls}: {existing} >= {n_target}")
-            total += existing
+            skipped += existing
             continue
         print(f"[gen ] {cls}: {existing} -> {n_target}", flush=True)
         for i in range(existing, n_target):
             seed = SEED + abs(hash(cls)) % 10000 + i
             dst = sub_dir / f"wafer_{i:04d}.png"
-            if render_wafer(cls, seed, dst):
-                total += 1
+            tasks.append((cls, seed, str(dst)))
+
+    # 2) ProcessPoolExecutor — CPU 코어 전부 사용 (환경 사양 다 씀)
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    n_workers = max(1, os.cpu_count() or 8)
+    total = 0
+    if tasks:
+        print(f"[gen] {len(tasks)} wafers → {n_workers} workers (CPU 코어 전부 활용)", flush=True)
+        with ProcessPoolExecutor(max_workers=n_workers) as exe:
+            futs = [exe.submit(_render_one, t) for t in tasks]
+            done = 0
+            for fut in as_completed(futs):
+                _cls, ok = fut.result()
+                done += 1
+                if ok:
+                    total += 1
+                if done % 50 == 0 or done == len(tasks):
+                    print(f"  [{done}/{len(tasks)}] ok={total}", flush=True)
 
     if _TMP.exists():
         try:
@@ -134,7 +158,7 @@ def main():
             pass
 
     print(f"\n[OUT] {out.resolve()}")
-    print(f"  total images: {total}, classes: {len(CLASSES)}")
+    print(f"  generated: {total}, skipped(existing): {skipped}, classes: {len(CLASSES)}")
 
 
 if __name__ == "__main__":

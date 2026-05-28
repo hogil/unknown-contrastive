@@ -26,7 +26,7 @@ TAG                   = "contrastive_ddp"
 IMG_SIZE              = 384
 PROJ_DIM              = 128
 BATCH_PER_GPU         = 8
-NUM_WORKERS_PER_GPU   = 4
+NUM_WORKERS_PER_GPU   = None         # None = auto: os.cpu_count() // world_size (환경 코어 전부 활용)
 EPOCHS                = 5
 WARMUP_EPOCHS         = 1
 TRAIN_SAMPLING_RATIO  = 0.25
@@ -242,6 +242,8 @@ def info_nce_loss(z1, z2, queue, temp, ignore_neg_sim, label_smoothing):
 def train_worker(rank, world_size):
     setup_ddp(rank, world_size)
     seed_all(SEED + rank)
+    import os
+    nw = NUM_WORKERS_PER_GPU if NUM_WORKERS_PER_GPU is not None else max(1, (os.cpu_count() or 8) // world_size)
     device = torch.device(f"cuda:{rank}" if torch.cuda.is_available() else "cpu")
 
     if is_main(rank):
@@ -334,7 +336,7 @@ def train_worker(rank, world_size):
         sub = torch.utils.data.Subset(train_ds, idx)
         sampler = DistributedSampler(sub, num_replicas=world_size, rank=rank, shuffle=True, seed=SEED + ep)
         ld = DataLoader(sub, batch_size=BATCH_PER_GPU, sampler=sampler,
-                        num_workers=NUM_WORKERS_PER_GPU, pin_memory=True, drop_last=True)
+                        num_workers=nw, pin_memory=True, drop_last=True)
         # warmup
         lr = LR_HEAD * min(1.0, ep / max(1, WARMUP_EPOCHS))
         for g in opt.param_groups: g["lr"] = lr
@@ -380,7 +382,7 @@ def train_worker(rank, world_size):
     # ---------- Eval: embed + HDBSCAN (rank 0 모음, all ranks compute) ----------
     eval_sampler = DistributedSampler(eval_base, num_replicas=world_size, rank=rank, shuffle=False)
     eval_ld = DataLoader(eval_base, batch_size=BATCH_PER_GPU * 4, sampler=eval_sampler,
-                         num_workers=NUM_WORKERS_PER_GPU, pin_memory=True)
+                         num_workers=nw, pin_memory=True)
     model.eval()
     local_z, local_lbl, local_path = [], [], []
     with torch.no_grad():

@@ -28,6 +28,9 @@ Bin rules:
 """
 import os, time, json, numpy as np
 from PIL import Image, ImageDraw, ImageFont
+# known-cnn chip_synth (commit 66ee761) 와 일관된 peak/shadow spec 사용
+from _synth_chip import (BB_LO_T2, FORK_LO_T2, SC_LO_T2, SR_LO_T2, SC_HI_T2,
+                          SHADOW_MAX_PX, BB_SHADOW_MAX_PX)
 try:
     from _fq_metadata import add_synthetic_fq_to_json
 except ImportError:
@@ -882,7 +885,7 @@ def select_normal_chips(rng, inside):
         (b) multiple small clusters at random anchors (50%) — 2-6개 cluster, 각 cluster 작음
     - object: 9종 mix (novel 비중 ↑)
     """
-    target_total = int(rng.integers(10, 151))                                          # 10-150 chips
+    target_total = int(rng.integers(5, 25))                                            # 5-24 chips (사용자: defect 갯수 대폭 ↓, Stream A/B 로 대체)
     ys, xs = np.where(inside); n_inside = len(ys)
     mask = np.zeros((GRID, GRID), dtype=bool)
     obj_map = {}
@@ -987,16 +990,16 @@ def render(class_name, object_name, seed):
     #    baseline_tier 은 JSON wafer_meta 기록용으로만 유지 (rendering 무관).
     wafer_pink = _pink_noise_field_2d(rng, SIZE, exponent=1.5)                       # (SIZE,SIZE) float32 ∈ [0,1]
     # 260507 v5.2: uniform [0,1] per-wafer scale → linear map to [floor, cap].
-    # 260527 patch v5: 작은 쪽 0.16 그대로, 큰 쪽 0.24 (range 살짝 넓힘),
-    #                  t_wafer 를 beta(0.5, 0.5) U-shape → 양 극단 (밝음/진함) 우세
-    P_FLOOR, P_CAP = 0.16, 0.24                                                       # 작은 쪽 그대로, 큰 쪽 0.18 → 0.24
-    t_wafer = float(rng.beta(0.5, 0.5))                                              # U-shape (uniform 대신)
+    # 260527 patch v6: wafer-by-wafer 어둡기 산포 확대 — 밝은쪽(P_FLOOR) 낮춰 range 넓힘.
+    #                  range 0.08~0.24 (3배 차이), t_wafer beta(0.5,0.5) U-shape → 밝음/진함 양극단 우세.
+    P_FLOOR, P_CAP = 0.03, 0.11                                                       # 전체 어둡기 ↓ (하한 0.04→0.03, 상한 0.14→0.11)
+    t_wafer = float(rng.beta(0.5, 0.5))                                              # U-shape (극단 우세)
     p_bg_field = (P_FLOOR + (P_CAP - P_FLOOR) *
                   np.clip(t_wafer + 0.3 * (wafer_pink - 0.5), 0.0, 1.0)).astype(np.float32)
     u_bg = rng.random((SIZE, SIZE))
     is_bg = u_bg < p_bg_field
     u_bg2 = rng.random((SIZE, SIZE))
-    bg_grade = np.where(u_bg2 < 0.92, np.uint8(1), np.uint8(2))                      # noise: 92% grade1 + 8% grade2
+    bg_grade = np.where(u_bg2 < 0.9993, np.uint8(1), np.uint8(2))                    # noise: grade2 이상 0.1%→0.07% (더 ↓)
     canvas = np.where(is_bg, bg_grade, np.uint8(0)).astype(np.uint8)                 # non-noise = grade 0 (white)
     del u_bg, u_bg2, bg_grade, wafer_pink
     inside_pix = np.repeat(np.repeat(inside, CHIP, axis=0), CHIP, axis=1)             # 6400x6400 bool
@@ -1043,7 +1046,7 @@ def render(class_name, object_name, seed):
         # 260527 v6: Normal 은 patch 비율 대폭 축소 (사용자: "class 정의 된 불량 chip 비율 많다")
         # defect class: 12~28 (그대로), Normal: 3~8 (≈ 1/4)
         is_normal_wafer = (class_name == 'Normal')
-        n_sc = int(rng.integers(3, 8)) if is_normal_wafer else int(rng.integers(12, 28))
+        n_sc = int(rng.integers(10, 22)) if is_normal_wafer else int(rng.integers(12, 28))
         for _ in range(n_sc):
             # 정사각형 (h == w) — stretch X. 좌우 대칭 음영 위해
             patch_size = int(rng.integers(50, 360))
@@ -1070,13 +1073,13 @@ def render(class_name, object_name, seed):
                     curved[_y] = np.roll(alpha[_y], int(shifts[_y]))
                 alpha = curved
 
-            # chip_synth 의 grade 만들기 (scratch lo_t2/hi_t2=0.60/0.91)
-            # grade 1 밀도 조금 더 낮춤 (사용자 명시 진짜 살짝): 0.70 → 0.62
+            # chip_synth 의 grade 만들기 — known-cnn 66ee761 spec 과 일관 (SC_LO_T2/SC_HI_T2)
+            # grade 1 밀도 조금 더 낮춤 (사용자 명시 진짜 살짝): 0.70 → 0.62 → 0.45
             u1_ = rng.random(alpha.shape)
-            is_defect = u1_ < (alpha * 0.62)
-            t2_ = np.clip((alpha - 0.60) / (0.91 - 0.60), 0.0, 1.0)
+            is_defect = u1_ < (alpha * 0.45)                                          # Stream A grade1 density 0.62→0.45 (더 ↓)
+            t2_ = np.clip((alpha - SC_LO_T2) / (SC_HI_T2 - SC_LO_T2), 0.0, 1.0)
             # pixel 2 비율 절반 (이전 patch 유지)
-            p_2 = (t2_ * t2_ * (3.0 - 2.0 * t2_) * 0.5).astype(np.float32)
+            p_2 = (t2_ * t2_ * (3.0 - 2.0 * t2_) * 0.3).astype(np.float32)            # Stream A grade2 비율 0.5→0.3 (더 ↓)
             u2_ = rng.random(alpha.shape)
             is_2 = u2_ < p_2
             defect_grade = np.where(is_2, np.uint8(2), np.uint8(1))
@@ -1095,7 +1098,7 @@ def render(class_name, object_name, seed):
 
     # === Stream B: ㅡ / ㅣ 단순 short line (0° / 90° 만, 음영 X 또는 미세 taper) ===
     # 260527 v6: Normal 은 line 비율 대폭 축소 (사용자: "class 정의 된 불량 chip 비율 많다")
-    n_lines = int(rng.integers(8, 18)) if is_normal_wafer else int(rng.integers(30, 65))
+    n_lines = int(rng.integers(20, 40)) if is_normal_wafer else int(rng.integers(30, 65))
     for _ in range(n_lines):
         cy = int(rng.integers(20, SIZE - 20))
         cx = int(rng.integers(20, SIZE - 20))
@@ -1122,6 +1125,13 @@ def render(class_name, object_name, seed):
                     if (0 <= yy_p < SIZE and 0 <= xx_p < SIZE
                             and inside_pix[yy_p, xx_p] and canvas[yy_p, xx_p] == 0):
                         canvas[yy_p, xx_p] = grade_main
+        # ㅡ/ㅣ 선이 그어진 chip → 죽은 chip (normal/defect/invalid 아님).
+        #   chip_meta 에 kind='dead' 등록 → 경계색 = system bin(285~390) + JSON b 부여.
+        #   선 시각은 그대로 유지, chip 내부 object 패턴은 그리지 않음.
+        gy_d, gx_d = cy // CHIP, cx // CHIP
+        if inside[gy_d, gx_d] and (gy_d, gx_d) not in chip_meta:
+            chip_meta[(gy_d, gx_d)] = {'kind': 'dead', 'obj': None,
+                                       'bin': assign_defect_bin(kind, rng), 'inside': True}
 
     # 5) Defect chips: alpha modulation per chip with assigned object
     #    Round 29 v15: intensity_tier per-wafer scales alpha + shifts grade dist
@@ -1174,11 +1184,13 @@ def render(class_name, object_name, seed):
         pink_baseline = np.where(is_chip_bg, chip_bg_grade, np.uint8(0)).astype(np.uint8)
 
         if obj in ('fork', 'scratch', 'scratch_rot'):
-            # 260507 v5.1: fork 미세 dial down — 0.50/0.88 → 0.53/0.90 (grade 2 살짝 ↓)
+            # known-cnn 66ee761 spec 과 일관 — FORK/SC/SR_LO_T2, SC_HI_T2 모듈 상수 사용
             if obj == 'fork':
-                lo_t2, hi_t2 = 0.53, 0.90
-            else:
-                lo_t2, hi_t2 = 0.60, 0.91
+                lo_t2, hi_t2 = FORK_LO_T2, 0.90
+            elif obj == 'scratch_rot':
+                lo_t2, hi_t2 = SR_LO_T2, SC_HI_T2
+            else:                                                                     # scratch
+                lo_t2, hi_t2 = SC_LO_T2, SC_HI_T2
             u1 = rng.random((CHIP, CHIP))
             is_defect = u1 < alpha
             t2 = np.clip((alpha - lo_t2) / (hi_t2 - lo_t2), 0.0, 1.0).astype(np.float32)
@@ -1256,7 +1268,7 @@ def render(class_name, object_name, seed):
             meta = chip_meta.get((gy, gx))
             if meta is None:                                                          # normal chip
                 b, c = 1, IDX_BORDER_NORMAL
-            elif meta['kind'] == 'defect':
+            elif meta['kind'] in ('defect', 'dead'):                                  # defect = object 패턴, dead = ㅡ/ㅣ 선
                 b, c = 2, BIN_TO_BORDER_IDX.get(meta['bin'], KEY_TO_INDEX["border_etc"])
             else:                                                                     # invalid
                 b, c = 2, IDX_BORDER_INV

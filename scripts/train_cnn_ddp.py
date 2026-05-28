@@ -26,7 +26,7 @@ TAG                  = "cnn_ddp"
 BACKBONE             = "convnextv2_base.fcmae_ft_in22k_in1k_384"
 IMG_SIZE             = 384
 BATCH_PER_GPU        = 16            # ★ total batch = BATCH_PER_GPU × world_size
-NUM_WORKERS_PER_GPU  = 4
+NUM_WORKERS_PER_GPU  = None          # None = auto: os.cpu_count() // world_size (환경 코어 전부 활용)
 EPOCHS               = 30
 WARMUP_EPOCHS        = 5
 LR_BACKBONE          = 2e-5
@@ -218,6 +218,8 @@ def eval_loop(model_ddp, loader, device, criterion, classes=None,
 def train_worker(rank: int, world_size: int):
     setup_ddp(rank, world_size)
     seed_all(SEED + rank)
+    import os
+    nw = NUM_WORKERS_PER_GPU if NUM_WORKERS_PER_GPU is not None else max(1, (os.cpu_count() or 8) // world_size)
     device = torch.device(f"cuda:{rank}" if torch.cuda.is_available() else "cpu")
 
     # run_dir: rank=0 만 만들고 broadcast (path string)
@@ -281,11 +283,11 @@ def train_worker(rank: int, world_size: int):
     te_sampler = DistributedSampler(ds_test,  num_replicas=world_size, rank=rank, shuffle=False)
 
     train_ld = DataLoader(ds_train, batch_size=BATCH_PER_GPU, sampler=tr_sampler,
-                          num_workers=NUM_WORKERS_PER_GPU, pin_memory=True, drop_last=True)
+                          num_workers=nw, pin_memory=True, drop_last=True)
     val_ld   = DataLoader(ds_val, batch_size=BATCH_PER_GPU, sampler=va_sampler,
-                          num_workers=NUM_WORKERS_PER_GPU, pin_memory=True)
+                          num_workers=nw, pin_memory=True)
     test_ld  = DataLoader(ds_test, batch_size=BATCH_PER_GPU, sampler=te_sampler,
-                          num_workers=NUM_WORKERS_PER_GPU, pin_memory=True)
+                          num_workers=nw, pin_memory=True)
 
     # model
     model = build_model(n_cls, backbone_path, rank).to(device)

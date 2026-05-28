@@ -39,11 +39,11 @@ def main():
             print(f"[{total + 1:>3}/{len(gen.CLASSES) * N_SAMPLES}] {cls}_{i}", flush=True)
             ok = gen.render_wafer(cls, seed, dst)
             if ok:
-                # optional resize
+                # optional resize — palette 'P' 유지 (categorical → NEAREST, RGB 변환 X)
                 if TILE_PX > 0:
                     from PIL import Image
-                    Image.open(dst).convert("RGB").resize(
-                        (TILE_PX, TILE_PX), Image.LANCZOS).save(dst, optimize=False)
+                    Image.open(dst).resize(
+                        (TILE_PX, TILE_PX), Image.NEAREST).save(dst, optimize=False)
                 total += 1
 
     print(f"\n[OUT] {out.resolve()}")
