@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """unknown-contrastive 프로젝트 전용 resource monitor daemon.
 
 사용자 directive (260528): 이 프로젝트의 python process 가
