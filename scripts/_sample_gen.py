@@ -245,11 +245,13 @@ CUM_EDGE_LINE = np.cumsum(EDGE_LINE_DIST)
 #   invalid_pct: 0.05 / 0.10 / 0.15 / 0.20 → invalid chip 비율 변동
 # JSON wafer_meta 에 picked tiers 기록 → analysis / debug.
 BASELINE_TIERS = {
-    # v19o: BG 원복 (v19n REVERT)
-    'clean':  np.array([0.95, 0.040, 0.008, 0.001, 0.0005, 0.0003, 0.0001, 0.0001], dtype=np.float64),
-    'normal': BASELINE.copy(),
-    'hazy':   np.array([0.65, 0.30,  0.040, 0.006, 0.002,  0.001,  0.0005, 0.0005], dtype=np.float64),
+    # 260528: known-cnn chip_synth (commit 66ee761) 동기화 — g0 대폭 ↑ (canvas + chip bg 깨끗)
+    'clean':  np.array([0.992, 0.006, 0.0010, 0.0004, 0.0002, 0.0001, 0.0001, 0.0001], dtype=np.float64),
+    'normal': np.array([0.972, 0.024, 0.0020, 0.0005, 0.0003, 0.0002, 0.0001, 0.0001], dtype=np.float64),
+    'hazy':   np.array([0.930, 0.060, 0.0070, 0.0010, 0.0007, 0.0005, 0.0003, 0.0002], dtype=np.float64),
 }
+# 260528: canvas 양호영역(BASELINE) noise 5% ↓ — g1+ 만 ×0.95, normalize 후 g0 보충
+for _k in BASELINE_TIERS: BASELINE_TIERS[_k][1:] *= 0.95
 for _k in BASELINE_TIERS: BASELINE_TIERS[_k] /= BASELINE_TIERS[_k].sum()
 CUM_BASELINE_TIERS = {k: np.cumsum(v) for k, v in BASELINE_TIERS.items()}
 
@@ -259,7 +261,8 @@ INTENSITY_ALPHA_SCALE = {'strong': 1.0, 'mid': 0.96, 'weak': 0.93}
 INTENSITY_GRADE_SHIFT = {'strong': 0,   'mid': 0,    'weak': 0}
 
 def pick_baseline_tier(rng):
-    return str(rng.choice(['clean', 'normal', 'hazy'], p=[0.30, 0.50, 0.20]))
+    # 260528: known-cnn chip_synth 동기화 — clean 위주, hazy 제거 (0.30/0.50/0.20 → 0.92/0.08/0.0)
+    return str(rng.choice(['clean', 'normal', 'hazy'], p=[0.92, 0.08, 0.0]))
 
 def pick_intensity_tier(rng):
     return str(rng.choice(['strong', 'mid', 'weak'], p=[0.50, 0.30, 0.20]))
@@ -992,7 +995,7 @@ def render(class_name, object_name, seed):
     # 260507 v5.2: uniform [0,1] per-wafer scale → linear map to [floor, cap].
     # 260527 patch v6: wafer-by-wafer 어둡기 산포 확대 — 밝은쪽(P_FLOOR) 낮춰 range 넓힘.
     #                  range 0.08~0.24 (3배 차이), t_wafer beta(0.5,0.5) U-shape → 밝음/진함 양극단 우세.
-    P_FLOOR, P_CAP = 0.03, 0.11                                                       # 전체 어둡기 ↓ (하한 0.04→0.03, 상한 0.14→0.11)
+    P_FLOOR, P_CAP = 0.027, 0.099                                                     # grade1+ 10% ↓ (×0.9, 0.03/0.11 → 0.027/0.099)
     t_wafer = float(rng.beta(0.5, 0.5))                                              # U-shape (극단 우세)
     p_bg_field = (P_FLOOR + (P_CAP - P_FLOOR) *
                   np.clip(t_wafer + 0.3 * (wafer_pink - 0.5), 0.0, 1.0)).astype(np.float32)
