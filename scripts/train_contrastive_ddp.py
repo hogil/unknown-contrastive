@@ -348,7 +348,12 @@ def train_worker(rank, world_size):
             x1 = x1.to(device, non_blocking=True)
             x2 = x2.to(device, non_blocking=True)
             opt.zero_grad()
-            z1 = model(x1); z2 = model(x2)
+            # ★ DDP: 두 view 를 한 번의 forward 로 (concat). model(x1);model(x2) 처럼
+            #   backward 1회 전에 forward 2회 하면 DDP reducer 가 "param ready 한 번만"
+            #   기대를 깨서 RuntimeError → process exit 1 (single-GPU 는 정상, multi-GPU 만 crash).
+            bs = x1.size(0)
+            z_cat = model(torch.cat([x1, x2], dim=0))
+            z1, z2 = z_cat[:bs], z_cat[bs:]
             loss = info_nce_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM, LABEL_SMOOTHING)
             loss.backward()
             if GRAD_CLIP > 0:
