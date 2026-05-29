@@ -397,12 +397,16 @@ def train_worker(rank, world_size):
     eval_ld = DataLoader(eval_base, batch_size=BATCH_PER_GPU * 4, sampler=eval_sampler,
                          num_workers=nw, pin_memory=True)
     model.eval()
+    if is_main(rank):
+        print(f"[eval] embedding {len(eval_base)} imgs ({len(eval_ld)} batch/rank × {world_size} GPU)...", flush=True)
     local_z, local_lbl, local_path = [], [], []
     with torch.no_grad():
-        for imgs, lbls, paths in eval_ld:
+        for bi, (imgs, lbls, paths) in enumerate(eval_ld, 1):
             imgs = imgs.to(device, non_blocking=True)
             z = model(imgs)
             local_z.append(z); local_lbl.extend(lbls.tolist()); local_path.extend(paths)
+            if is_main(rank) and bi % max(1, len(eval_ld) // 10) == 0:
+                print(f"  [eval] embed {bi}/{len(eval_ld)} batch (rank0)", flush=True)
     z_local = torch.cat(local_z, dim=0)
     z_all = all_gather_concat(z_local, device)
 
@@ -418,14 +422,18 @@ def train_worker(rank, world_size):
         np.save(cl_dir / "embeddings.npy", emb)
         (cl_dir / "paths.json").write_text(
             json.dumps({"paths": all_path, "labels": all_label}, indent=2), encoding="utf-8")
-        print(f"[eval] embed shape={emb.shape}")
+        print(f"[eval] embed shape={emb.shape}", flush=True)
 
         import hdbscan
+        print(f"[eval] HDBSCAN clustering {emb.shape[0]}×{emb.shape[1]} "
+              f"(mcs={MIN_CLUSTER_SIZE} ms={MIN_SAMPLES}) ... 수 분 소요", flush=True)
+        _t_hdb = time.time()
         clusterer = hdbscan.HDBSCAN(min_cluster_size=MIN_CLUSTER_SIZE, min_samples=MIN_SAMPLES,
                                     cluster_selection_method=CLUSTER_SELECTION_METHOD,
                                     cluster_selection_epsilon=CLUSTER_SELECTION_EPSILON,
                                     metric="euclidean")
         pred = clusterer.fit_predict(emb)
+        print(f"[eval] HDBSCAN done ({time.time()-_t_hdb:.0f}s)", flush=True)
 
         from sklearn.metrics import (adjusted_mutual_info_score, adjusted_rand_score,
                                      completeness_score, homogeneity_score)
