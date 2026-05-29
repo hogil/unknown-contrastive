@@ -28,8 +28,27 @@ def project_path(*parts) -> Path:
 
 
 def resolve_path(p) -> Path:
-    """absolute 면 그대로, relative 면 PROJECT_ROOT 기준으로."""
+    """absolute → 그대로, relative → PROJECT_ROOT 기준.
+
+    ★ 사용자 directive (260528): 이미지는 로컬에서 E:/data/images/ (절대규).
+       서버(Linux 또는 Windows-but-E:없음) 에선 자동으로 PROJECT_ROOT/data/images/
+       로 fallback (사용자 directive: "서버에선 알아서 프로젝트 폴더에 만들어서").
+       즉 CONFIG 의 'E:/data/images/X' path 가 서버 환경에서 'PROJECT_ROOT/data/images/X'
+       로 투명하게 매핑됨 — 코드 환경별 분기 X.
+    """
     p = Path(p)
+    s = str(p).replace("\\", "/")
+    if s.lower().startswith("e:/"):
+        # Windows + E: drive 살아있으면 그대로 사용
+        if os.name == "nt":
+            try:
+                if Path("E:/").exists():
+                    return p
+            except OSError:
+                pass
+        # 그 외 (Linux 서버 / E: 부재) → PROJECT_ROOT 의 같은 상대 부분으로
+        rel = s.split(":", 1)[1].lstrip("/")            # "data/images/unknown"
+        return PROJECT_ROOT / rel
     return p if p.is_absolute() else (PROJECT_ROOT / p)
 
 
