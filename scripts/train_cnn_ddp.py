@@ -28,10 +28,10 @@ IMG_SIZE             = 384
 BATCH_PER_GPU        = 16            # ★ total batch = BATCH_PER_GPU × world_size
 NUM_WORKERS_PER_GPU  = None          # None = auto: os.cpu_count() // world_size (환경 코어 전부 활용)
 EPOCHS               = 30
-WARMUP_EPOCHS        = 5
-LR_BACKBONE          = 2e-5
-LR_HEAD              = 2e-4
-WEIGHT_DECAY         = 0.01
+WARMUP_EPOCHS        = 3              # fair-eval protocol (CLAUDE.md): cosine warmup 3ep (was 5)
+LR_BACKBONE          = 1e-4           # protocol large(>10M): backbone 1e-4 (was 2e-5, 5× 낮아 ep1 안 움직임)
+LR_HEAD              = 1e-3           # protocol large(>10M): head 1e-3 (was 2e-4)
+WEIGHT_DECAY         = 0.05           # protocol: AdamW wd 0.05 (was 0.01)
 GRAD_CLIP            = 1.0
 LABEL_SMOOTHING      = 0.02
 EARLY_STOP_PATIENCE  = 7
@@ -58,6 +58,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torchvision.transforms as T
+from sklearn.metrics import f1_score
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, Subset, DistributedSampler
 from torchvision.datasets import ImageFolder
@@ -158,7 +159,8 @@ def split_indices(n, ratios, seed):
 
 
 def eval_loop(model_ddp, loader, device, criterion, classes=None,
-              wrong_save_dir: Path | None = None, rank: int = 0):
+              wrong_save_dir: Path | None = None, rank: int = 0, local_only: bool = False):
+    # local_only=True: rank0 단독 호출 시 all_reduce(collective) skip — DDP deadlock 방지
     model_ddp.eval()
     losses, preds, trues, paths_all, probs_all = [], [], [], [], []
     with torch.no_grad():
@@ -189,7 +191,8 @@ def eval_loop(model_ddp, loader, device, criterion, classes=None,
         "macro_p": float(pr),
         "macro_r": float(rc),
     }
-    metric = all_reduce_avg(metric, device)
+    if not local_only:
+        metric = all_reduce_avg(metric, device)        # 모든 rank 동시 호출 시만 (collective)
     metric["n_wrong"] = int((preds != trues).sum())   # local only
 
     if wrong_save_dir is not None and classes is not None and is_main(rank) and SAVE_WRONG_IMAGES:
@@ -327,7 +330,8 @@ def train_worker(rank: int, world_size: int):
     for ep in range(1, EPOCHS + 1):
         tr_sampler.set_epoch(ep)        # ★ shuffle 매 epoch 재
         model.train()
-        ep_loss, ep_correct, ep_n = 0.0, 0, 0
+        ep_loss, ep_n = 0.0, 0
+        ep_preds, ep_trues = [], []                    # running train f1 용 누적
         t0 = time.time()
         for it, (imgs, lbls, _) in enumerate(train_ld, 1):
             imgs = imgs.to(device, non_blocking=True)
@@ -340,21 +344,27 @@ def train_worker(rank: int, world_size: int):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
             opt.step(); sched.step()
             ep_loss += loss.item() * imgs.size(0)
-            ep_correct += (logits.argmax(1) == lbls).sum().item()
+            ep_preds.append(logits.argmax(1).detach().cpu().numpy())
+            ep_trues.append(lbls.detach().cpu().numpy())
             ep_n += imgs.size(0)
             if is_main(rank) and it % max(1, len(train_ld) // 10) == 0:
                 pct = it / len(train_ld) * 100
-                print(f"  Ep {ep:>2}/{EPOCHS} | {pct:>5.1f}% | loss={ep_loss/ep_n:.4f} acc={ep_correct/ep_n*100:.2f}% (rank0 local)",
-                      flush=True)
-        tr_metric = {"loss": ep_loss / ep_n, "acc": ep_correct / ep_n}
+                _p = np.concatenate(ep_preds); _t = np.concatenate(ep_trues)
+                _f1 = f1_score(_t, _p, average="macro", zero_division=0)
+                lr_now = opt.param_groups[1]["lr"]      # head LR (warmup 확인용)
+                print(f"  Ep {ep:>2}/{EPOCHS} | {pct:>5.1f}% | loss={ep_loss/ep_n:.4f} "
+                      f"f1={_f1*100:.2f}% (train, rank0 local) lr={lr_now:.2e}", flush=True)
+        _p = np.concatenate(ep_preds); _t = np.concatenate(ep_trues)
+        tr_metric = {"loss": ep_loss / ep_n, "acc": float((_p == _t).mean()),
+                     "macro_f1": float(f1_score(_t, _p, average="macro", zero_division=0))}
         tr_metric = all_reduce_avg(tr_metric, device)
 
         val_metric = eval_loop(model, val_ld, device, criterion,
                                classes=classes, wrong_save_dir=None, rank=rank)
         if is_main(rank):
-            print(f"  Ep {ep:>2}/{EPOCHS} DONE | train loss={tr_metric['loss']:.4f} acc={tr_metric['acc']*100:.2f}% "
-                  f"| val loss={val_metric['loss']:.4f} acc={val_metric['acc']*100:.2f}% "
-                  f"f1={val_metric['macro_f1']*100:.2f}% | time={time.time()-t0:.0f}s",
+            print(f"  Ep {ep:>2}/{EPOCHS} DONE | train loss={tr_metric['loss']:.4f} f1={tr_metric['macro_f1']*100:.2f}% "
+                  f"| val loss={val_metric['loss']:.4f} f1={val_metric['macro_f1']*100:.2f}% "
+                  f"(val acc={val_metric['acc']*100:.2f}%) | time={time.time()-t0:.0f}s",
                   flush=True)
             history.append({"epoch": ep, "train": tr_metric, "val": val_metric})
 
@@ -371,8 +381,10 @@ def train_worker(rank: int, world_size: int):
                 }, cnn_dir / "best_model.pth")
                 print(f"  ★ best updated: ep={ep} val_macro_f1={best_f1:.4f}")
                 if SAVE_WRONG_IMAGES:
-                    _ = eval_loop(model, val_ld, device, criterion,
-                                  classes=classes, wrong_save_dir=cnn_dir / "wrong" / "val", rank=rank)
+                    # rank0 단독 호출 → unwrapped model.module + local_only (collective 없음, deadlock 방지)
+                    _ = eval_loop(model.module, val_ld, device, criterion,
+                                  classes=classes, wrong_save_dir=cnn_dir / "wrong" / "val",
+                                  rank=rank, local_only=True)
             else:
                 no_improve += 1
 
