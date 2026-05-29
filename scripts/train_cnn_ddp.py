@@ -387,11 +387,8 @@ def train_worker(rank: int, world_size: int):
                     "world_size": world_size,
                 }, cnn_dir / "best_model.pth")
                 print(f"  ★ best updated: ep={ep} val_macro_f1={best_f1:.4f}")
-                if SAVE_WRONG_IMAGES:
-                    # rank0 단독 호출 → unwrapped model.module + local_only (collective 없음, deadlock 방지)
-                    _ = eval_loop(model.module, val_ld, device, criterion,
-                                  classes=classes, wrong_save_dir=cnn_dir / "wrong" / "val",
-                                  rank=rank, local_only=True)
+                # wrong-image 저장은 학습 종료 후 test 구간에서 (전 rank 동일 collective).
+                # 루프 중 rank0-only eval_loop 는 collective desync → SIGABRT 유발하므로 제거.
             else:
                 no_improve += 1
 
@@ -416,6 +413,10 @@ def train_worker(rank: int, world_size: int):
     map_loc = {"cuda:0": f"cuda:{rank}"} if torch.cuda.is_available() else "cpu"
     ck = torch.load(cnn_dir / "best_model.pth", map_location=map_loc, weights_only=False)
     model.module.load_state_dict(ck["state_dict"])
+    # val wrong-image 저장 (전 rank 동일 collective — 학습 끝난 뒤 best model 로 1회)
+    if SAVE_WRONG_IMAGES:
+        _ = eval_loop(model, val_ld, device, criterion, classes=classes,
+                      wrong_save_dir=cnn_dir / "wrong" / "val", rank=rank)
     test_metric = eval_loop(model, test_ld, device, criterion,
                             classes=classes,
                             wrong_save_dir=(cnn_dir / "wrong" / "test") if SAVE_WRONG_IMAGES else None,
