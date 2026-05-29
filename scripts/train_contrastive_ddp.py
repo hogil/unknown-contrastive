@@ -58,6 +58,7 @@ SAVE_WRONG_IMAGES     = True
 # ===================================================================
 
 import json
+import os
 import random
 import shutil
 import sys
@@ -93,6 +94,13 @@ from _ddp_utils import (
     launch_ddp,
     setup_ddp,
 )
+
+# ★ CLI 옵션은 env 로 전달 (mp.spawn 자식은 module 을 새로 import 하므로 module-level 에서 읽어야 상속됨)
+BACKBONE_CKPT = os.environ.get("CL_BACKBONE_CKPT") or BACKBONE_CKPT
+CNN_RUN_DIR   = os.environ.get("CL_CNN_RUN_DIR") or CNN_RUN_DIR
+TAG           = os.environ.get("CL_TAG") or TAG
+if os.environ.get("CL_EPOCHS"):
+    EPOCHS = int(os.environ["CL_EPOCHS"])
 
 
 def seed_all(s=42):
@@ -485,4 +493,23 @@ def train_worker(rank, world_size):
 
 
 if __name__ == "__main__":
+    import argparse
+    _ap = argparse.ArgumentParser()
+    _ap.add_argument("--backbone", type=str, default=None,
+                     help="CNN backbone best_model.pth 경로 (stage1 결과). 생략 시 weights/ ImageNet.")
+    _ap.add_argument("--cnn-run-dir", type=str, default=None,
+                     help="CNN run 폴더 (안의 cnn/best_model.pth 자동 사용).")
+    _ap.add_argument("--tag", type=str, default=None, help="run 폴더 tag override.")
+    _ap.add_argument("--epochs", type=int, default=None)
+    _a = _ap.parse_args()
+    # env 로 세팅 → mp.spawn 자식이 module re-import 시 위 module-level block 에서 읽음
+    if _a.backbone:           os.environ["CL_BACKBONE_CKPT"] = _a.backbone
+    if _a.cnn_run_dir:        os.environ["CL_CNN_RUN_DIR"] = _a.cnn_run_dir
+    if _a.tag:                os.environ["CL_TAG"] = _a.tag
+    if _a.epochs is not None: os.environ["CL_EPOCHS"] = str(_a.epochs)
+    # 부모 프로세스의 현재 module global 도 즉시 반영 (world_size<=1 직접 호출 경로)
+    if _a.backbone:           BACKBONE_CKPT = _a.backbone
+    if _a.cnn_run_dir:        CNN_RUN_DIR = _a.cnn_run_dir
+    if _a.tag:                TAG = _a.tag
+    if _a.epochs is not None: EPOCHS = _a.epochs
     launch_ddp(train_worker)
