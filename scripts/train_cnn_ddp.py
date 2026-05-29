@@ -40,6 +40,7 @@ USE_EMA              = False         # anomaly-detection 조건: ema_decay 0.0 (
 USE_AMP              = True          # anomaly-detection 조건: use_amp True (autocast fp16 + GradScaler)
 USE_MIXUP            = False         # anomaly-detection 조건: use_mixup False
 STOCHASTIC_DEPTH     = 0.0           # anomaly-detection 조건: stochastic_depth 0.0
+HEAD_DROPOUT         = 0.0           # anomaly-detection 조건: dropout 0.0 (argparse default) — MLP head 의 Dropout
 
 SPLIT_RATIOS         = (0.8, 0.1, 0.1)
 SEED                 = 42
@@ -145,9 +146,27 @@ def build_model(num_classes, backbone_path, rank):
     compat = {k: v for k, v in full_sd.items()
               if k in m_sd and m_sd[k].shape == v.shape}
     m.load_state_dict(compat, strict=False)
+    # backbone key 가 실제로 로드됐는지 진단 (skipped 가 head 2개보다 많으면 backbone mismatch)
+    bb_loaded = sum(1 for k in compat if not (k.startswith("head.") or k.startswith("fc.")))
     if is_main(rank):
         skipped = len(full_sd) - len(compat)
-        print(f"[backbone] loaded {len(compat)} keys, {skipped} skipped (head re-init for {num_classes})")
+        print(f"[backbone] loaded {len(compat)} keys ({bb_loaded} backbone), "
+              f"{skipped} skipped, m_sd total {len(m_sd)} (head re-init for {num_classes})")
+
+    # ★ anomaly-detection 조건: head = MLP (Dropout → Linear(in,512) → ReLU → Linear(512,classes))
+    #   단일 Linear probe 대신 2-layer head — anomaly 의 빠른 초기 수렴 recipe.
+    if hasattr(m, "head") and hasattr(m.head, "fc") and isinstance(m.head.fc, nn.Linear):
+        in_f = m.head.fc.in_features
+        m.head.fc = nn.Sequential(
+            nn.Dropout(HEAD_DROPOUT), nn.Linear(in_f, 512),
+            nn.ReLU(inplace=True), nn.Linear(512, num_classes))
+    elif hasattr(m, "head") and isinstance(m.head, nn.Linear):
+        in_f = m.head.in_features
+        m.head = nn.Sequential(
+            nn.Dropout(HEAD_DROPOUT), nn.Linear(in_f, 512),
+            nn.ReLU(inplace=True), nn.Linear(512, num_classes))
+    if is_main(rank):
+        print(f"[head] MLP head (in→512→ReLU→{num_classes}, dropout={HEAD_DROPOUT})")
     return m
 
 
