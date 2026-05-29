@@ -48,6 +48,7 @@ SAVE_WRONG_IMAGES    = True
 # ===================================================================
 
 import json
+import os
 import random
 import shutil
 import sys
@@ -81,6 +82,12 @@ from _ddp_utils import (
     launch_ddp,
     setup_ddp,
 )
+
+# ★ env override (mp.spawn 자식이 module re-import 시 읽음 → H100 batch 등 주입)
+if os.environ.get("CNN_BATCH_PER_GPU"):
+    BATCH_PER_GPU = int(os.environ["CNN_BATCH_PER_GPU"])
+if os.environ.get("CNN_EPOCHS"):
+    EPOCHS = int(os.environ["CNN_EPOCHS"])
 
 
 def seed_all(s=42):
