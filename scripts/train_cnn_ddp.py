@@ -32,14 +32,14 @@ WARMUP_EPOCHS        = 5              # anomaly-detection 조건: warmup 5ep (Li
 LR_BACKBONE          = 2e-5           # anomaly-detection 조건: backbone 2e-5
 LR_HEAD              = 2e-4           # anomaly-detection 조건: head 2e-4
 WEIGHT_DECAY         = 0.01           # anomaly-detection 조건: AdamW wd 0.01
-GRAD_CLIP            = 1.0
-LABEL_SMOOTHING      = 0.02
-EARLY_STOP_PATIENCE  = 7
+GRAD_CLIP            = 1.0            # anomaly-detection 조건: grad_clip 1.0
+LABEL_SMOOTHING      = 0.0            # anomaly-detection 조건: label_smoothing 0.0 (was 0.02)
+EARLY_STOP_PATIENCE  = 5             # anomaly-detection 조건: patience 5 (was 7)
 
-USE_EMA              = False
-USE_AMP              = False
-USE_MIXUP            = False
-STOCHASTIC_DEPTH     = 0.0
+USE_EMA              = False         # anomaly-detection 조건: ema_decay 0.0 (OFF — 짧은 학습엔 raw 가 나음)
+USE_AMP              = True          # anomaly-detection 조건: use_amp True (autocast fp16 + GradScaler)
+USE_MIXUP            = False         # anomaly-detection 조건: use_mixup False
+STOCHASTIC_DEPTH     = 0.0           # anomaly-detection 조건: stochastic_depth 0.0
 
 SPLIT_RATIOS         = (0.8, 0.1, 0.1)
 SEED                 = 42
@@ -162,13 +162,16 @@ def eval_loop(model_ddp, loader, device, criterion, classes=None,
               wrong_save_dir: Path | None = None, rank: int = 0, local_only: bool = False):
     # local_only=True: rank0 단독 호출 시 all_reduce(collective) skip — DDP deadlock 방지
     model_ddp.eval()
+    eval_amp = USE_AMP and torch.cuda.is_available()       # anomaly-detection: eval 도 autocast
     losses, preds, trues, paths_all, probs_all = [], [], [], [], []
     with torch.no_grad():
         for imgs, lbls, paths in loader:
             imgs = imgs.to(device, non_blocking=True)
             lbls = lbls.to(device, non_blocking=True)
-            logits = model_ddp(imgs)
-            loss = criterion(logits, lbls)
+            with torch.amp.autocast("cuda", enabled=eval_amp, dtype=torch.float16):
+                logits = model_ddp(imgs)
+                loss = criterion(logits, lbls)
+            logits = logits.float()                            # softmax/argmax 는 fp32 로
             losses.append(loss.item() * imgs.size(0))
             probs = torch.softmax(logits, dim=1)
             preds.append(logits.argmax(1).cpu().numpy())
@@ -314,6 +317,8 @@ def train_worker(rank: int, world_size: int):
     sched = torch.optim.lr_scheduler.SequentialLR(opt, schedulers=[sched_w, sched_c],
                                                   milestones=[warmup_steps])
     criterion = nn.CrossEntropyLoss(label_smoothing=LABEL_SMOOTHING)
+    amp_on = USE_AMP and torch.cuda.is_available()       # anomaly-detection: AMP fp16
+    scaler = torch.amp.GradScaler("cuda", enabled=amp_on)
 
     if is_main(rank):
         log_stage_metric(run_dir, "cnn_ddp_setup", {
@@ -337,12 +342,14 @@ def train_worker(rank: int, world_size: int):
             imgs = imgs.to(device, non_blocking=True)
             lbls = lbls.to(device, non_blocking=True)
             opt.zero_grad()
-            logits = model(imgs)
-            loss = criterion(logits, lbls)
-            loss.backward()
+            with torch.amp.autocast("cuda", enabled=amp_on, dtype=torch.float16):
+                logits = model(imgs)
+                loss = criterion(logits, lbls)
+            scaler.scale(loss).backward()
             if GRAD_CLIP > 0:
+                scaler.unscale_(opt)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
-            opt.step(); sched.step()
+            scaler.step(opt); scaler.update(); sched.step()
             ep_loss += loss.item() * imgs.size(0)
             ep_preds.append(logits.argmax(1).detach().cpu().numpy())
             ep_trues.append(lbls.detach().cpu().numpy())
