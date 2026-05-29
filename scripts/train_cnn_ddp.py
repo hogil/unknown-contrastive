@@ -28,10 +28,10 @@ IMG_SIZE             = 384
 BATCH_PER_GPU        = 16            # ★ total batch = BATCH_PER_GPU × world_size
 NUM_WORKERS_PER_GPU  = None          # None = auto: os.cpu_count() // world_size (환경 코어 전부 활용)
 EPOCHS               = 30
-WARMUP_EPOCHS        = 3              # fair-eval protocol (CLAUDE.md): cosine warmup 3ep (was 5)
-LR_BACKBONE          = 1e-4           # protocol large(>10M): backbone 1e-4 (was 2e-5, 5× 낮아 ep1 안 움직임)
-LR_HEAD              = 1e-3           # protocol large(>10M): head 1e-3 (was 2e-4)
-WEIGHT_DECAY         = 0.05           # protocol: AdamW wd 0.05 (was 0.01)
+WARMUP_EPOCHS        = 5              # anomaly-detection 조건: warmup 5ep (LinearLR start_factor 0.05)
+LR_BACKBONE          = 2e-5           # anomaly-detection 조건: backbone 2e-5
+LR_HEAD              = 2e-4           # anomaly-detection 조건: head 2e-4
+WEIGHT_DECAY         = 0.01           # anomaly-detection 조건: AdamW wd 0.01
 GRAD_CLIP            = 1.0
 LABEL_SMOOTHING      = 0.02
 EARLY_STOP_PATIENCE  = 7
