@@ -432,22 +432,25 @@ def train_worker(rank: int, world_size: int):
                 print(f"[early-stop] no improve {EARLY_STOP_PATIENCE} epochs")
             break
 
-    # test eval (rank 0 best load, all ranks 평가)
+    # ---------- 최종 test eval — rank0 단독, 전체 set, collective 없음 ----------
+    #   기존엔 전 rank 가 DDP collective + multi-rank torch.load(map_location remap) 를
+    #   test 단계에서 수행 → NCCL/CUDA error 의 원인이었다. rank0 만 unwrapped model.module
+    #   + non-distributed full loader + local_only(all_reduce skip) 로 평가 → collective 0.
+    #   (full set 평가라 sharded 평균 근사 문제도 사라져 metric 도 정확.)
     if is_main(rank):
-        print("[test] loading best...")
-    dist.barrier()
-    map_loc = {"cuda:0": f"cuda:{rank}"} if torch.cuda.is_available() else "cpu"
-    ck = torch.load(cnn_dir / "best_model.pth", map_location=map_loc, weights_only=False)
-    model.module.load_state_dict(ck["state_dict"])
-    # val wrong-image 저장 (전 rank 동일 collective — 학습 끝난 뒤 best model 로 1회)
-    if SAVE_WRONG_IMAGES:
-        _ = eval_loop(model, val_ld, device, criterion, classes=classes,
-                      wrong_save_dir=cnn_dir / "wrong" / "val", rank=rank)
-    test_metric = eval_loop(model, test_ld, device, criterion,
-                            classes=classes,
-                            wrong_save_dir=(cnn_dir / "wrong" / "test") if SAVE_WRONG_IMAGES else None,
-                            rank=rank)
-    if is_main(rank):
+        print("[test] loading best + 최종 eval (rank0, full set)...", flush=True)
+        ck = torch.load(cnn_dir / "best_model.pth", map_location=device, weights_only=False)
+        model.module.load_state_dict(ck["state_dict"])
+        val_full  = DataLoader(ds_val,  batch_size=BATCH_PER_GPU, shuffle=False,
+                               num_workers=nw, pin_memory=True)
+        test_full = DataLoader(ds_test, batch_size=BATCH_PER_GPU, shuffle=False,
+                               num_workers=nw, pin_memory=True)
+        if SAVE_WRONG_IMAGES:
+            _ = eval_loop(model.module, val_full, device, criterion, classes=classes,
+                          wrong_save_dir=cnn_dir / "wrong" / "val", rank=rank, local_only=True)
+        test_metric = eval_loop(model.module, test_full, device, criterion, classes=classes,
+                                wrong_save_dir=(cnn_dir / "wrong" / "test") if SAVE_WRONG_IMAGES else None,
+                                rank=rank, local_only=True)
         print(f"[test] {test_metric}")
         log_stage_metric(run_dir, "cnn_ddp_done", {
             "best_epoch": best_ep,
@@ -458,6 +461,7 @@ def train_worker(rank: int, world_size: int):
         }, notes=f"DDP {world_size} GPUs, total_batch={BATCH_PER_GPU * world_size}")
         print(f"\n[OUT] {run_dir.resolve()}")
 
+    # 각 rank 독립 cleanup (collective 아님) — rank0 eval 중 다른 rank 는 먼저 종료 OK
     cleanup_ddp()
 
 
