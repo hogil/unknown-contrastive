@@ -26,7 +26,9 @@ TAG                  = "cnn_ddp"
 BACKBONE             = "convnextv2_base.fcmae_ft_in22k_in1k_384"
 IMG_SIZE             = 384
 BATCH_PER_GPU        = 16            # ★ total batch = BATCH_PER_GPU × world_size
-NUM_WORKERS_PER_GPU  = None          # None = auto: os.cpu_count() // world_size (환경 코어 전부 활용)
+NUM_WORKERS_PER_GPU  = None          # None = auto capped (DDP worker/pinned-memory 안정성)
+MAX_AUTO_WORKERS_PER_GPU = 4          # 6400×6400 PNG + 8GPU 에서 worker 폭증 방지
+PREFETCH_FACTOR      = 2             # prefetch_factor=4 는 pinned memory 를 크게 먹음
 EPOCHS               = 30
 WARMUP_EPOCHS        = 5              # anomaly-detection 조건: warmup 5ep (LinearLR start_factor 0.05)
 LR_BACKBONE          = 2e-5           # anomaly-detection 조건: backbone 2e-5
@@ -88,6 +90,10 @@ if os.environ.get("CNN_BATCH_PER_GPU"):
     BATCH_PER_GPU = int(os.environ["CNN_BATCH_PER_GPU"])
 if os.environ.get("CNN_EPOCHS"):
     EPOCHS = int(os.environ["CNN_EPOCHS"])
+if os.environ.get("CNN_NUM_WORKERS_PER_GPU"):
+    NUM_WORKERS_PER_GPU = int(os.environ["CNN_NUM_WORKERS_PER_GPU"])
+if os.environ.get("CNN_PREFETCH_FACTOR"):
+    PREFETCH_FACTOR = int(os.environ["CNN_PREFETCH_FACTOR"])
 
 
 def seed_all(s=42):
@@ -117,12 +123,14 @@ class SafeImageFolder(ImageFolder):
         path, target = self.samples[index]
         try:
             sample = self.loader(path)
+            if self.transform is not None:
+                sample = self.transform(sample)
         except Exception as e:
             from PIL import Image as _PILImage
-            print(f"[CORRUPT-SKIP] {path}: {type(e).__name__}", flush=True)
+            print(f"[CORRUPT-SKIP] {path}: {type(e).__name__}: {e}", flush=True)
             sample = _PILImage.new("RGB", (IMG_SIZE, IMG_SIZE), color=(0, 0, 0))
-        if self.transform is not None:
-            sample = self.transform(sample)
+            if self.transform is not None:
+                sample = self.transform(sample)
         return sample, target, path
 
 
@@ -182,6 +190,37 @@ def split_indices(n, ratios, seed):
     idx = np.arange(n); g.shuffle(idx)
     nt = int(n * ratios[0]); nv = int(n * ratios[1])
     return idx[:nt].tolist(), idx[nt:nt+nv].tolist(), idx[nt+nv:].tolist()
+
+
+def resolve_num_workers(world_size: int) -> int:
+    if NUM_WORKERS_PER_GPU is not None:
+        return int(NUM_WORKERS_PER_GPU)
+    auto = max(1, (os.cpu_count() or 8) // max(1, world_size))
+    return min(MAX_AUTO_WORKERS_PER_GPU, auto)
+
+
+def loader_kwargs(num_workers: int, *, persistent: bool) -> dict:
+    kw = {"num_workers": num_workers, "pin_memory": torch.cuda.is_available()}
+    if num_workers > 0:
+        kw["prefetch_factor"] = PREFETCH_FACTOR
+        kw["persistent_workers"] = persistent
+    return kw
+
+
+def shutdown_loader_workers(*loaders) -> None:
+    # PyTorch exposes no public shutdown hook for persistent workers.
+    for loader in loaders:
+        it = getattr(loader, "_iterator", None)
+        if it is None:
+            continue
+        try:
+            it._shutdown_workers()
+        except Exception:
+            pass
+        try:
+            loader._iterator = None
+        except Exception:
+            pass
 
 
 def eval_loop(model_ddp, loader, device, criterion, classes=None,
@@ -250,8 +289,7 @@ def eval_loop(model_ddp, loader, device, criterion, classes=None,
 def train_worker(rank: int, world_size: int):
     setup_ddp(rank, world_size)
     seed_all(SEED + rank)
-    import os
-    nw = NUM_WORKERS_PER_GPU if NUM_WORKERS_PER_GPU is not None else max(1, (os.cpu_count() or 8) // world_size)
+    nw = resolve_num_workers(world_size)
     device = torch.device(f"cuda:{rank}" if torch.cuda.is_available() else "cpu")
 
     # run_dir: rank=0 만 만들고 broadcast (path string)
@@ -312,23 +350,22 @@ def train_worker(rank: int, world_size: int):
     # DDP samplers
     tr_sampler = DistributedSampler(ds_train, num_replicas=world_size, rank=rank, shuffle=True, seed=SEED)
     va_sampler = DistributedSampler(ds_val,   num_replicas=world_size, rank=rank, shuffle=False)
-    te_sampler = DistributedSampler(ds_test,  num_replicas=world_size, rank=rank, shuffle=False)
 
-    # worker 를 epoch 간 유지 → 매 epoch 재spawn stall 제거 (6400×6400 PNG 디코드 무거움).
-    # nw=0 이면 persistent_workers/prefetch_factor 둘 다 불가 → 조건부.
-    _ld_kw = {"num_workers": nw, "pin_memory": True}
-    if nw > 0:
-        _ld_kw["persistent_workers"] = True
-        _ld_kw["prefetch_factor"] = 4
+    # train worker 만 epoch 간 유지한다. val/test 까지 persistent 로 두면
+    # 8GPU 환경에서 worker/pinned-memory 가 과해져 NCCL CUDA failure 로 번질 수 있다.
+    train_ld_kw = loader_kwargs(nw, persistent=True)
+    eval_ld_kw = loader_kwargs(nw, persistent=False)
     train_ld = DataLoader(ds_train, batch_size=BATCH_PER_GPU, sampler=tr_sampler,
-                          drop_last=True, **_ld_kw)
-    val_ld   = DataLoader(ds_val, batch_size=BATCH_PER_GPU, sampler=va_sampler, **_ld_kw)
-    test_ld  = DataLoader(ds_test, batch_size=BATCH_PER_GPU, sampler=te_sampler, **_ld_kw)
+                          drop_last=True, **train_ld_kw)
+    val_ld   = DataLoader(ds_val, batch_size=BATCH_PER_GPU, sampler=va_sampler, **eval_ld_kw)
+    if is_main(rank):
+        print(f"[loader] workers_per_gpu={nw} prefetch_factor={PREFETCH_FACTOR} "
+              f"persistent=train_only", flush=True)
 
     # model
     model = build_model(n_cls, backbone_path, rank).to(device)
     model = DDP(model, device_ids=[rank] if torch.cuda.is_available() else None,
-                find_unused_parameters=False)
+                find_unused_parameters=False, broadcast_buffers=False)
 
     backbone_params, head_params = [], []
     for n, p in model.named_parameters():
@@ -407,15 +444,19 @@ def train_worker(rank: int, world_size: int):
 
             if val_metric["macro_f1"] > best_f1:
                 best_f1 = val_metric["macro_f1"]; best_ep = ep; no_improve = 0
-                # save underlying model (model.module)
+                # CPU state_dict 로 저장해 CUDA serialization/sync risk 를 줄인다.
+                best_state = {k: v.detach().cpu() for k, v in model.module.state_dict().items()}
+                tmp_ckpt = cnn_dir / "best_model.tmp"
                 torch.save({
-                    "state_dict": model.module.state_dict(),
+                    "state_dict": best_state,
                     "classes": classes,
                     "class_to_idx": ds_train_full.class_to_idx,
                     "epoch": ep,
                     "val_metric": val_metric,
                     "world_size": world_size,
-                }, cnn_dir / "best_model.pth")
+                }, tmp_ckpt)
+                tmp_ckpt.replace(cnn_dir / "best_model.pth")
+                del best_state
                 print(f"  ★ best updated: ep={ep} val_macro_f1={best_f1:.4f}")
                 # wrong-image 저장은 학습 종료 후 test 구간에서 (전 rank 동일 collective).
                 # 루프 중 rank0-only eval_loop 는 collective desync → SIGABRT 유발하므로 제거.
@@ -436,21 +477,26 @@ def train_worker(rank: int, world_size: int):
                 print(f"[early-stop] no improve {EARLY_STOP_PATIENCE} epochs")
             break
 
+    # persistent train workers 를 먼저 닫고 rank0-only full eval 로 넘어간다.
+    shutdown_loader_workers(train_ld, val_ld)
+    del train_ld, val_ld
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     # ---------- 최종 test eval — rank0 단독, 전체 set, collective 없음 ----------
     #   rank0 만 unwrapped model.module + non-distributed full loader + local_only 로 평가.
     #   ★ barrier 로 감싸 동기화: 학습 후 전 rank sync → rank0 eval(다른 rank 는 2번째
     #     barrier 에서 대기) → 전 rank 동시 cleanup. 이렇게 안 하면 다른 rank 가 rank0
-    #     eval 중 cleanup_ddp(내부 barrier) 먼저 호출 → NCCL desync (unhandledCudaError).
+    #     eval 중 process group 을 먼저 destroy 해 NCCL teardown 이 엇갈릴 수 있다.
     if dist.is_initialized():
         dist.barrier()
     if is_main(rank):
         print("[test] loading best + 최종 eval (rank0, full set)...", flush=True)
-        ck = torch.load(cnn_dir / "best_model.pth", map_location=device, weights_only=False)
+        ck = torch.load(cnn_dir / "best_model.pth", map_location="cpu", weights_only=False)
         model.module.load_state_dict(ck["state_dict"])
-        val_full  = DataLoader(ds_val,  batch_size=BATCH_PER_GPU, shuffle=False,
-                               num_workers=nw, pin_memory=True)
-        test_full = DataLoader(ds_test, batch_size=BATCH_PER_GPU, shuffle=False,
-                               num_workers=nw, pin_memory=True)
+        final_ld_kw = loader_kwargs(min(nw, 4), persistent=False)
+        val_full  = DataLoader(ds_val,  batch_size=BATCH_PER_GPU, shuffle=False, **final_ld_kw)
+        test_full = DataLoader(ds_test, batch_size=BATCH_PER_GPU, shuffle=False, **final_ld_kw)
         if SAVE_WRONG_IMAGES:
             _ = eval_loop(model.module, val_full, device, criterion, classes=classes,
                           wrong_save_dir=cnn_dir / "wrong" / "val", rank=rank, local_only=True)
