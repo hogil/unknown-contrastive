@@ -9,8 +9,8 @@ from __future__ import annotations
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
-TRAIN_DATA_DIR        = "E:/data/images/contrastive_train"  # ★ 절대규: 모든 이미지 E:/data/images/
-EVAL_DATA_DIR         = "E:/data/images/contrastive_eval"   # ★ 절대규
+TRAIN_DATA_DIR        = "E:/data/images/contrastive_train"  # ★ 절대규. 콤마구분 다중 가능: "a,b,c"
+EVAL_DATA_DIR         = "E:/data/images/contrastive_eval"   # ★ 절대규. 콤마구분 다중(class 통합) 가능
 ACTIVE_CLASSES_YAML   = None
 EXCLUDE_CLASSES       = {"classification", "classification_chips"}
 
@@ -103,6 +103,8 @@ if os.environ.get("CL_EPOCHS"):
     EPOCHS = int(os.environ["CL_EPOCHS"])
 if os.environ.get("CL_BATCH_PER_GPU"):
     BATCH_PER_GPU = int(os.environ["CL_BATCH_PER_GPU"])
+TRAIN_DATA_DIR = os.environ.get("CL_TRAIN_DIRS") or TRAIN_DATA_DIR   # 콤마구분 다중 가능
+EVAL_DATA_DIR  = os.environ.get("CL_EVAL_DIRS") or EVAL_DATA_DIR
 
 
 def seed_all(s=42):
@@ -153,11 +155,73 @@ class SafeImageFolder(ImageFolder):
         return sample, target, path
 
 
+class MultiRootImageFolder(Dataset):
+    """여러 eval 폴더의 <class>/<img> 를 ★통합 class_to_idx★ 로 묶음 (단일 root 도 동작).
+       SafeImageFolder 와 동일하게 (img, target, path) 반환. class = 모든 root subdir 합집합."""
+    def __init__(self, roots, transform=None, exclude=None,
+                 active_classes=None, per_class_cap=None, normal_cap=None):
+        from torchvision.datasets.folder import default_loader, IMG_EXTENSIONS
+        if isinstance(roots, (str, Path)):
+            roots = [roots]
+        roots = [Path(r) for r in roots]
+        exclude = exclude or set()
+        active = set(active_classes) if active_classes else None
+        cls_set = set()
+        for r in roots:
+            if not r.exists():
+                raise SystemExit(f"EVAL dir not found: {r}")
+            for d in sorted(r.iterdir()):
+                if d.is_dir() and d.name not in exclude and (active is None or d.name in active):
+                    cls_set.add(d.name)
+        self.classes = sorted(cls_set)
+        self.class_to_idx = {c: i for i, c in enumerate(self.classes)}
+        exts = set(IMG_EXTENSIONS)
+        buckets = defaultdict(list)
+        for r in roots:
+            for c in self.classes:
+                cdir = r / c
+                if not cdir.is_dir():
+                    continue
+                for p in cdir.rglob("*"):
+                    if p.suffix.lower() in exts:
+                        buckets[self.class_to_idx[c]].append((str(p), self.class_to_idx[c]))
+        idx_to_class = {i: c for c, i in self.class_to_idx.items()}
+        samples = []
+        for lbl in sorted(buckets):
+            items = sorted(buckets[lbl], key=lambda x: x[0])
+            cls = idx_to_class[lbl]
+            cap = normal_cap if (cls == "Normal" and normal_cap) else per_class_cap
+            samples.extend(items[:cap] if cap else items)
+        self.samples = samples
+        self.targets = [t for _, t in samples]
+        self.transform = transform
+        self.loader = default_loader
+
+    def __len__(self): return len(self.samples)
+
+    def __getitem__(self, index):
+        path, target = self.samples[index]
+        try:
+            sample = self.loader(path)
+        except Exception:
+            from PIL import Image as _PILImage
+            sample = _PILImage.new("RGB", (IMG_SIZE, IMG_SIZE), color=(0, 0, 0))
+        if self.transform is not None:
+            sample = self.transform(sample)
+        return sample, target, path
+
+
 class FlatPairDataset(Dataset):
-    """flat folder recursive glob → two views (no class label)."""
+    """flat folder(s) recursive glob → two views (no class label). roots = str 또는 list."""
     EXTS = (".png", ".jpg", ".jpeg", ".bmp")
-    def __init__(self, root, tfm):
-        self.paths = sorted(p for ext in self.EXTS for p in Path(root).rglob(f"*{ext}"))
+    def __init__(self, roots, tfm):
+        if isinstance(roots, (str, Path)):
+            roots = [roots]
+        paths = []
+        for r in roots:
+            for ext in self.EXTS:
+                paths.extend(Path(r).rglob(f"*{ext}"))
+        self.paths = sorted(set(paths))
         self.tfm = tfm
     def __len__(self): return len(self.paths)
     def __getitem__(self, i):
@@ -293,17 +357,23 @@ def train_worker(rank, world_size):
         with open(ACTIVE_CLASSES_YAML) as f:
             active_classes = yaml.safe_load(f).get("classes")
 
-    # train
-    train_dir = resolve_path(TRAIN_DATA_DIR); eval_dir = resolve_path(EVAL_DATA_DIR)
-    if not train_dir.exists():
-        raise SystemExit(f"TRAIN_DATA_DIR not found: {train_dir}\n  python scripts/generate_data.py && python scripts/_split_data.py")
-    if not eval_dir.exists():
-        raise SystemExit(f"EVAL_DATA_DIR not found: {eval_dir}")
+    # train/eval — 콤마구분 다중 폴더 지원 (학습/eval 따로 여러 개 선택)
+    train_roots = [resolve_path(x.strip()) for x in str(TRAIN_DATA_DIR).split(",") if x.strip()]
+    eval_roots  = [resolve_path(x.strip()) for x in str(EVAL_DATA_DIR).split(",") if x.strip()]
+    for d in train_roots:
+        if not d.exists():
+            raise SystemExit(f"TRAIN dir not found: {d}\n  python scripts/generate_data.py && python scripts/_split_data.py")
+    for d in eval_roots:
+        if not d.exists():
+            raise SystemExit(f"EVAL dir not found: {d}")
+    if is_main(rank):
+        print(f"[train dirs] {[str(d) for d in train_roots]}")
+        print(f"[eval  dirs] {[str(d) for d in eval_roots]}")
     train_aug = build_aug(); eval_tf = build_eval_tf()
-    train_ds = FlatPairDataset(str(train_dir), train_aug)
-    eval_base = SafeImageFolder(str(eval_dir), transform=eval_tf,
-                                exclude=EXCLUDE_CLASSES, active_classes=active_classes,
-                                per_class_cap=PER_CLASS_CAP, normal_cap=NORMAL_CAP)
+    train_ds = FlatPairDataset(train_roots, train_aug)
+    eval_base = MultiRootImageFolder(eval_roots, transform=eval_tf,
+                                     exclude=EXCLUDE_CLASSES, active_classes=active_classes,
+                                     per_class_cap=PER_CLASS_CAP, normal_cap=NORMAL_CAP)
     classes = eval_base.classes
 
     if is_main(rank):
@@ -503,15 +573,26 @@ if __name__ == "__main__":
                      help="CNN run 폴더 (안의 cnn/best_model.pth 자동 사용).")
     _ap.add_argument("--tag", type=str, default=None, help="run 폴더 tag override.")
     _ap.add_argument("--epochs", type=int, default=None)
+    _ap.add_argument("--train-dirs", type=str, default=None,
+                     help="학습 폴더 (콤마구분 다중 가능). 예: a/unknown,a/unknown_archive")
+    _ap.add_argument("--eval-dirs", type=str, default=None,
+                     help="eval 폴더 (콤마구분 다중 가능, class 통합). 예: a/eval1,a/eval2")
+    _ap.add_argument("--batch", type=int, default=None, help="BATCH_PER_GPU override.")
     _a = _ap.parse_args()
     # env 로 세팅 → mp.spawn 자식이 module re-import 시 위 module-level block 에서 읽음
     if _a.backbone:           os.environ["CL_BACKBONE_CKPT"] = _a.backbone
     if _a.cnn_run_dir:        os.environ["CL_CNN_RUN_DIR"] = _a.cnn_run_dir
     if _a.tag:                os.environ["CL_TAG"] = _a.tag
     if _a.epochs is not None: os.environ["CL_EPOCHS"] = str(_a.epochs)
+    if _a.train_dirs:         os.environ["CL_TRAIN_DIRS"] = _a.train_dirs
+    if _a.eval_dirs:          os.environ["CL_EVAL_DIRS"] = _a.eval_dirs
+    if _a.batch is not None:  os.environ["CL_BATCH_PER_GPU"] = str(_a.batch)
     # 부모 프로세스의 현재 module global 도 즉시 반영 (world_size<=1 직접 호출 경로)
     if _a.backbone:           BACKBONE_CKPT = _a.backbone
     if _a.cnn_run_dir:        CNN_RUN_DIR = _a.cnn_run_dir
     if _a.tag:                TAG = _a.tag
     if _a.epochs is not None: EPOCHS = _a.epochs
+    if _a.train_dirs:         TRAIN_DATA_DIR = _a.train_dirs
+    if _a.eval_dirs:          EVAL_DATA_DIR = _a.eval_dirs
+    if _a.batch is not None:  BATCH_PER_GPU = _a.batch
     launch_ddp(train_worker)
