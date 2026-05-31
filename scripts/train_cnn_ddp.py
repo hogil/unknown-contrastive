@@ -314,12 +314,16 @@ def train_worker(rank: int, world_size: int):
     va_sampler = DistributedSampler(ds_val,   num_replicas=world_size, rank=rank, shuffle=False)
     te_sampler = DistributedSampler(ds_test,  num_replicas=world_size, rank=rank, shuffle=False)
 
+    # worker 를 epoch 간 유지 → 매 epoch 재spawn stall 제거 (6400×6400 PNG 디코드 무거움).
+    # nw=0 이면 persistent_workers/prefetch_factor 둘 다 불가 → 조건부.
+    _ld_kw = {"num_workers": nw, "pin_memory": True}
+    if nw > 0:
+        _ld_kw["persistent_workers"] = True
+        _ld_kw["prefetch_factor"] = 4
     train_ld = DataLoader(ds_train, batch_size=BATCH_PER_GPU, sampler=tr_sampler,
-                          num_workers=nw, pin_memory=True, drop_last=True)
-    val_ld   = DataLoader(ds_val, batch_size=BATCH_PER_GPU, sampler=va_sampler,
-                          num_workers=nw, pin_memory=True)
-    test_ld  = DataLoader(ds_test, batch_size=BATCH_PER_GPU, sampler=te_sampler,
-                          num_workers=nw, pin_memory=True)
+                          drop_last=True, **_ld_kw)
+    val_ld   = DataLoader(ds_val, batch_size=BATCH_PER_GPU, sampler=va_sampler, **_ld_kw)
+    test_ld  = DataLoader(ds_test, batch_size=BATCH_PER_GPU, sampler=te_sampler, **_ld_kw)
 
     # model
     model = build_model(n_cls, backbone_path, rank).to(device)
