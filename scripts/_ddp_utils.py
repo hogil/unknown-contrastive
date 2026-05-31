@@ -64,8 +64,31 @@ def setup_ddp(rank: int, world_size: int, port: int | None = None,
 
 
 def cleanup_ddp() -> None:
-    if dist.is_initialized():
+    if not dist.is_initialized():
+        return
+    rank = "?"
+    try:
+        rank = dist.get_rank()
+    except Exception:
+        pass
+    strict = os.environ.get("DDP_STRICT_CLEANUP", "0") == "1"
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+    except Exception as e:
+        print(f"[DDP cleanup warning][rank {rank}] cuda synchronize failed during teardown: "
+              f"{type(e).__name__}: {e}", flush=True)
+        if strict:
+            raise
+    try:
         dist.destroy_process_group()
+    except Exception as e:
+        # If this happens after all work is saved, treating NCCL teardown as fatal only
+        # prevents the parent mp.spawn from moving to the next pipeline stage.
+        print(f"[DDP cleanup warning][rank {rank}] destroy_process_group failed during teardown: "
+              f"{type(e).__name__}: {e}", flush=True)
+        if strict:
+            raise
 
 
 def is_main(rank: int) -> bool:

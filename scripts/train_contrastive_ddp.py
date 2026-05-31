@@ -561,6 +561,8 @@ def train_worker(rank, world_size):
                          notes=f"DDP {world_size} GPUs, freeze={FREEZE_BACKBONE}")
         print(f"\n[OUT] {run_dir.resolve()}")
 
+    if dist.is_initialized():
+        dist.barrier()
     cleanup_ddp()
 
 
