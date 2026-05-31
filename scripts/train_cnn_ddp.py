@@ -437,10 +437,12 @@ def train_worker(rank: int, world_size: int):
             break
 
     # ---------- 최종 test eval — rank0 단독, 전체 set, collective 없음 ----------
-    #   기존엔 전 rank 가 DDP collective + multi-rank torch.load(map_location remap) 를
-    #   test 단계에서 수행 → NCCL/CUDA error 의 원인이었다. rank0 만 unwrapped model.module
-    #   + non-distributed full loader + local_only(all_reduce skip) 로 평가 → collective 0.
-    #   (full set 평가라 sharded 평균 근사 문제도 사라져 metric 도 정확.)
+    #   rank0 만 unwrapped model.module + non-distributed full loader + local_only 로 평가.
+    #   ★ barrier 로 감싸 동기화: 학습 후 전 rank sync → rank0 eval(다른 rank 는 2번째
+    #     barrier 에서 대기) → 전 rank 동시 cleanup. 이렇게 안 하면 다른 rank 가 rank0
+    #     eval 중 cleanup_ddp(내부 barrier) 먼저 호출 → NCCL desync (unhandledCudaError).
+    if dist.is_initialized():
+        dist.barrier()
     if is_main(rank):
         print("[test] loading best + 최종 eval (rank0, full set)...", flush=True)
         ck = torch.load(cnn_dir / "best_model.pth", map_location=device, weights_only=False)
@@ -465,7 +467,9 @@ def train_worker(rank: int, world_size: int):
         }, notes=f"DDP {world_size} GPUs, total_batch={BATCH_PER_GPU * world_size}")
         print(f"\n[OUT] {run_dir.resolve()}")
 
-    # 각 rank 독립 cleanup (collective 아님) — rank0 eval 중 다른 rank 는 먼저 종료 OK
+    # 다른 rank 가 rank0 eval 끝날 때까지 대기 → 전 rank 동시 cleanup (early-exit desync 방지)
+    if dist.is_initialized():
+        dist.barrier()
     cleanup_ddp()
 
 

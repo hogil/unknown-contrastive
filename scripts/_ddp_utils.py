@@ -55,7 +55,10 @@ def setup_ddp(rank: int, world_size: int, port: int | None = None,
     # Windows nccl 미지원 → gloo fallback
     if os.name == "nt" and backend == "nccl":
         backend = "gloo"
-    dist.init_process_group(backend, rank=rank, world_size=world_size)
+    # timeout 넉넉히 (rank0 단독 eval/save 동안 다른 rank barrier 대기 견디게)
+    from datetime import timedelta
+    dist.init_process_group(backend, rank=rank, world_size=world_size,
+                            timeout=timedelta(minutes=60))
     if torch.cuda.is_available():
         torch.cuda.set_device(rank)
 
