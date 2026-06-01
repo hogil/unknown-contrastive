@@ -40,6 +40,7 @@ CLASSES = [
 ]
 # ===================================================================
 
+import argparse
 import os
 import shutil
 import sys
@@ -112,8 +113,27 @@ def _render_one(task):
     return cls, render_wafer(cls, seed, Path(dst))
 
 
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--output-dir", type=str, default=None,
+                   help="생성 출력 폴더. 예: E:/data/images/unknown_260601")
+    p.add_argument("--seed", type=int, default=None, help="SEED override.")
+    p.add_argument("--n-per-class", type=int, default=None, help="Normal 외 class별 생성 수.")
+    p.add_argument("--n-normal", type=int, default=None, help="Normal 생성 수.")
+    p.add_argument("--workers", type=int, default=None,
+                   help="ProcessPool worker 수. 기본은 os.cpu_count().")
+    return p.parse_args()
+
+
 def main():
-    out = resolve_path(OUTPUT_DIR)
+    args = parse_args()
+    output_dir = args.output_dir or OUTPUT_DIR
+    seed_base = SEED if args.seed is None else args.seed
+    n_per_class = N_PER_CLASS if args.n_per_class is None else args.n_per_class
+    n_normal = N_NORMAL if args.n_normal is None else args.n_normal
+    n_workers_cfg = args.workers
+
+    out = resolve_path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     # 1) 합성 task 수집 (skip 로직 — 가벼워서 순차)
@@ -122,7 +142,7 @@ def main():
     for cls in CLASSES:
         sub_dir = out / cls
         sub_dir.mkdir(exist_ok=True)
-        n_target = N_NORMAL if cls == "Normal" else N_PER_CLASS
+        n_target = n_normal if cls == "Normal" else n_per_class
         existing = len(list(sub_dir.glob("*.png")))
         if existing >= n_target:
             print(f"[skip] {cls}: {existing} >= {n_target}")
@@ -130,13 +150,13 @@ def main():
             continue
         print(f"[gen ] {cls}: {existing} -> {n_target}", flush=True)
         for i in range(existing, n_target):
-            seed = SEED + abs(hash(cls)) % 10000 + i
+            seed = seed_base + abs(hash(cls)) % 10000 + i
             dst = sub_dir / f"wafer_{i:04d}.png"
             tasks.append((cls, seed, str(dst)))
 
     # 2) ProcessPoolExecutor — CPU 코어 전부 사용 (환경 사양 다 씀)
     from concurrent.futures import ProcessPoolExecutor, as_completed
-    n_workers = max(1, os.cpu_count() or 8)
+    n_workers = max(1, n_workers_cfg if n_workers_cfg is not None else (os.cpu_count() or 8))
     total = 0
     if tasks:
         print(f"[gen] {len(tasks)} wafers → {n_workers} workers (CPU 코어 전부 활용)", flush=True)

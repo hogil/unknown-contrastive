@@ -38,6 +38,7 @@ SEED                = 42
 DRY_RUN             = False         # True 면 path 만 print
 # ===================================================================
 
+import argparse
 import json
 import random
 import sys
@@ -50,8 +51,34 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _common import resolve_path
 
 
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--source-root", type=str, default=None,
+                   help="원본 이미지 폴더. 예: E:/data/images/unknown_260601")
+    p.add_argument("--cnn-train-dir", type=str, default=None,
+                   help="CNN ImageFolder 출력 폴더.")
+    p.add_argument("--cl-train-dir", type=str, default=None,
+                   help="Contrastive train flat 출력 폴더.")
+    p.add_argument("--cl-eval-dir", type=str, default=None,
+                   help="Contrastive eval ImageFolder 출력 폴더.")
+    p.add_argument("--copy-mode", type=str, choices=["link", "copy"], default=None,
+                   help="link=hardlink(빠름), copy=복사.")
+    p.add_argument("--seed", type=int, default=None, help="split seed override.")
+    p.add_argument("--dry-run", action="store_true", help="파일 생성 없이 경로만 출력.")
+    return p.parse_args()
+
+
 def main():
-    src = resolve_path(SOURCE_ROOT)
+    args = parse_args()
+    source_root = args.source_root or SOURCE_ROOT
+    cnn_train_dir = args.cnn_train_dir or CNN_TRAIN_DIR
+    cl_train_dir = args.cl_train_dir or CL_TRAIN_DIR
+    cl_eval_dir = args.cl_eval_dir or CL_EVAL_DIR
+    copy_mode = args.copy_mode or COPY_MODE
+    seed = SEED if args.seed is None else args.seed
+    dry_run = DRY_RUN or args.dry_run
+
+    src = resolve_path(source_root)
     if not src.exists():
         raise SystemExit(
             f"SOURCE_ROOT not found: {src}\n\n"
@@ -67,12 +94,12 @@ def main():
         raise SystemExit(f"[ERR] CNN ↔ Contrastive class OVERLAP detected: {sorted(overlap)}")
     print(f"[classes] CNN: {len(cnn_classes)}, Contrastive: {len(cl_classes)}, overlap: 0")
 
-    cnn_train = resolve_path(CNN_TRAIN_DIR); cl_train = resolve_path(CL_TRAIN_DIR); cl_eval = resolve_path(CL_EVAL_DIR)
-    if not DRY_RUN:
+    cnn_train = resolve_path(cnn_train_dir); cl_train = resolve_path(cl_train_dir); cl_eval = resolve_path(cl_eval_dir)
+    if not dry_run:
         for d in (cnn_train, cl_train, cl_eval):
             d.mkdir(parents=True, exist_ok=True)
 
-    random.seed(SEED)
+    random.seed(seed)
 
     # ---- CNN classes ----
     cnn_summary = defaultdict(int)
@@ -82,11 +109,11 @@ def main():
         if cls in EXCLUDE_CLASSES: continue
         if cls not in cnn_classes: continue
         out_cls = cnn_train / cls
-        if not DRY_RUN: out_cls.mkdir(exist_ok=True)
+        if not dry_run: out_cls.mkdir(exist_ok=True)
         pngs = sorted(cls_dir.glob("*.png"))
         for src_png in pngs:
             dst = out_cls / src_png.name
-            place_file(src_png, dst)
+            place_file(src_png, dst, copy_mode, dry_run)
             cnn_summary[cls] += 1
     print(f"[CNN_TRAIN] {dict(cnn_summary)}")
     print(f"[CNN_TRAIN] total: {sum(cnn_summary.values())} images, {len(cnn_summary)} classes")
@@ -110,15 +137,15 @@ def main():
         # 파일명 prefix 로 원본 class 보존 (debug 용 — model 은 못 봄)
         for src_png in train_split:
             dst = cl_train / f"{cls}__{src_png.name}"
-            place_file(src_png, dst)
+            place_file(src_png, dst, copy_mode, dry_run)
             cl_train_summary += 1
 
         # Contrastive eval: ImageFolder (class subdir)
         out_cls = cl_eval / cls
-        if not DRY_RUN: out_cls.mkdir(exist_ok=True)
+        if not dry_run: out_cls.mkdir(exist_ok=True)
         for src_png in eval_split:
             dst = out_cls / src_png.name
-            place_file(src_png, dst)
+            place_file(src_png, dst, copy_mode, dry_run)
             cl_eval_summary[cls] += 1
 
     print(f"[CL_TRAIN  ] flat: {cl_train_summary} images ({CL_TRAIN_RATIO*100:.0f}%)")
@@ -127,38 +154,39 @@ def main():
 
     # write manifest
     manifest = {
-        "source_root": SOURCE_ROOT,
+        "source_root": source_root,
         "cnn_classes": sorted(cnn_classes),
         "contrastive_classes": sorted(cl_classes),
-        "cnn_train_dir": CNN_TRAIN_DIR,
-        "cl_train_dir": CL_TRAIN_DIR,
-        "cl_eval_dir": CL_EVAL_DIR,
+        "cnn_train_dir": cnn_train_dir,
+        "cl_train_dir": cl_train_dir,
+        "cl_eval_dir": cl_eval_dir,
         "cl_train_ratio": CL_TRAIN_RATIO,
-        "seed": SEED,
+        "copy_mode": copy_mode,
+        "seed": seed,
         "summary": {
             "cnn_train": dict(cnn_summary),
             "cl_train": cl_train_summary,
             "cl_eval": dict(cl_eval_summary),
         },
     }
-    if not DRY_RUN:
+    if not dry_run:
         for d in (cnn_train, cl_train, cl_eval):
             (d.parent / f"{d.name}_manifest.json").write_text(
                 json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
             )
     print("\n[OUT]")
-    print(f"  {CNN_TRAIN_DIR}/<class>/*.png  (CNN supervised)")
-    print(f"  {CL_TRAIN_DIR}/*.png            (Contrastive train, flat)")
-    print(f"  {CL_EVAL_DIR}/<class>/*.png    (Contrastive eval)")
+    print(f"  {cnn_train_dir}/<class>/*.png  (CNN supervised)")
+    print(f"  {cl_train_dir}/*.png            (Contrastive train, flat)")
+    print(f"  {cl_eval_dir}/<class>/*.png    (Contrastive eval)")
 
 
-def place_file(src, dst):
+def place_file(src, dst, copy_mode, dry_run):
     """COPY_MODE 따라 link 또는 copy."""
-    if DRY_RUN:
-        print(f"  {COPY_MODE}: {src} → {dst}")
+    if dry_run:
+        print(f"  {copy_mode}: {src} → {dst}")
         return
     if dst.exists(): return
-    if COPY_MODE == "link":
+    if copy_mode == "link":
         try:
             import os
             os.link(src, dst)         # hard link (Windows NTFS 지원)
