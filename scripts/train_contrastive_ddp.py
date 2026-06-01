@@ -326,6 +326,163 @@ def save_cluster_representatives(cl_dir: Path, embeddings: np.ndarray, pred: np.
     return saved
 
 
+def write_contrastive_eval_report(cl_dir: Path, tier1: dict, pred: np.ndarray,
+                                  labels: list[str], paths: list[str],
+                                  ignore_classes: set[str], reps_per_cluster: int) -> dict:
+    """사람이 읽는 eval 요약 + class/cluster별 TSV 텍스트 리포트."""
+    labels_arr = np.array(labels)
+    pred_arr = np.asarray(pred)
+    ignore_set = set(ignore_classes)
+    measured_mask = ~np.isin(labels_arr, list(ignore_set))
+
+    measured_idx = np.where(measured_mask)[0]
+    cluster_cls = defaultdict(Counter)
+    cluster_all = Counter(int(p) for p in pred_arr.tolist())
+    for i in measured_idx:
+        cluster_cls[int(pred_arr[i])][str(labels_arr[i])] += 1
+
+    cluster_dom = {}
+    for cl_id, cnt in cluster_cls.items():
+        if cl_id == -1:
+            continue
+        total = sum(cnt.values())
+        if total > 0:
+            top_cls, top_n = cnt.most_common(1)[0]
+            cluster_dom[int(cl_id)] = {
+                "dominant_class": top_cls,
+                "dominant_n": int(top_n),
+                "measured_n": int(total),
+                "purity": float(top_n / total),
+            }
+
+    class_rows = []
+    for cls in sorted(set(labels_arr[measured_mask].tolist())):
+        idx = np.where((labels_arr == cls) & measured_mask)[0]
+        total = int(len(idx))
+        cls_pred = pred_arr[idx]
+        noise_n = int((cls_pred == -1).sum())
+        clusters = sorted(int(c) for c in set(cls_pred.tolist()) if int(c) != -1)
+        captured_n = 0
+        other_cluster_n = 0
+        best_cluster_id = ""
+        best_cluster_n = 0
+        for cl_id in clusters:
+            n_cls_in_cluster = int((cls_pred == cl_id).sum())
+            if n_cls_in_cluster > best_cluster_n:
+                best_cluster_n = n_cls_in_cluster
+                best_cluster_id = cl_id
+            if cluster_dom.get(cl_id, {}).get("dominant_class") == cls:
+                captured_n += n_cls_in_cluster
+            else:
+                other_cluster_n += n_cls_in_cluster
+        dominant_clusters = sum(1 for d in cluster_dom.values() if d["dominant_class"] == cls)
+        class_rows.append({
+            "class": cls,
+            "total": total,
+            "captured": captured_n,
+            "captured_pct": captured_n / max(1, total) * 100,
+            "noise": noise_n,
+            "noise_pct": noise_n / max(1, total) * 100,
+            "other_cluster": other_cluster_n,
+            "clusters_with_class": len(clusters),
+            "dominant_clusters": dominant_clusters,
+            "largest_cluster_id": best_cluster_id,
+            "largest_cluster_n": best_cluster_n,
+            "largest_cluster_pct": best_cluster_n / max(1, total) * 100,
+        })
+
+    cluster_rows = []
+    for cl_id in sorted(cluster_dom):
+        cnt = cluster_cls[cl_id]
+        dom = cluster_dom[cl_id]
+        mix = ", ".join(f"{c}:{n}" for c, n in cnt.most_common(8))
+        cluster_rows.append({
+            "cluster_id": cl_id,
+            "dominant_class": dom["dominant_class"],
+            "measured_n": dom["measured_n"],
+            "all_n": int(cluster_all[cl_id]),
+            "purity_pct": dom["purity"] * 100,
+            "class_mix_top": mix,
+        })
+
+    noise_by_class = Counter(str(labels_arr[i]) for i in measured_idx if int(pred_arr[i]) == -1)
+    class_txt = cl_dir / "contrastive_class_report.txt"
+    with class_txt.open("w", encoding="utf-8", newline="") as f:
+        f.write("# captured = true class 와 같은 dominant_class cluster 에 들어간 수\n")
+        f.write("# other_cluster = noise 는 아니지만 다른 class dominant cluster 에 들어간 수\n")
+        f.write("# clusters_with_class = 해당 true class 샘플이 흩어진 non-noise cluster 개수\n")
+        f.write("# Normal 등 ignored_classes 는 metric/report 계산에서 제외\n")
+        f.write("\t".join([
+            "class", "total", "captured", "captured_pct", "noise", "noise_pct",
+            "other_cluster", "clusters_with_class", "dominant_clusters",
+            "largest_cluster_id", "largest_cluster_n", "largest_cluster_pct",
+        ]) + "\n")
+        for r in class_rows:
+            f.write("\t".join([
+                str(r["class"]), str(r["total"]), str(r["captured"]),
+                f"{r['captured_pct']:.2f}", str(r["noise"]), f"{r['noise_pct']:.2f}",
+                str(r["other_cluster"]), str(r["clusters_with_class"]),
+                str(r["dominant_clusters"]), str(r["largest_cluster_id"]),
+                str(r["largest_cluster_n"]), f"{r['largest_cluster_pct']:.2f}",
+            ]) + "\n")
+
+    cluster_txt = cl_dir / "contrastive_cluster_report.txt"
+    with cluster_txt.open("w", encoding="utf-8", newline="") as f:
+        f.write("# cluster_id=-1(noise)는 class report 의 noise 컬럼과 아래 noise_by_class 참고\n")
+        f.write("\t".join([
+            "cluster_id", "dominant_class", "measured_n", "all_n",
+            "purity_pct", "class_mix_top",
+        ]) + "\n")
+        for r in cluster_rows:
+            f.write("\t".join([
+                str(r["cluster_id"]), r["dominant_class"], str(r["measured_n"]),
+                str(r["all_n"]), f"{r['purity_pct']:.2f}", r["class_mix_top"],
+            ]) + "\n")
+        f.write("\n# noise_by_class\n")
+        f.write("class\tnoise\n")
+        for cls, n in sorted(noise_by_class.items()):
+            f.write(f"{cls}\t{n}\n")
+
+    md = cl_dir / "contrastive_eval_report.md"
+    with md.open("w", encoding="utf-8") as f:
+        f.write("# Contrastive Evaluation Report\n\n")
+        f.write("## Summary\n\n")
+        f.write(f"- measured total: {tier1.get('n_total', 0)}\n")
+        f.write(f"- ignored total: {tier1.get('n_ignored', 0)} ({', '.join(sorted(ignore_set)) or 'none'})\n")
+        f.write(f"- clustered: {tier1.get('n_clustered', 0)}\n")
+        f.write(f"- noise: {tier1.get('noise_count', 0)} ({tier1.get('noise_pct', 0)}%)\n")
+        f.write(f"- clusters: {tier1.get('n_clusters', 0)}\n")
+        f.write(f"- class capture rate: {tier1.get('class_capture_rate', 0)}\n")
+        f.write(f"- homogeneity/completeness/AMI/ARI: {tier1.get('homogeneity', 0)} / {tier1.get('completeness', 0)} / {tier1.get('ami', 0)} / {tier1.get('ari', 0)}\n")
+        f.write(f"- representatives: max {reps_per_cluster} images per cluster\n\n")
+        f.write("## Meaning\n\n")
+        f.write("- captured: true class 와 같은 dominant_class cluster 에 들어간 샘플 수\n")
+        f.write("- noise: HDBSCAN 이 cluster 로 묶지 못하고 -1 로 둔 샘플 수\n")
+        f.write("- clusters_with_class: 해당 class 샘플이 흩어진 non-noise cluster 개수\n")
+        f.write("- dominant_clusters: 해당 class 가 dominant_class 인 cluster 개수\n\n")
+        f.write("## Class Report\n\n")
+        f.write("| class | total | captured | captured % | noise | noise % | other cluster | clusters with class | dominant clusters | largest cluster |\n")
+        f.write("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n")
+        for r in class_rows:
+            largest = f"{r['largest_cluster_id']} ({r['largest_cluster_n']}, {r['largest_cluster_pct']:.2f}%)"
+            f.write(
+                f"| {r['class']} | {r['total']} | {r['captured']} | {r['captured_pct']:.2f} | "
+                f"{r['noise']} | {r['noise_pct']:.2f} | {r['other_cluster']} | "
+                f"{r['clusters_with_class']} | {r['dominant_clusters']} | {largest} |\n"
+            )
+        f.write("\n## Files\n\n")
+        f.write(f"- class text: `{class_txt.name}`\n")
+        f.write(f"- cluster text: `{cluster_txt.name}`\n")
+        f.write("- representative images: `representatives/`\n")
+        f.write("- wrong images: `wrong/`\n")
+
+    return {
+        "class_report": str(class_txt),
+        "cluster_report": str(cluster_txt),
+        "markdown_report": str(md),
+    }
+
+
 def build_aug():
     norm = T.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
     return T.Compose([
@@ -692,6 +849,13 @@ def train_worker(rank, world_size):
                 w.writerows(rows)
             print(f"  [wrong] saved {n_wrong} to {wrong_dir}")
             tier1["n_wrong_saved"] = n_wrong
+
+        report_paths = write_contrastive_eval_report(
+            cl_dir, tier1, pred, all_label, all_path,
+            EVAL_IGNORE_CLASSES, REPRESENTATIVES_PER_CLUSTER)
+        tier1["reports"] = report_paths
+        (cl_dir / "tier1.json").write_text(json.dumps(tier1, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"  [report] {cl_dir / 'contrastive_eval_report.md'}")
 
         log_stage_metric(run_dir, "contrastive_ddp_eval", tier1,
                          notes=f"DDP {world_size} GPUs, freeze={FREEZE_BACKBONE}")
