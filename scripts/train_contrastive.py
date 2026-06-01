@@ -67,11 +67,12 @@ CLUSTER_SELECTION_EPSILON = 0.0
 # Data caps (eval set)
 PER_CLASS_CAP         = 500
 NORMAL_CAP            = 2000
+EVAL_IGNORE_CLASSES   = {"Normal"}   # Normal 은 background/noise pool — metric 계산 제외
 
 SEED                  = 42
 
 # Wrong/outlier 이미지 저장 (eval)
-SAVE_WRONG_IMAGES     = True        # cluster outlier 이미지를 wrong/<true>/<true>_<pred_cluster_class>_<pct>%_<basename>.png
+SAVE_WRONG_IMAGES     = True        # ignored class 제외, cluster-mismatch/noise defect 이미지 저장
 SAVE_REPRESENTATIVES  = True        # cluster 대표 이미지 몇 장 저장
 REPRESENTATIVES_PER_CLUSTER = 5
 # ===================================================================
@@ -313,29 +314,32 @@ def hdbscan_eval(embeddings: np.ndarray, true_labels: list[str], cfg: dict):
         allow_single_cluster=False,
     )
     pred = clusterer.fit_predict(embeddings)
-    n_total = len(pred)
+    labels_arr = np.array(true_labels)
+    measured_mask = ~np.isin(labels_arr, list(EVAL_IGNORE_CLASSES))
+    n_total = int(measured_mask.sum())
+    n_total_all = len(pred)
     noise_mask = pred == -1
-    n_noise = int(noise_mask.sum())
-    noise_pct = n_noise / n_total * 100
+    n_noise = int((noise_mask & measured_mask).sum())
+    noise_pct = n_noise / max(1, n_total) * 100
 
     # tier1: capture / Completeness / Homogeneity / AMI / ARI
     from sklearn.metrics import (adjusted_mutual_info_score,
                                  adjusted_rand_score,
                                  completeness_score,
                                  homogeneity_score)
-    # filter noise out for metrics
-    keep = ~noise_mask
+    # filter noise and ignored classes out for metrics
+    keep = (~noise_mask) & measured_mask
     pred_k = pred[keep]
-    true_k = np.array(true_labels)[keep]
+    true_k = labels_arr[keep]
     classes = sorted(set(true_k))
     cl2i = {c: i for i, c in enumerate(classes)}
-    true_idx = np.array([cl2i[c] for c in true_k])
+    true_idx = np.array([cl2i[c] for c in true_k]) if classes else np.array([], dtype=int)
 
     # capture: per class, max fraction in any cluster (over clustered subset)
     cluster_cls = defaultdict(Counter)
     for p, c in zip(pred_k, true_k):
         cluster_cls[int(p)][c] += 1
-    cls_total = Counter(true_labels)  # over all (incl noise)
+    cls_total = Counter(labels_arr[measured_mask])  # over measured classes only
     capture = {}
     for cls, total in cls_total.items():
         max_in = max(
@@ -343,17 +347,21 @@ def hdbscan_eval(embeddings: np.ndarray, true_labels: list[str], cfg: dict):
             default=0,
         )
         capture[cls] = max_in / total
+    can_score = len(true_idx) > 0 and len(set(true_idx.tolist())) > 1 and len(set(pred_k.tolist())) > 1
     return {
         "n_total": int(n_total),
+        "n_total_all": int(n_total_all),
+        "n_ignored": int((~measured_mask).sum()),
+        "ignored_classes": sorted(EVAL_IGNORE_CLASSES),
         "n_clustered": int(keep.sum()),
         "n_clusters": int(len(set(pred_k))),
         "noise_count": n_noise,
         "noise_pct": round(noise_pct, 2),
-        "class_capture_rate": round(float(np.mean(list(capture.values()))), 4),
-        "completeness": round(float(completeness_score(true_idx, pred_k)), 4),
-        "homogeneity": round(float(homogeneity_score(true_idx, pred_k)), 4),
-        "ami": round(float(adjusted_mutual_info_score(true_idx, pred_k)), 4),
-        "ari": round(float(adjusted_rand_score(true_idx, pred_k)), 4),
+        "class_capture_rate": round(float(np.mean(list(capture.values()))), 4) if capture else 0.0,
+        "completeness": round(float(completeness_score(true_idx, pred_k)), 4) if can_score else 0.0,
+        "homogeneity": round(float(homogeneity_score(true_idx, pred_k)), 4) if can_score else 0.0,
+        "ami": round(float(adjusted_mutual_info_score(true_idx, pred_k)), 4) if can_score else 0.0,
+        "ari": round(float(adjusted_rand_score(true_idx, pred_k)), 4) if can_score else 0.0,
     }, pred
 
 
@@ -371,13 +379,19 @@ def save_cluster_representatives(cl_dir: Path, embeddings: np.ndarray, pred: np.
         idx = np.where(pred == cl_id)[0]
         if len(idx) == 0:
             continue
-        cnt = Counter(labels[i] for i in idx)
+        measured_idx = np.array([i for i in idx if labels[i] not in EVAL_IGNORE_CLASSES], dtype=int)
+        if len(measured_idx) == 0:
+            continue
+        cnt = Counter(labels[i] for i in measured_idx)
         top_cls, top_n = cnt.most_common(1)[0]
-        purity = top_n / len(idx)
-        center = embeddings[idx].mean(axis=0)
-        dist = np.linalg.norm(embeddings[idx] - center[None, :], axis=1)
-        order = idx[np.argsort(dist)[:per_cluster]]
-        sub = rep_dir / f"cluster-{cl_id:03d}_class-{top_cls}_purity-{int(round(purity * 100))}pct_n-{len(idx)}"
+        purity = top_n / len(measured_idx)
+        center = embeddings[measured_idx].mean(axis=0)
+        dist = np.linalg.norm(embeddings[measured_idx] - center[None, :], axis=1)
+        order = measured_idx[np.argsort(dist)[:per_cluster]]
+        sub = rep_dir / (
+            f"cluster-{cl_id:03d}_class-{top_cls}_purity-{int(round(purity * 100))}pct_"
+            f"n-{len(measured_idx)}_all-{len(idx)}"
+        )
         sub.mkdir(parents=True, exist_ok=True)
         for rank_i, i in enumerate(order, 1):
             src = Path(paths[i])
@@ -392,7 +406,8 @@ def save_cluster_representatives(cl_dir: Path, embeddings: np.ndarray, pred: np.
                     "rank": rank_i,
                     "dominant_class": top_cls,
                     "cluster_purity": f"{purity:.6f}",
-                    "cluster_size": len(idx),
+                    "cluster_size": len(measured_idx),
+                    "cluster_size_all": len(idx),
                     "true_class": labels[i],
                     "distance_to_centroid": f"{float(np.linalg.norm(embeddings[i] - center)):.6f}",
                     "src": str(src),
@@ -401,7 +416,8 @@ def save_cluster_representatives(cl_dir: Path, embeddings: np.ndarray, pred: np.
             except Exception:
                 pass
 
-    noise_idx = np.where(pred == -1)[0][:per_cluster]
+    noise_idx = np.array([i for i in np.where(pred == -1)[0]
+                          if labels[i] not in EVAL_IGNORE_CLASSES], dtype=int)[:per_cluster]
     if len(noise_idx):
         sub = rep_dir / "_noise"
         sub.mkdir(parents=True, exist_ok=True)
@@ -418,7 +434,8 @@ def save_cluster_representatives(cl_dir: Path, embeddings: np.ndarray, pred: np.
                     "rank": rank_i,
                     "dominant_class": "noise",
                     "cluster_purity": "",
-                    "cluster_size": int((pred == -1).sum()),
+                    "cluster_size": int(sum(labels[i] not in EVAL_IGNORE_CLASSES for i in np.where(pred == -1)[0])),
+                    "cluster_size_all": int((pred == -1).sum()),
                     "true_class": labels[i],
                     "distance_to_centroid": "",
                     "src": str(src),
@@ -430,8 +447,8 @@ def save_cluster_representatives(cl_dir: Path, embeddings: np.ndarray, pred: np.
     import csv
     with (rep_dir / "representatives.csv").open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=["cluster_id", "rank", "dominant_class",
-                                          "cluster_purity", "cluster_size", "true_class",
-                                          "distance_to_centroid", "src", "dst"])
+                                          "cluster_purity", "cluster_size", "cluster_size_all",
+                                          "true_class", "distance_to_centroid", "src", "dst"])
         w.writeheader()
         w.writerows(rows)
     return saved
@@ -617,12 +634,16 @@ def main():
             import shutil as _sh
             _sh.rmtree(wrong_dir)
         wrong_dir.mkdir(parents=True, exist_ok=True)
-        # cluster → dominant class + dominant fraction
+        # cluster → dominant measured class + dominant fraction (Normal 등 ignored 제외)
         cluster_dominant: dict[int, tuple[str, float]] = {}
         cluster_cls_cnt = defaultdict(Counter)
         for p, c in zip(pred, all_label):
+            if c in EVAL_IGNORE_CLASSES:
+                continue
             cluster_cls_cnt[int(p)][c] += 1
         for cl_id, cnt in cluster_cls_cnt.items():
+            if cl_id == -1:
+                continue
             total = sum(cnt.values())
             top_cls, top_n = cnt.most_common(1)[0]
             cluster_dominant[cl_id] = (top_cls, top_n / total)
@@ -632,6 +653,8 @@ def main():
         n_wrong = 0
         rows = []
         for p, true_cls, path in zip(pred, all_label, all_path):
+            if true_cls in EVAL_IGNORE_CLASSES:
+                continue
             cl_id = int(p)
             if cl_id == -1:
                 # noise — assign as wrong vs true class
@@ -640,6 +663,8 @@ def main():
                 purity_tag = "na"
                 is_wrong = True
             else:
+                if cl_id not in cluster_dominant:
+                    continue
                 cluster_pred_cls, purity = cluster_dominant[cl_id]
                 purity_tag = f"{int(round(purity * 100))}pct"
                 is_wrong = (cluster_pred_cls != true_cls)
