@@ -30,6 +30,12 @@ PRODUCT_FILTER      = None         # 예: ["AA", "BB"] — None=all
 LINE_FILTER         = None
 DATE_FILTER         = None
 
+# 옵션 C: 실전 폴더 여러 개 직접 선택 (--image-roots a,b,c). IMAGE_BASE/IMAGE_ROOT 보다 우선.
+#   POOL=False(기본): 각 폴더 따로 grouping (폴더별 출력). POOL=True: 전부 합쳐 1 grouping.
+IMAGE_ROOTS         = None         # list[str] 또는 None
+POOL                = False
+POOL_NAME           = "pooled"
+
 # 모델 — contrastive best
 MODEL_PATH          = "runs/<TS>_pipeline/contrastive/best_model.pt"
 
@@ -84,13 +90,16 @@ class FolderImageDataset(Dataset):
     """폴더 하위 모든 .png (recursive). class 없음 — grouping 전용."""
     EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
 
-    def __init__(self, root: Path, transform=None):
-        self.root = Path(root)
+    def __init__(self, root, transform=None):
+        roots = root if isinstance(root, (list, tuple)) else [root]
+        self.roots = [Path(r) for r in roots]
+        self.root = self.roots[0]
         self.transform = transform
-        self.paths: list[Path] = []
-        for ext in self.EXTS:
-            self.paths.extend(self.root.rglob(f"*{ext}"))
-        self.paths = sorted(self.paths)
+        paths: list[Path] = []
+        for r in self.roots:
+            for ext in self.EXTS:
+                paths.extend(Path(r).rglob(f"*{ext}"))
+        self.paths = sorted(set(paths))
 
     def __len__(self): return len(self.paths)
 
@@ -135,9 +144,28 @@ class ContrastiveInferModel(nn.Module):
 
 
 def enumerate_targets():
-    """IMAGE_BASE 가 있으면 (product, line, date) tuple 들 walk, 아니면 IMAGE_ROOT 하나."""
+    """반환: (product, line, date, folder_or_list, out_name) 리스트.
+    우선순위: IMAGE_ROOTS(직접 선택) > IMAGE_BASE(walk) > IMAGE_ROOT(단일)."""
+    # 옵션 C — 실전 폴더 직접 선택
+    if IMAGE_ROOTS:
+        roots = [resolve_path(r) for r in IMAGE_ROOTS]
+        if POOL:
+            return [(None, None, None, roots, POOL_NAME)]          # 전부 합쳐 1 grouping
+        out = []
+        seen = {}
+        for r in roots:
+            name = r.name
+            if name in seen:                                        # 폴더명 중복 → 부모 붙여 구분
+                seen[name] += 1; name = f"{r.parent.name}_{r.name}"
+            else:
+                seen[name] = 1
+            out.append((None, None, None, r, name))
+        return out
+    # 옵션 A — 단일
     if not IMAGE_BASE:
-        return [(None, None, None, resolve_path(IMAGE_ROOT))]
+        f = resolve_path(IMAGE_ROOT)
+        return [(None, None, None, f, f.name)]
+    # 옵션 B — product/line/date walk
     base = resolve_path(IMAGE_BASE)
     targets = []
     for prod in sorted(base.iterdir()):
@@ -149,19 +177,21 @@ def enumerate_targets():
             for date in sorted(line.iterdir()):
                 if not date.is_dir(): continue
                 if DATE_FILTER and date.name not in DATE_FILTER: continue
-                targets.append((prod.name, line.name, date.name, date))
+                targets.append((prod.name, line.name, date.name, date, None))
     return targets
 
 
-def cluster_folder(folder_path: Path, model: nn.Module, device, output_subdir: Path,
+def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
                    product=None, line=None, date=None):
-    """한 폴더의 이미지 cluster 후 산출."""
+    """한 폴더(또는 폴더 list)의 이미지 cluster 후 산출."""
     tf = build_eval_tf()
     ds = FolderImageDataset(folder_path, transform=tf)
+    disp = (", ".join(str(Path(p)) for p in folder_path)
+            if isinstance(folder_path, (list, tuple)) else str(folder_path))
     if len(ds) == 0:
-        print(f"[skip] {folder_path}: no images")
+        print(f"[skip] {disp}: no images")
         return None
-    print(f"[{folder_path}] {len(ds)} images")
+    print(f"[{disp}] {len(ds)} images")
     loader = DataLoader(ds, batch_size=BATCH, shuffle=False,
                         num_workers=NUM_WORKERS, pin_memory=True)
 
@@ -215,7 +245,7 @@ def cluster_folder(folder_path: Path, model: nn.Module, device, output_subdir: P
     np.save(output_subdir / "embeddings.npy", embeddings)
 
     summary = {
-        "folder": str(folder_path.resolve()),
+        "folder": disp,
         "product": product, "line": line, "date": date,
         "n_images": len(all_path),
         "n_clusters": n_clusters,
@@ -247,7 +277,39 @@ def cluster_folder(folder_path: Path, model: nn.Module, device, output_subdir: P
     return summary
 
 
+def _apply_args():
+    """CLI 로 CONFIG global override (실전 폴더/모델 선택)."""
+    import argparse
+    global MODEL_PATH, IMAGE_ROOT, IMAGE_BASE, IMAGE_ROOTS, POOL, POOL_NAME
+    global OUTPUT_DIR, COPY_PNG_TO_GROUPS, MIN_CLUSTER_SIZE, MIN_SAMPLES
+    global PRODUCT_FILTER, LINE_FILTER, DATE_FILTER
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", type=str, default=None, help="contrastive best_model.pt 경로")
+    ap.add_argument("--image-roots", type=str, default=None,
+                    help="실전 폴더 콤마구분 다중 선택. 예: E:/data/images/prodA,E:/data/images/prodB")
+    ap.add_argument("--pool", action="store_true", help="여러 폴더를 합쳐 1 grouping (기본: 폴더별 따로)")
+    ap.add_argument("--pool-name", type=str, default=None, help="pool 시 출력 폴더명")
+    ap.add_argument("--image-root", type=str, default=None, help="단일 폴더")
+    ap.add_argument("--image-base", type=str, default=None, help="product/line/date walk base")
+    ap.add_argument("--output-dir", type=str, default=None)
+    ap.add_argument("--copy-png", action="store_true", help="group 폴더에 PNG 복사 (시각 review)")
+    ap.add_argument("--min-cluster-size", type=int, default=None)
+    ap.add_argument("--min-samples", type=int, default=None)
+    a = ap.parse_args()
+    if a.model:            MODEL_PATH = a.model
+    if a.image_roots:      IMAGE_ROOTS = [x.strip() for x in a.image_roots.split(",") if x.strip()]
+    if a.pool:             POOL = True
+    if a.pool_name:        POOL_NAME = a.pool_name
+    if a.image_root:       IMAGE_ROOT = a.image_root
+    if a.image_base:       IMAGE_BASE = a.image_base
+    if a.output_dir:       OUTPUT_DIR = a.output_dir
+    if a.copy_png:         COPY_PNG_TO_GROUPS = True
+    if a.min_cluster_size is not None: MIN_CLUSTER_SIZE = a.min_cluster_size
+    if a.min_samples is not None:      MIN_SAMPLES = a.min_samples
+
+
 def main():
+    _apply_args()
     run_dir = make_run_dir(OUTPUT_DIR, "grouping")
     print(f"[run_dir] {run_dir.resolve()}")
 
@@ -281,14 +343,15 @@ def main():
     print(f"[targets] {len(targets)} folder(s)")
 
     all_summaries = []
-    for product, line, date, folder in targets:
-        if not folder.exists():
+    for product, line, date, folder, out_name in targets:
+        folders = folder if isinstance(folder, (list, tuple)) else [folder]
+        if not any(Path(f).exists() for f in folders):
             print(f"[miss] {folder}")
             continue
-        if IMAGE_BASE:
+        if product:                                    # IMAGE_BASE walk
             out = run_dir / product / line / date
         else:
-            out = run_dir / folder.name
+            out = run_dir / (out_name or Path(folders[0]).name)
         s = cluster_folder(folder, model, device, out,
                            product=product, line=line, date=date)
         if s is not None:
