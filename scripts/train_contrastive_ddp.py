@@ -449,6 +449,9 @@ def write_contrastive_eval_report(cl_dir: Path, tier1: dict, pred: np.ndarray,
         f.write("## Summary\n\n")
         f.write(f"- measured total: {tier1.get('n_total', 0)}\n")
         f.write(f"- ignored total: {tier1.get('n_ignored', 0)} ({', '.join(sorted(ignore_set)) or 'none'})\n")
+        if tier1.get("ignored_class_counts"):
+            ignored_desc = ", ".join(f"{k}={v}" for k, v in tier1["ignored_class_counts"].items())
+            f.write(f"- ignored counts: {ignored_desc}\n")
         f.write(f"- clustered: {tier1.get('n_clustered', 0)}\n")
         f.write(f"- noise: {tier1.get('noise_count', 0)} ({tier1.get('noise_pct', 0)}%)\n")
         f.write(f"- clusters: {tier1.get('n_clusters', 0)}\n")
@@ -752,6 +755,7 @@ def train_worker(rank, world_size):
                                      completeness_score, homogeneity_score)
         labels_arr = np.array(all_label)
         measured_mask = ~np.isin(labels_arr, list(EVAL_IGNORE_CLASSES))
+        ignored_counts = Counter(labels_arr[~measured_mask].tolist())
         keep = (pred != -1) & measured_mask
         true_k = labels_arr[keep]; pred_k = pred[keep]
         classes_unique = sorted(set(true_k))
@@ -773,6 +777,7 @@ def train_worker(rank, world_size):
             "n_total_all": int(len(pred)),
             "n_ignored": int((~measured_mask).sum()),
             "ignored_classes": sorted(EVAL_IGNORE_CLASSES),
+            "ignored_class_counts": dict(sorted(ignored_counts.items())),
             "n_clustered": int(keep.sum()),
             "n_clusters": int(len(set(pred_k))),
             "noise_count": measured_noise,

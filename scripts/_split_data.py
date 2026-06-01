@@ -43,6 +43,7 @@ DRY_RUN             = False         # True 면 path 만 print
 import argparse
 import json
 import random
+import shutil
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -68,6 +69,8 @@ def parse_args():
     p.add_argument("--seed", type=int, default=None, help="split seed override.")
     p.add_argument("--normal-cnn-ratio", type=float, default=None,
                    help="Normal 중 CNN stream 으로 보낼 비율. 기본 0.0; 보통 CNN에는 Normal을 넣지 않음.")
+    p.add_argument("--clean-output", action="store_true",
+                   help="기존 split 출력 폴더를 지우고 새로 생성. stale 파일 방지용.")
     p.add_argument("--dry-run", action="store_true", help="파일 생성 없이 경로만 출력.")
     return p.parse_args()
 
@@ -108,6 +111,8 @@ def main():
     print(f"  cnn_train:   {cnn_train}")
     print(f"  cl_train:    {cl_train}")
     print(f"  cl_eval:     {cl_eval}")
+    if args.clean_output and not dry_run:
+        clean_outputs(src, [cnn_train, cl_train, cl_eval])
     if not dry_run:
         for d in (cnn_train, cl_train, cl_eval):
             d.mkdir(parents=True, exist_ok=True)
@@ -132,6 +137,9 @@ def main():
 
     # ---- CNN classes ----
     cnn_summary = defaultdict(int)
+    expected_cnn = set()
+    expected_cl_train = set()
+    expected_cl_eval = set()
     for cls_dir in sorted(src.iterdir()):
         if not cls_dir.is_dir(): continue
         cls = cls_dir.name
@@ -142,6 +150,7 @@ def main():
         pngs = sorted(cls_dir.glob("*.png"))
         for src_png in pngs:
             dst = out_cls / src_png.name
+            expected_cnn.add(dst.resolve())
             place_file(src_png, dst, copy_mode, dry_run)
             cnn_summary[cls] += 1
     if normal_split["cnn"]:
@@ -149,6 +158,7 @@ def main():
         if not dry_run: out_cls.mkdir(exist_ok=True)
         for src_png in normal_split["cnn"]:
             dst = out_cls / src_png.name
+            expected_cnn.add(dst.resolve())
             place_file(src_png, dst, copy_mode, dry_run)
             cnn_summary[NORMAL_CLASS] += 1
     print(f"[CNN_TRAIN] {dict(cnn_summary)}")
@@ -177,6 +187,7 @@ def main():
         # 파일명 prefix 로 원본 class 보존 (debug 용 — model 은 못 봄)
         for src_png in train_split:
             dst = cl_train / f"{cls}__{src_png.name}"
+            expected_cl_train.add(dst.resolve())
             place_file(src_png, dst, copy_mode, dry_run)
             cl_train_summary += 1
 
@@ -185,6 +196,7 @@ def main():
         if not dry_run: out_cls.mkdir(exist_ok=True)
         for src_png in eval_split:
             dst = out_cls / src_png.name
+            expected_cl_eval.add(dst.resolve())
             place_file(src_png, dst, copy_mode, dry_run)
             cl_eval_summary[cls] += 1
 
@@ -221,10 +233,60 @@ def main():
             (d.parent / f"{d.name}_manifest.json").write_text(
                 json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
             )
+        audit_outputs([
+            ("CNN_TRAIN", cnn_train, expected_cnn),
+            ("CL_TRAIN", cl_train, expected_cl_train),
+            ("CL_EVAL", cl_eval, expected_cl_eval),
+        ])
     print("\n[OUT]")
     print(f"  {cnn_train}/<class>/*.png  (CNN supervised)")
     print(f"  {cl_train}/*.png            (Contrastive train, flat)")
     print(f"  {cl_eval}/<class>/*.png    (Contrastive eval)")
+
+
+def image_files(root: Path) -> set[Path]:
+    exts = {".png", ".jpg", ".jpeg", ".bmp"}
+    if not root.exists():
+        return set()
+    return {p.resolve() for p in root.rglob("*") if p.is_file() and p.suffix.lower() in exts}
+
+
+def clean_outputs(src: Path, outputs: list[Path]) -> None:
+    src_resolved = src.resolve()
+    for out in outputs:
+        out_resolved = out.resolve()
+        if out_resolved == src_resolved:
+            raise SystemExit(f"[ERR] refusing to clean source dir: {out_resolved}")
+        if src_resolved in out_resolved.parents:
+            raise SystemExit(f"[ERR] refusing to clean output inside source dir: {out_resolved}")
+        if out_resolved.parent == out_resolved:
+            raise SystemExit(f"[ERR] refusing to clean filesystem root: {out_resolved}")
+        if out.exists():
+            print(f"[clean] {out_resolved}")
+            shutil.rmtree(out)
+
+
+def audit_outputs(items) -> None:
+    failed = []
+    for name, root, expected in items:
+        actual = image_files(root)
+        extra = actual - expected
+        missing = expected - actual
+        print(f"[audit] {name}: expected={len(expected)} actual={len(actual)} "
+              f"extra={len(extra)} missing={len(missing)}")
+        if extra or missing:
+            failed.append((name, extra, missing))
+    if not failed:
+        return
+    lines = ["[AUDIT FAIL] split output contains stale or missing image files."]
+    for name, extra, missing in failed:
+        lines.append(f"  {name}: extra={len(extra)} missing={len(missing)}")
+        for p in sorted(list(extra))[:5]:
+            lines.append(f"    extra: {p}")
+        for p in sorted(list(missing))[:5]:
+            lines.append(f"    missing: {p}")
+    lines.append("Rerun with --clean-output, or use fresh output folders.")
+    raise SystemExit("\n".join(lines))
 
 
 def place_file(src, dst, copy_mode, dry_run):
