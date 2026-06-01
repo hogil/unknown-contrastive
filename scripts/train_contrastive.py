@@ -72,6 +72,8 @@ SEED                  = 42
 
 # Wrong/outlier 이미지 저장 (eval)
 SAVE_WRONG_IMAGES     = True        # cluster outlier 이미지를 wrong/<true>/<true>_<pred_cluster_class>_<pct>%_<basename>.png
+SAVE_REPRESENTATIVES  = True        # cluster 대표 이미지 몇 장 저장
+REPRESENTATIVES_PER_CLUSTER = 5
 # ===================================================================
 
 import json
@@ -88,6 +90,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as T
+import shutil
 from torch.utils.data import DataLoader, Dataset
 from torchvision.datasets import ImageFolder
 
@@ -354,6 +357,86 @@ def hdbscan_eval(embeddings: np.ndarray, true_labels: list[str], cfg: dict):
     }, pred
 
 
+def save_cluster_representatives(cl_dir: Path, embeddings: np.ndarray, pred: np.ndarray,
+                                 labels: list[str], paths: list[str], per_cluster: int) -> int:
+    rep_dir = cl_dir / "representatives"
+    if rep_dir.exists():
+        shutil.rmtree(rep_dir)
+    rep_dir.mkdir(parents=True, exist_ok=True)
+
+    rows = []
+    saved = 0
+    cluster_ids = sorted(int(c) for c in set(pred.tolist()) if int(c) != -1)
+    for cl_id in cluster_ids:
+        idx = np.where(pred == cl_id)[0]
+        if len(idx) == 0:
+            continue
+        cnt = Counter(labels[i] for i in idx)
+        top_cls, top_n = cnt.most_common(1)[0]
+        purity = top_n / len(idx)
+        center = embeddings[idx].mean(axis=0)
+        dist = np.linalg.norm(embeddings[idx] - center[None, :], axis=1)
+        order = idx[np.argsort(dist)[:per_cluster]]
+        sub = rep_dir / f"cluster-{cl_id:03d}_class-{top_cls}_purity-{int(round(purity * 100))}pct_n-{len(idx)}"
+        sub.mkdir(parents=True, exist_ok=True)
+        for rank_i, i in enumerate(order, 1):
+            src = Path(paths[i])
+            if not src.exists():
+                continue
+            dst = sub / f"rep-{rank_i:02d}_true-{labels[i]}_{src.name}"
+            try:
+                shutil.copy2(src, dst)
+                saved += 1
+                rows.append({
+                    "cluster_id": cl_id,
+                    "rank": rank_i,
+                    "dominant_class": top_cls,
+                    "cluster_purity": f"{purity:.6f}",
+                    "cluster_size": len(idx),
+                    "true_class": labels[i],
+                    "distance_to_centroid": f"{float(np.linalg.norm(embeddings[i] - center)):.6f}",
+                    "src": str(src),
+                    "dst": str(dst),
+                })
+            except Exception:
+                pass
+
+    noise_idx = np.where(pred == -1)[0][:per_cluster]
+    if len(noise_idx):
+        sub = rep_dir / "_noise"
+        sub.mkdir(parents=True, exist_ok=True)
+        for rank_i, i in enumerate(noise_idx, 1):
+            src = Path(paths[i])
+            if not src.exists():
+                continue
+            dst = sub / f"noise-{rank_i:02d}_true-{labels[i]}_{src.name}"
+            try:
+                shutil.copy2(src, dst)
+                saved += 1
+                rows.append({
+                    "cluster_id": -1,
+                    "rank": rank_i,
+                    "dominant_class": "noise",
+                    "cluster_purity": "",
+                    "cluster_size": int((pred == -1).sum()),
+                    "true_class": labels[i],
+                    "distance_to_centroid": "",
+                    "src": str(src),
+                    "dst": str(dst),
+                })
+            except Exception:
+                pass
+
+    import csv
+    with (rep_dir / "representatives.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["cluster_id", "rank", "dominant_class",
+                                          "cluster_purity", "cluster_size", "true_class",
+                                          "distance_to_centroid", "src", "dst"])
+        w.writeheader()
+        w.writerows(rows)
+    return saved
+
+
 # ---------- Main ----------
 def main():
     seed_all(SEED)
@@ -517,6 +600,13 @@ def main():
 
     (cl_dir / "tier1.json").write_text(json.dumps(tier1, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"[eval] tier1 = {json.dumps(tier1, indent=2)}")
+
+    if SAVE_REPRESENTATIVES:
+        n_rep = save_cluster_representatives(
+            cl_dir, embeddings, pred, all_label, all_path, REPRESENTATIVES_PER_CLUSTER)
+        tier1["n_representatives_saved"] = n_rep
+        (cl_dir / "tier1.json").write_text(json.dumps(tier1, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"  [representatives] saved {n_rep} to {cl_dir / 'representatives'}")
 
     # ---------- Cluster outlier 이미지 저장 ----------
     # 각 cluster 의 dominant class 식별 → 그 cluster 안 minor class 이미지 = wrong
