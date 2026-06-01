@@ -178,6 +178,7 @@ def main():
             pass
 
     print(f"\n[OUT] {out.resolve()}")
+    print(f"  requested: {output_dir}")
     print(f"  generated: {total}, skipped(existing): {skipped}, classes: {len(CLASSES)}")
 
 

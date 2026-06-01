@@ -72,6 +72,7 @@ def main():
     sys.path.insert(0, str(repo / "scripts"))
     from _common import resolve_path
 
+    resolved_dirs = {}
     for name, path in [
         ("CNN_DATA_DIR", CNN_DATA_DIR),
         ("CL_TRAIN_DIR", CL_TRAIN_DIR),
@@ -80,18 +81,25 @@ def main():
         resolved = resolve_path(path)
         if not resolved.exists():
             raise SystemExit(f"{name} not found: {resolved}")
+        resolved_dirs[name] = resolved
 
     ts = datetime.now().strftime("%y%m%d_%H%M%S")
     run_dir = repo / "runs" / f"{ts}_{PIPELINE_TAG}"
     run_dir.mkdir(parents=True, exist_ok=True)
     log = run_dir / "pipeline.log"
     print(f"[pipeline_ddp] {run_dir}")
+    print("[data dirs]")
+    for name, resolved in resolved_dirs.items():
+        print(f"  {name}: {resolved}")
     with open(log, "w", encoding="utf-8") as f:
         f.write(f"[pipeline_ddp] {datetime.now().isoformat()}\n")
         f.write(f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES','(unset)')}\n\n")
         f.write(f"CNN_DATA_DIR={CNN_DATA_DIR}\n")
         f.write(f"CL_TRAIN_DIR={CL_TRAIN_DIR}\n")
         f.write(f"CL_EVAL_DIR={CL_EVAL_DIR}\n\n")
+        f.write(f"RESOLVED_CNN_DATA_DIR={resolved_dirs['CNN_DATA_DIR']}\n")
+        f.write(f"RESOLVED_CL_TRAIN_DIR={resolved_dirs['CL_TRAIN_DIR']}\n")
+        f.write(f"RESOLVED_CL_EVAL_DIR={resolved_dirs['CL_EVAL_DIR']}\n\n")
 
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     env["CNN_DATA_DIR"] = CNN_DATA_DIR
@@ -160,6 +168,9 @@ def main():
         "cnn_data_dir": CNN_DATA_DIR,
         "cl_train_dir": CL_TRAIN_DIR,
         "cl_eval_dir": CL_EVAL_DIR,
+        "resolved_cnn_data_dir": str(resolved_dirs["CNN_DATA_DIR"]),
+        "resolved_cl_train_dir": str(resolved_dirs["CL_TRAIN_DIR"]),
+        "resolved_cl_eval_dir": str(resolved_dirs["CL_EVAL_DIR"]),
         "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", "(unset)"),
         "finished_at": datetime.now().isoformat(),
     }

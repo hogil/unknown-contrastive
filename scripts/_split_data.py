@@ -95,6 +95,11 @@ def main():
     print(f"[classes] CNN: {len(cnn_classes)}, Contrastive: {len(cl_classes)}, overlap: 0")
 
     cnn_train = resolve_path(cnn_train_dir); cl_train = resolve_path(cl_train_dir); cl_eval = resolve_path(cl_eval_dir)
+    print("[paths]")
+    print(f"  source_root: {src}")
+    print(f"  cnn_train:   {cnn_train}")
+    print(f"  cl_train:    {cl_train}")
+    print(f"  cl_eval:     {cl_eval}")
     if not dry_run:
         for d in (cnn_train, cl_train, cl_eval):
             d.mkdir(parents=True, exist_ok=True)
@@ -160,6 +165,10 @@ def main():
         "cnn_train_dir": cnn_train_dir,
         "cl_train_dir": cl_train_dir,
         "cl_eval_dir": cl_eval_dir,
+        "resolved_source_root": str(src),
+        "resolved_cnn_train_dir": str(cnn_train),
+        "resolved_cl_train_dir": str(cl_train),
+        "resolved_cl_eval_dir": str(cl_eval),
         "cl_train_ratio": CL_TRAIN_RATIO,
         "copy_mode": copy_mode,
         "seed": seed,
@@ -175,9 +184,9 @@ def main():
                 json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
             )
     print("\n[OUT]")
-    print(f"  {cnn_train_dir}/<class>/*.png  (CNN supervised)")
-    print(f"  {cl_train_dir}/*.png            (Contrastive train, flat)")
-    print(f"  {cl_eval_dir}/<class>/*.png    (Contrastive eval)")
+    print(f"  {cnn_train}/<class>/*.png  (CNN supervised)")
+    print(f"  {cl_train}/*.png            (Contrastive train, flat)")
+    print(f"  {cl_eval}/<class>/*.png    (Contrastive eval)")
 
 
 def place_file(src, dst, copy_mode, dry_run):
