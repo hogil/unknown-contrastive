@@ -17,7 +17,7 @@ from __future__ import annotations
 # ===================================================================
 DATA_DIR             = "E:/data/images/cnn_train"  # ★ 절대규: 모든 이미지 E:/data/images/
 ACTIVE_CLASSES_YAML  = None
-EXCLUDE_CLASSES      = {"classification", "classification_chips"}
+EXCLUDE_CLASSES      = {"classification", "classification_chips", "Normal"}
 
 WEIGHTS_DIR          = "weights"
 OUTPUT_ROOT          = "runs"

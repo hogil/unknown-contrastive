@@ -32,7 +32,7 @@ CL_EVAL_DIR         = "E:/data/images/contrastive_eval"    # ImageFolder (class 
 # Contrastive train vs eval split (wafer disjoint)
 CL_TRAIN_RATIO      = 0.8                                   # 80% train / 20% eval
 NORMAL_CLASS        = "Normal"
-NORMAL_CNN_RATIO    = 0.5                                   # Normal 은 noise/background 로 Stream A/B 둘 다 노출
+NORMAL_CNN_RATIO    = 0.0                                   # CNN 은 defect class만, Normal 은 contrastive 로만
 
 # 이미지 처리
 COPY_MODE           = "link"        # "link" (symlink, 빠름 + disk 절약) or "copy"
@@ -67,7 +67,7 @@ def parse_args():
                    help="link=hardlink(빠름), copy=복사.")
     p.add_argument("--seed", type=int, default=None, help="split seed override.")
     p.add_argument("--normal-cnn-ratio", type=float, default=None,
-                   help="Normal 중 CNN stream 으로 보낼 비율. 나머지는 contrastive train/eval 로 split.")
+                   help="Normal 중 CNN stream 으로 보낼 비율. 기본 0.0; 보통 CNN에는 Normal을 넣지 않음.")
     p.add_argument("--dry-run", action="store_true", help="파일 생성 없이 경로만 출력.")
     return p.parse_args()
 
@@ -99,7 +99,7 @@ def main():
     overlap = cnn_classes & cl_classes
     if overlap:
         raise SystemExit(f"[ERR] CNN ↔ Contrastive class OVERLAP detected: {sorted(overlap)}")
-    print(f"[classes] CNN: {len(cnn_classes)} (+Normal noise if present), "
+    print(f"[classes] CNN: {len(cnn_classes)} (Normal excluded), "
           f"Contrastive: {len(cl_classes)}, overlap: 0")
 
     cnn_train = resolve_path(cnn_train_dir); cl_train = resolve_path(cl_train_dir); cl_eval = resolve_path(cl_eval_dir)
