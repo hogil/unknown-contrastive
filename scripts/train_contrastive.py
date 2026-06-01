@@ -537,29 +537,50 @@ def main():
             top_cls, top_n = cnt.most_common(1)[0]
             cluster_dominant[cl_id] = (top_cls, top_n / total)
 
+        import csv
         import shutil as _sh
         n_wrong = 0
+        rows = []
         for p, true_cls, path in zip(pred, all_label, all_path):
             cl_id = int(p)
             if cl_id == -1:
                 # noise — assign as wrong vs true class
-                pred_cls = "noise"
-                pct = 0
+                cluster_pred_cls = "noise"
+                purity = None
+                purity_tag = "na"
                 is_wrong = True
             else:
-                pred_cls, frac = cluster_dominant[cl_id]
-                pct = int(round(frac * 100))
-                is_wrong = (pred_cls != true_cls)
+                cluster_pred_cls, purity = cluster_dominant[cl_id]
+                purity_tag = f"{int(round(purity * 100))}pct"
+                is_wrong = (cluster_pred_cls != true_cls)
             if not is_wrong: continue
             sub = wrong_dir / true_cls
             sub.mkdir(exist_ok=True)
             base = Path(path).name
-            dst = sub / f"{true_cls}_{pred_cls}_{pct}%_{base}"
+            dst = sub / (
+                f"true-{true_cls}___clusterpred-{cluster_pred_cls}_"
+                f"cluster-{cl_id}_clusterpurity-{purity_tag}_{base}"
+            )
             try:
                 _sh.copy2(path, dst)
                 n_wrong += 1
+                rows.append({
+                    "true_class": true_cls,
+                    "cluster_pred_class": cluster_pred_cls,
+                    "cluster_id": cl_id,
+                    "cluster_purity": "" if purity is None else f"{purity:.6f}",
+                    "src": str(path),
+                    "dst": str(dst),
+                })
             except Exception:
                 pass
+        csv_path = wrong_dir / "wrong_clusters.csv"
+        with csv_path.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=["true_class", "cluster_pred_class",
+                                              "cluster_id", "cluster_purity",
+                                              "src", "dst"])
+            w.writeheader()
+            w.writerows(rows)
         print(f"  [wrong] saved {n_wrong} cluster-mismatched images to {wrong_dir}")
         tier1["n_wrong_saved"] = n_wrong
 

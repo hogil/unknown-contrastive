@@ -402,15 +402,70 @@ SPECIAL = ['Normal', 'Invalid']
 # ============================================================================
 # alpha -> per-pixel grade -> palette chip
 # ============================================================================
+INVALID_TEXT_FONT_SIZE = 64
+
+
 def _try_font(size):
-    for path in ["C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/calibri.ttf",
-                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]:
+    for path in ["C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/arial.ttf",
+                 "C:/Windows/Fonts/calibrib.ttf", "C:/Windows/Fonts/calibri.ttf",
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                 "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+                 "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                 "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"]:
         if os.path.exists(path):
             try:
                 return ImageFont.truetype(path, size)
             except Exception:
                 pass
-    return ImageFont.load_default()
+    return None
+
+
+def _draw_centered_invalid_text(img, text, fill):
+    draw = ImageDraw.Draw(img)
+    max_w = int(CHIP * 0.82)
+    max_h = int(CHIP * 0.46)
+    font = FONT_BIG
+    if font is not None:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        if tw > max_w or th > max_h:
+            for size in range(INVALID_TEXT_FONT_SIZE - 2, 23, -2):
+                cand = _try_font(size)
+                if cand is None:
+                    continue
+                cb = draw.textbbox((0, 0), text, font=cand)
+                cw, ch = cb[2] - cb[0], cb[3] - cb[1]
+                if cw <= max_w and ch <= max_h:
+                    font, bbox, tw, th = cand, cb, cw, ch
+                    break
+        tx = CHIP // 2 - tw // 2 - bbox[0]
+        ty = CHIP // 2 - th // 2 - bbox[1]
+        draw.text((tx, ty), text, fill=int(fill), font=font)
+        return
+
+    # Last-resort fallback: PIL's default bitmap font is tiny, so render it to
+    # a mask and scale to the intended invalid-chip text size.
+    fallback = ImageFont.load_default()
+    probe = Image.new("L", (1, 1), 0)
+    pd = ImageDraw.Draw(probe)
+    bbox = pd.textbbox((0, 0), text, font=fallback)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    mask = Image.new("L", (max(1, tw), max(1, th)), 0)
+    md = ImageDraw.Draw(mask)
+    md.text((-bbox[0], -bbox[1]), text, fill=255, font=fallback)
+    scale = min(max_w / max(1, tw), max_h / max(1, th))
+    out_w = max(1, int(round(tw * scale)))
+    out_h = max(1, int(round(th * scale)))
+    resample = getattr(getattr(Image, "Resampling", Image), "NEAREST")
+    mask = mask.resize((out_w, out_h), resample)
+    tx = CHIP // 2 - out_w // 2
+    ty = CHIP // 2 - out_h // 2
+    img.paste(int(fill), (tx, ty), mask)
+
+
+FONT_BIG = _try_font(INVALID_TEXT_FONT_SIZE)
 
 
 def render_single_chip(obj, rng, intensity_tier=None, bin_id=None, add_border=True, bg_range=None):
@@ -649,18 +704,8 @@ def render_invalid_chip(rng):
     grades[:, -2:] = border_idx
     img = Image.frombytes('P', (CHIP, CHIP), grades.tobytes())
     img.putpalette(PALETTE)
-    draw = ImageDraw.Draw(img)
-    font = _try_font(64)
     text = f"B{int(rng.integers(200, 300))}"
-    try:
-        bbox = draw.textbbox((0, 0), text, font=font)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        tx = CHIP // 2 - tw // 2 - bbox[0]
-        ty = CHIP // 2 - th // 2 - bbox[1]
-    except Exception:
-        tw, th = 120, 50
-        tx, ty = CHIP // 2 - tw // 2, CHIP // 2 - th // 2
-    draw.text((tx, ty), text, fill=int(text_idx), font=font)
+    _draw_centered_invalid_text(img, text, int(text_idx))
     return img
 
 

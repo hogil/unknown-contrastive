@@ -538,22 +538,46 @@ def train_worker(rank, world_size):
             if wrong_dir.exists(): shutil.rmtree(wrong_dir)
             wrong_dir.mkdir(parents=True)
             cluster_dom = {cl_id: cnt.most_common(1)[0] for cl_id, cnt in cluster_cls.items()}
+            import csv
             n_wrong = 0
+            rows = []
             for p, true_cls, path in zip(pred, all_label, all_path):
                 cl_id = int(p)
                 if cl_id == -1:
-                    pred_cls = "noise"; pct = 0; is_wrong = True
+                    cluster_pred_cls = "noise"
+                    purity = None
+                    purity_tag = "na"
+                    is_wrong = True
                 else:
                     top_cls, top_n = cluster_dom[cl_id]
-                    pct = int(round(top_n / sum(cluster_cls[cl_id].values()) * 100))
-                    pred_cls = top_cls
-                    is_wrong = (pred_cls != true_cls)
+                    purity = top_n / sum(cluster_cls[cl_id].values())
+                    purity_tag = f"{int(round(purity * 100))}pct"
+                    cluster_pred_cls = top_cls
+                    is_wrong = (cluster_pred_cls != true_cls)
                 if not is_wrong: continue
                 sub = wrong_dir / true_cls; sub.mkdir(exist_ok=True)
-                dst = sub / f"{true_cls}_{pred_cls}_{pct}%_{Path(path).name}"
+                dst = sub / (
+                    f"true-{true_cls}___clusterpred-{cluster_pred_cls}_"
+                    f"cluster-{cl_id}_clusterpurity-{purity_tag}_{Path(path).name}"
+                )
                 try:
                     shutil.copy2(path, dst); n_wrong += 1
+                    rows.append({
+                        "true_class": true_cls,
+                        "cluster_pred_class": cluster_pred_cls,
+                        "cluster_id": cl_id,
+                        "cluster_purity": "" if purity is None else f"{purity:.6f}",
+                        "src": str(path),
+                        "dst": str(dst),
+                    })
                 except Exception: pass
+            csv_path = wrong_dir / "wrong_clusters.csv"
+            with csv_path.open("w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=["true_class", "cluster_pred_class",
+                                                  "cluster_id", "cluster_purity",
+                                                  "src", "dst"])
+                w.writeheader()
+                w.writerows(rows)
             print(f"  [wrong] saved {n_wrong} to {wrong_dir}")
             tier1["n_wrong_saved"] = n_wrong
 

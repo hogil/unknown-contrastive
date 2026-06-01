@@ -791,10 +791,62 @@ def _cluster_around(cy0, cx0, n, spread, inside, rng):
             mask[cy, cx] = True; placed += 1
     return mask
 
+def _select_donut_ring(n, inside, rng):
+    """Donut 전용: 독립 확률샘플 대신 중심 annulus 를 각도별로 고르게 채운다."""
+    mask = np.zeros((GRID, GRID), dtype=bool)
+    ys, xs = np.where(inside)
+    if len(ys) == 0:
+        return mask
+
+    cy0 = (GRID - 1) / 2 + float(rng.normal(0, 0.25))
+    cx0 = (GRID - 1) / 2 + float(rng.normal(0, 0.25))
+    radius = float(np.clip(rng.normal(6.3, 0.35), 5.6, 7.2))
+    band = float(rng.uniform(0.85, 1.20))
+    dy = ys.astype(np.float32) - cy0
+    dx = xs.astype(np.float32) - cx0
+    dist = np.sqrt(dy * dy + dx * dx)
+    ang = np.arctan2(dy, dx)
+
+    # n개 목표 각도 주변에서 하나씩 뽑아 full ring signal 을 보장한다.
+    n_target = min(int(n), len(ys))
+    offset = float(rng.uniform(-np.pi, np.pi))
+    targets = offset + np.linspace(0, 2 * np.pi, n_target, endpoint=False)
+    used = set()
+    for theta in targets:
+        a_diff = np.abs(np.angle(np.exp(1j * (ang - theta))))
+        r_diff = np.abs(dist - radius)
+        ring_penalty = np.where(r_diff <= band * 1.4, 0.0, 5.0)
+        score = (a_diff / (2 * np.pi / max(1, n_target))
+                 + 0.9 * (r_diff / max(1e-6, band))
+                 + ring_penalty
+                 + rng.random(len(ys)) * 0.05)
+        if used:
+            used_idx = np.array(list(used), dtype=int)
+            score[used_idx] = np.inf
+        k = int(np.argmin(score))
+        if not np.isfinite(score[k]):
+            break
+        mask[int(ys[k]), int(xs[k])] = True
+        used.add(k)
+
+    # duplicate/edge fallback: 남은 수는 annulus 에서 반경 가까운 순으로 보충.
+    if int(mask.sum()) < n_target:
+        order = np.argsort(np.abs(dist - radius) + rng.random(len(ys)) * 0.02)
+        for k in order:
+            if k in used:
+                continue
+            mask[int(ys[k]), int(xs[k])] = True
+            used.add(int(k))
+            if int(mask.sum()) >= n_target:
+                break
+    return mask
+
 def select_distribution_chips(class_name, rng, inside, n_override=None):
     """Heatmap-based wafer-distribution chip selection (used for both defect & invalid_main)."""
     n = n_override if n_override is not None else DEFECT_BUDGET[class_name]
-    if class_name in ('Center', 'Donut'):
+    if class_name == 'Donut':
+        return _select_donut_ring(n, inside, rng)
+    if class_name == 'Center':
         # 더 모이도록 heatmap에 power 적용
         hm = np.load(os.path.join(HEATMAP_DIR, f"{class_name}_p_defect_32.npy"))
         hm_pow = hm ** 3                                                              # 3제곱으로 sharper peak
@@ -924,15 +976,67 @@ def pick_mixed_object(primary, rng, mix_ratio=0.05):
     return primary
 
 # ===== Font for bin number text =====
+INVALID_TEXT_FONT_SIZE = 64
+
+
 def _try_font(size):
-    for path in ["C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/calibri.ttf",
-                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]:
+    for path in ["C:/Windows/Fonts/arialbd.ttf", "C:/Windows/Fonts/arial.ttf",
+                 "C:/Windows/Fonts/calibrib.ttf", "C:/Windows/Fonts/calibri.ttf",
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                 "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+                 "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                 "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"]:
         if os.path.exists(path):
             try: return ImageFont.truetype(path, size)
             except Exception: pass
-    return ImageFont.load_default()
+    return None
 
-FONT_BIG = _try_font(64)
+
+def _draw_centered_invalid_text(img, text, cx_px, cy_px, fill):
+    draw = ImageDraw.Draw(img)
+    max_w = int(CHIP * 0.82)
+    max_h = int(CHIP * 0.46)
+    font = FONT_BIG
+    if font is not None:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        if tw > max_w or th > max_h:
+            for size in range(INVALID_TEXT_FONT_SIZE - 2, 23, -2):
+                cand = _try_font(size)
+                if cand is None:
+                    continue
+                cb = draw.textbbox((0, 0), text, font=cand)
+                cw, ch = cb[2] - cb[0], cb[3] - cb[1]
+                if cw <= max_w and ch <= max_h:
+                    font, bbox, tw, th = cand, cb, cw, ch
+                    break
+        tx = cx_px - tw / 2 - bbox[0]
+        ty = cy_px - th / 2 - bbox[1]
+        draw.text((tx, ty), text, fill=int(fill), font=font)
+        return
+
+    # Last-resort fallback for servers without TTF fonts: scale PIL's tiny
+    # bitmap default to the intended invalid-chip text size.
+    fallback = ImageFont.load_default()
+    probe = Image.new("L", (1, 1), 0)
+    pd = ImageDraw.Draw(probe)
+    bbox = pd.textbbox((0, 0), text, font=fallback)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    mask = Image.new("L", (max(1, tw), max(1, th)), 0)
+    md = ImageDraw.Draw(mask)
+    md.text((-bbox[0], -bbox[1]), text, fill=255, font=fallback)
+    scale = min(max_w / max(1, tw), max_h / max(1, th))
+    out_w = max(1, int(round(tw * scale)))
+    out_h = max(1, int(round(th * scale)))
+    resample = getattr(getattr(Image, "Resampling", Image), "NEAREST")
+    mask = mask.resize((out_w, out_h), resample)
+    tx = int(round(cx_px - out_w / 2))
+    ty = int(round(cy_px - out_h / 2))
+    img.paste(int(fill), (tx, ty), mask)
+
+FONT_BIG = _try_font(INVALID_TEXT_FONT_SIZE)
 
 # ===== Main render =====
 def render(class_name, object_name, seed):
@@ -1281,19 +1385,12 @@ def render(class_name, object_name, seed):
     # 8) Build palette image + draw bin number text on INVALID chips only
     img = Image.frombytes('P', (SIZE, SIZE), canvas.tobytes())
     img.putpalette(PALETTE)
-    draw = ImageDraw.Draw(img)
     for (gy, gx), meta in chip_meta.items():
         if meta['kind'] != 'invalid': continue                                        # text only on invalid
         text = str(meta['bin'])
         y0, x0 = gy*CHIP, gx*CHIP
         cx_px, cy_px = x0 + CHIP/2, y0 + CHIP/2
-        try:
-            bbox = draw.textbbox((0,0), text, font=FONT_BIG)
-            tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
-            ty = cy_px - th/2 - bbox[1] if isinstance(FONT_BIG, ImageFont.FreeTypeFont) else cy_px - th/2
-        except Exception:
-            tw = th = 40; ty = cy_px - th/2
-        draw.text((cx_px - tw/2, ty), text, fill=IDX_TEXT, font=FONT_BIG)
+        _draw_centered_invalid_text(img, text, cx_px, cy_px, IDX_TEXT)
 
     # 9) Yield / Sys / TD / LT
     sys_bins = {285,286,287,288,290,291} if kind == '00P' else {300,385,386,388,389,390}
