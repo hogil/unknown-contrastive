@@ -67,11 +67,22 @@ def cleanup_ddp() -> None:
     if not dist.is_initialized():
         return
     rank = "?"
+    backend = "?"
     try:
         rank = dist.get_rank()
     except Exception:
         pass
+    try:
+        backend = dist.get_backend()
+    except Exception:
+        pass
     strict = os.environ.get("DDP_STRICT_CLEANUP", "0") == "1"
+    destroy = os.environ.get("DDP_DESTROY_PROCESS_GROUP", "0") == "1"
+    if backend == "nccl" and not (strict or destroy):
+        # These scripts run in short-lived mp.spawn child processes. On some
+        # CUDA/NCCL stacks, destroy_process_group can fail during teardown after
+        # all outputs are already saved; process exit will release NCCL/CUDA.
+        return
     try:
         if torch.cuda.is_available():
             torch.cuda.synchronize()
