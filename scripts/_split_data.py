@@ -17,7 +17,7 @@ from __future__ import annotations
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
-SOURCE_ROOT         = "data/images/unknown"          # 프로젝트 상대 (없으면 generate_data.py 먼저)
+SOURCE_ROOT         = "E:/data/images/unknown"      # ★ generate_data.py 기본 출력과 동일
 EXCLUDE_CLASSES     = {"classification", "classification_chips"}
 
 # Class split YAML — 어떤 class 가 CNN 또는 Contrastive 인지
