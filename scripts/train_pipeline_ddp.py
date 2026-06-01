@@ -12,9 +12,11 @@ from __future__ import annotations
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
-CNN_DATA_DIR          = "E:/data/images/cnn_train"
+SOURCE_ROOT           = "E:/data/images/unknown"          # generate_data.py 출력 (split 의 source)
+CNN_DATA_DIR          = "E:/data/images/cnn_train"        # ↓ 아래 3개는 _split_data.py 가 SOURCE_ROOT 에서 생성
 CL_TRAIN_DIR          = "E:/data/images/contrastive_train"
 CL_EVAL_DIR           = "E:/data/images/contrastive_eval"
+AUTO_SPLIT            = True                                # split 폴더 없으면 _split_data.py 자동 실행
 
 # ★ H100 batch per GPU (80GB). 0 = 각 _ddp.py CONFIG default (로컬 16GB: CNN16/CL8) 그대로.
 #   total batch = BATCH_PER_GPU × GPU 수. CNN 은 full fine-tune(무거움), CL 은 frozen(가벼움).
@@ -51,11 +53,15 @@ def parse_args():
                    help="CNN batch per GPU override.")
     p.add_argument("--cl-batch", type=int, default=None,
                    help="Contrastive batch per GPU override.")
+    p.add_argument("--source-root", type=str, default=None,
+                   help="split source (generate_data 출력 unknown/). split 폴더 없을 때 사용.")
+    p.add_argument("--no-auto-split", action="store_true",
+                   help="split 폴더 없어도 _split_data.py 자동 실행 안 함 (에러).")
     return p.parse_args()
 
 
 def main():
-    global CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR, CNN_BATCH_PER_GPU, CL_BATCH_PER_GPU
+    global CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR, CNN_BATCH_PER_GPU, CL_BATCH_PER_GPU, SOURCE_ROOT
     args = parse_args()
     if args.cnn_data_dir:
         CNN_DATA_DIR = args.cnn_data_dir
@@ -67,10 +73,32 @@ def main():
         CNN_BATCH_PER_GPU = args.cnn_batch
     if args.cl_batch is not None:
         CL_BATCH_PER_GPU = args.cl_batch
+    if args.source_root:
+        SOURCE_ROOT = args.source_root
 
     repo = Path(__file__).parent.parent.resolve()
     sys.path.insert(0, str(repo / "scripts"))
     from _common import resolve_path
+
+    # split 폴더(cnn_train/contrastive_train/contrastive_eval) 중 하나라도 없으면
+    # _split_data.py 를 SOURCE_ROOT 기준으로 자동 실행 (generate_data 만 한 상태 대응).
+    missing = [resolve_path(p) for p in (CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR)
+               if not resolve_path(p).exists()]
+    if missing and not args.no_auto_split:
+        src = resolve_path(SOURCE_ROOT)
+        if not src.exists():
+            raise SystemExit(
+                f"split 출력 폴더가 없고 SOURCE_ROOT 도 없음: {src}\n"
+                f"  먼저 합성: python scripts/generate_data.py\n"
+                f"  (또는 --source-root 로 unknown/ 경로 지정)")
+        print(f"[auto-split] split 폴더 없음 → _split_data.py 실행 (source={src})")
+        rc = subprocess.run(
+            [sys.executable, "-u", str(repo / "scripts" / "_split_data.py"),
+             "--source-root", str(src)],
+            cwd=str(repo),
+        ).returncode
+        if rc != 0:
+            raise SystemExit(f"_split_data.py 실패 rc={rc}")
 
     resolved_dirs = {}
     for name, path in [
@@ -80,7 +108,12 @@ def main():
     ]:
         resolved = resolve_path(path)
         if not resolved.exists():
-            raise SystemExit(f"{name} not found: {resolved}")
+            raise SystemExit(
+                f"{name} not found: {resolved}\n"
+                f"  split 미실행 상태. 다음 중 하나:\n"
+                f"  1) python scripts/generate_data.py  (이미지 합성)\n"
+                f"  2) python scripts/_split_data.py    (cnn_train/contrastive_* 생성)\n"
+                f"  pipeline 은 split 폴더가 있어야 함 (AUTO_SPLIT 로 자동 시도하지만 SOURCE_ROOT 필요).")
         resolved_dirs[name] = resolved
 
     ts = datetime.now().strftime("%y%m%d_%H%M%S")
