@@ -322,8 +322,20 @@ def main():
 
     model_path = resolve_path(MODEL_PATH)
     if not model_path.exists():
-        raise SystemExit(f"MODEL_PATH not found: {model_path}\n"
-                         f"먼저 학습: python scripts/train_pipeline.py")
+        # 디스크에 있는 contrastive 모델 자동 탐색해서 안내 (pipeline 재학습 불필요)
+        repo = Path(__file__).resolve().parent.parent
+        found = sorted(repo.glob("runs/*/contrastive/best_model.pt"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+        msg = [f"MODEL_PATH not found: {model_path}",
+               f"  (받은 --model 값: {MODEL_PATH})"]
+        if found:
+            msg.append("디스크에서 찾은 contrastive 모델 (.pt) — 이 중 하나를 --model 로:")
+            for p in found[:10]:
+                msg.append(f"  --model {p}")
+        else:
+            msg.append("contrastive best_model.pt 가 없음 → stage2 만 학습하면 됨 (pipeline 전체 X):")
+            msg.append("  python scripts/train_contrastive_ddp.py --backbone runs/<CNN run>/cnn/best_model.pth")
+        raise SystemExit("\n".join(msg))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ContrastiveInferModel(BACKBONE, PROJ_DIM).to(device)
