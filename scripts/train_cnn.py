@@ -154,7 +154,8 @@ def eval_loop(model, loader, device, criterion, classes=None,
     """eval + (선택) wrong 이미지 저장.
 
     Wrong file format:
-        wrong_save_dir/<true_class>/<true>_<pred>_<pct>%_<basename>.png
+        wrong_save_dir/<true_class>/true-<true>___pred-<pred>_predprob-<pct>pct_trueprob-<pct>pct_<basename>.png
+        wrong_save_dir/wrong_predictions.csv has exact probabilities.
     """
     model.eval()
     losses, preds, trues, paths_all, probs_all = [], [], [], [], []
@@ -190,23 +191,42 @@ def eval_loop(model, loader, device, criterion, classes=None,
             if sub.is_dir():
                 import shutil
                 shutil.rmtree(sub)
+        import csv
         import shutil as _sh
         wrong_n = 0
+        rows = []
         for i in range(len(preds)):
             if preds[i] == trues[i]: continue
             tcl = classes[trues[i]]; pcl = classes[preds[i]]
-            pct = int(round(probs_all[i, preds[i]] * 100))
+            pred_prob = float(probs_all[i, preds[i]])
+            true_prob = float(probs_all[i, trues[i]])
+            pred_pct = int(round(pred_prob * 100))
+            true_pct = int(round(true_prob * 100))
             sub = wrong_save_dir / tcl; sub.mkdir(exist_ok=True)
             src_path = paths_all[i]
             if not src_path or not Path(src_path).exists():
                 continue
             base = Path(src_path).name
-            dst = sub / f"{tcl}_{pcl}_{pct}%_{base}"
+            dst = sub / f"true-{tcl}___pred-{pcl}_predprob-{pred_pct}pct_trueprob-{true_pct}pct_{base}"
             try:
                 _sh.copy2(src_path, dst)
                 wrong_n += 1
+                rows.append({
+                    "true_class": tcl,
+                    "pred_class": pcl,
+                    "pred_prob": f"{pred_prob:.6f}",
+                    "true_prob": f"{true_prob:.6f}",
+                    "src": str(src_path),
+                    "dst": str(dst),
+                })
             except Exception as e:
                 print(f"[wrong-save fail] {src_path}: {e}")
+        csv_path = wrong_save_dir / "wrong_predictions.csv"
+        with csv_path.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=["true_class", "pred_class", "pred_prob",
+                                              "true_prob", "src", "dst"])
+            w.writeheader()
+            w.writerows(rows)
         print(f"  [wrong] saved {wrong_n} mis-classified images to {wrong_save_dir}")
 
     return {

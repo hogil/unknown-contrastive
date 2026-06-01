@@ -268,19 +268,38 @@ def eval_loop(model_ddp, loader, device, criterion, classes=None,
         for sub in wrong_save_dir.iterdir():
             if sub.is_dir():
                 shutil.rmtree(sub)
+        import csv
         wrong_n = 0
+        rows = []
         for i in range(len(preds)):
             if preds[i] == trues[i]: continue
             tcl = classes[trues[i]]; pcl = classes[preds[i]]
-            pct = int(round(probs_all[i, preds[i]] * 100))
+            pred_prob = float(probs_all[i, preds[i]])
+            true_prob = float(probs_all[i, trues[i]])
+            pred_pct = int(round(pred_prob * 100))
+            true_pct = int(round(true_prob * 100))
             sub = wrong_save_dir / tcl; sub.mkdir(exist_ok=True)
             src = paths_all[i]
             if not src or not Path(src).exists(): continue
-            dst = sub / f"{tcl}_{pcl}_{pct}%_{Path(src).name}"
+            dst = sub / f"true-{tcl}___pred-{pcl}_predprob-{pred_pct}pct_trueprob-{true_pct}pct_{Path(src).name}"
             try:
                 shutil.copy2(src, dst); wrong_n += 1
+                rows.append({
+                    "true_class": tcl,
+                    "pred_class": pcl,
+                    "pred_prob": f"{pred_prob:.6f}",
+                    "true_prob": f"{true_prob:.6f}",
+                    "src": str(src),
+                    "dst": str(dst),
+                })
             except Exception:
                 pass
+        csv_path = wrong_save_dir / "wrong_predictions.csv"
+        with csv_path.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=["true_class", "pred_class", "pred_prob",
+                                              "true_prob", "src", "dst"])
+            w.writeheader()
+            w.writerows(rows)
         print(f"  [wrong] saved {wrong_n} images to {wrong_save_dir}", flush=True)
 
     return metric
