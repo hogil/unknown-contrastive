@@ -30,6 +30,7 @@ PIPELINE_TAG          = "pipeline_ddp"
 # ===================================================================
 
 import json
+import argparse
 import os
 import subprocess
 import sys
@@ -38,8 +39,48 @@ from datetime import datetime
 from pathlib import Path
 
 
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--cnn-data-dir", type=str, default=None,
+                   help="Stage1 CNN ImageFolder train 폴더.")
+    p.add_argument("--cl-train-dir", type=str, default=None,
+                   help="Stage2 contrastive train flat 폴더.")
+    p.add_argument("--cl-eval-dir", type=str, default=None,
+                   help="Stage2 contrastive eval ImageFolder 폴더.")
+    p.add_argument("--cnn-batch", type=int, default=None,
+                   help="CNN batch per GPU override.")
+    p.add_argument("--cl-batch", type=int, default=None,
+                   help="Contrastive batch per GPU override.")
+    return p.parse_args()
+
+
 def main():
+    global CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR, CNN_BATCH_PER_GPU, CL_BATCH_PER_GPU
+    args = parse_args()
+    if args.cnn_data_dir:
+        CNN_DATA_DIR = args.cnn_data_dir
+    if args.cl_train_dir:
+        CL_TRAIN_DIR = args.cl_train_dir
+    if args.cl_eval_dir:
+        CL_EVAL_DIR = args.cl_eval_dir
+    if args.cnn_batch is not None:
+        CNN_BATCH_PER_GPU = args.cnn_batch
+    if args.cl_batch is not None:
+        CL_BATCH_PER_GPU = args.cl_batch
+
     repo = Path(__file__).parent.parent.resolve()
+    sys.path.insert(0, str(repo / "scripts"))
+    from _common import resolve_path
+
+    for name, path in [
+        ("CNN_DATA_DIR", CNN_DATA_DIR),
+        ("CL_TRAIN_DIR", CL_TRAIN_DIR),
+        ("CL_EVAL_DIR", CL_EVAL_DIR),
+    ]:
+        resolved = resolve_path(path)
+        if not resolved.exists():
+            raise SystemExit(f"{name} not found: {resolved}")
+
     ts = datetime.now().strftime("%y%m%d_%H%M%S")
     run_dir = repo / "runs" / f"{ts}_{PIPELINE_TAG}"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -48,8 +89,14 @@ def main():
     with open(log, "w", encoding="utf-8") as f:
         f.write(f"[pipeline_ddp] {datetime.now().isoformat()}\n")
         f.write(f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES','(unset)')}\n\n")
+        f.write(f"CNN_DATA_DIR={CNN_DATA_DIR}\n")
+        f.write(f"CL_TRAIN_DIR={CL_TRAIN_DIR}\n")
+        f.write(f"CL_EVAL_DIR={CL_EVAL_DIR}\n\n")
 
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    env["CNN_DATA_DIR"] = CNN_DATA_DIR
+    env["CL_TRAIN_DIRS"] = CL_TRAIN_DIR
+    env["CL_EVAL_DIRS"] = CL_EVAL_DIR
     # H100 batch 주입 (0 이면 각 스크립트 CONFIG default 유지)
     if CNN_BATCH_PER_GPU:
         env["CNN_BATCH_PER_GPU"] = str(CNN_BATCH_PER_GPU)
@@ -110,6 +157,9 @@ def main():
         "cnn_best": str(cnn_best),
         "contrastive_run": str(cl_run) if cl_runs else None,
         "contrastive_best": str(cl_run / "contrastive" / "best_model.pt") if cl_runs else None,
+        "cnn_data_dir": CNN_DATA_DIR,
+        "cl_train_dir": CL_TRAIN_DIR,
+        "cl_eval_dir": CL_EVAL_DIR,
         "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", "(unset)"),
         "finished_at": datetime.now().isoformat(),
     }

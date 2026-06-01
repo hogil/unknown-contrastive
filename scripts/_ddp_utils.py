@@ -21,6 +21,8 @@ CLI:
 from __future__ import annotations
 import os
 import socket
+import sys
+import traceback
 from typing import Callable
 
 import torch
@@ -55,12 +57,15 @@ def setup_ddp(rank: int, world_size: int, port: int | None = None,
     # Windows nccl 미지원 → gloo fallback
     if os.name == "nt" and backend == "nccl":
         backend = "gloo"
+    if torch.cuda.is_available():
+        n_dev = torch.cuda.device_count()
+        if rank >= n_dev:
+            raise RuntimeError(f"rank {rank} requested but torch sees only {n_dev} CUDA devices")
+        torch.cuda.set_device(rank)
     # timeout 넉넉히 (rank0 단독 eval/save 동안 다른 rank barrier 대기 견디게)
     from datetime import timedelta
     dist.init_process_group(backend, rank=rank, world_size=world_size,
                             timeout=timedelta(minutes=60))
-    if torch.cuda.is_available():
-        torch.cuda.set_device(rank)
 
 
 def cleanup_ddp() -> None:
@@ -144,6 +149,18 @@ def all_gather_concat(local: torch.Tensor, device) -> torch.Tensor:
     return torch.cat(parts, dim=0)
 
 
+def _spawn_entry(rank: int, worker_fn: Callable, world_size: int, args: tuple) -> None:
+    try:
+        worker_fn(rank, world_size, *args)
+    except SystemExit as e:
+        print(f"[DDP rank {rank}] SystemExit: {e}", file=sys.stderr, flush=True)
+        raise
+    except BaseException as e:
+        print(f"[DDP rank {rank}] {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        traceback.print_exc()
+        raise
+
+
 def launch_ddp(worker_fn: Callable, *args, world_size: int | None = None) -> None:
     """spawn world_size workers. single-GPU 면 직접 호출."""
     if world_size is None:
@@ -154,4 +171,4 @@ def launch_ddp(worker_fn: Callable, *args, world_size: int | None = None) -> Non
     else:
         # MASTER_PORT 자동 할당 (충돌 방지)
         os.environ["MASTER_PORT"] = str(find_free_port())
-        mp.spawn(worker_fn, args=(world_size, *args), nprocs=world_size, join=True)
+        mp.spawn(_spawn_entry, args=(worker_fn, world_size, args), nprocs=world_size, join=True)

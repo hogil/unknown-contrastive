@@ -49,6 +49,7 @@ SEED                 = 42
 SAVE_WRONG_IMAGES    = True
 # ===================================================================
 
+import argparse
 import json
 import os
 import random
@@ -94,6 +95,7 @@ if os.environ.get("CNN_NUM_WORKERS_PER_GPU"):
     NUM_WORKERS_PER_GPU = int(os.environ["CNN_NUM_WORKERS_PER_GPU"])
 if os.environ.get("CNN_PREFETCH_FACTOR"):
     PREFETCH_FACTOR = int(os.environ["CNN_PREFETCH_FACTOR"])
+DATA_DIR = os.environ.get("CNN_DATA_DIR") or DATA_DIR
 
 
 def seed_all(s=42):
@@ -221,6 +223,18 @@ def shutdown_loader_workers(*loaders) -> None:
             loader._iterator = None
         except Exception:
             pass
+
+
+def preflight_data_dir() -> None:
+    data_dir = resolve_path(DATA_DIR)
+    if not data_dir.exists():
+        raise SystemExit(
+            f"DATA_DIR not found: {data_dir}\n"
+            f"  --data-dir 로 CNN train 폴더를 지정하거나 scripts/_split_data.py 를 먼저 실행하세요."
+        )
+    class_dirs = [p for p in data_dir.iterdir() if p.is_dir() and p.name not in EXCLUDE_CLASSES]
+    if not class_dirs:
+        raise SystemExit(f"DATA_DIR has no class subfolders: {data_dir}")
 
 
 def eval_loop(model_ddp, loader, device, criterion, classes=None,
@@ -539,4 +553,28 @@ def train_worker(rank: int, world_size: int):
 
 
 if __name__ == "__main__":
+    _ap = argparse.ArgumentParser()
+    _ap.add_argument("--data-dir", type=str, default=None,
+                     help="CNN ImageFolder train 폴더. 예: E:/data/images/cnn_train_260601_v2")
+    _ap.add_argument("--batch", type=int, default=None, help="CNN_BATCH_PER_GPU override.")
+    _ap.add_argument("--epochs", type=int, default=None, help="CNN_EPOCHS override.")
+    _ap.add_argument("--workers", type=int, default=None, help="CNN_NUM_WORKERS_PER_GPU override.")
+    _ap.add_argument("--prefetch", type=int, default=None, help="CNN_PREFETCH_FACTOR override.")
+    _a = _ap.parse_args()
+    if _a.data_dir:
+        os.environ["CNN_DATA_DIR"] = _a.data_dir
+        DATA_DIR = _a.data_dir
+    if _a.batch is not None:
+        os.environ["CNN_BATCH_PER_GPU"] = str(_a.batch)
+        BATCH_PER_GPU = _a.batch
+    if _a.epochs is not None:
+        os.environ["CNN_EPOCHS"] = str(_a.epochs)
+        EPOCHS = _a.epochs
+    if _a.workers is not None:
+        os.environ["CNN_NUM_WORKERS_PER_GPU"] = str(_a.workers)
+        NUM_WORKERS_PER_GPU = _a.workers
+    if _a.prefetch is not None:
+        os.environ["CNN_PREFETCH_FACTOR"] = str(_a.prefetch)
+        PREFETCH_FACTOR = _a.prefetch
+    preflight_data_dir()
     launch_ddp(train_worker)
