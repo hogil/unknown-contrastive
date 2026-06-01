@@ -17,7 +17,7 @@ OUTPUT_DIR          = "E:/data/images/unknown"            # ★ 절대규: 모�
 OUTPUT_PX           = 0                    # 0 = 6400 원본 유지, >0 = resize
 SEED                = 42
 N_PER_CLASS         = 100
-N_NORMAL            = 200
+N_NORMAL            = 2000
 
 CLASSES = [
     "Center_bank_boundary", "Center_fork", "Center_invalid_main",

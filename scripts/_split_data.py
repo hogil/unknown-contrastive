@@ -31,6 +31,8 @@ CL_EVAL_DIR         = "E:/data/images/contrastive_eval"    # ImageFolder (class 
 
 # Contrastive train vs eval split (wafer disjoint)
 CL_TRAIN_RATIO      = 0.8                                   # 80% train / 20% eval
+NORMAL_CLASS        = "Normal"
+NORMAL_CNN_RATIO    = 0.5                                   # Normal 은 noise/background 로 Stream A/B 둘 다 노출
 
 # 이미지 처리
 COPY_MODE           = "link"        # "link" (symlink, 빠름 + disk 절약) or "copy"
@@ -64,6 +66,8 @@ def parse_args():
     p.add_argument("--copy-mode", type=str, choices=["link", "copy"], default=None,
                    help="link=hardlink(빠름), copy=복사.")
     p.add_argument("--seed", type=int, default=None, help="split seed override.")
+    p.add_argument("--normal-cnn-ratio", type=float, default=None,
+                   help="Normal 중 CNN stream 으로 보낼 비율. 나머지는 contrastive train/eval 로 split.")
     p.add_argument("--dry-run", action="store_true", help="파일 생성 없이 경로만 출력.")
     return p.parse_args()
 
@@ -76,7 +80,10 @@ def main():
     cl_eval_dir = args.cl_eval_dir or CL_EVAL_DIR
     copy_mode = args.copy_mode or COPY_MODE
     seed = SEED if args.seed is None else args.seed
+    normal_cnn_ratio = NORMAL_CNN_RATIO if args.normal_cnn_ratio is None else args.normal_cnn_ratio
     dry_run = DRY_RUN or args.dry_run
+    if not (0.0 <= normal_cnn_ratio <= 1.0):
+        raise SystemExit(f"--normal-cnn-ratio must be between 0 and 1: {normal_cnn_ratio}")
 
     src = resolve_path(source_root)
     if not src.exists():
@@ -92,7 +99,8 @@ def main():
     overlap = cnn_classes & cl_classes
     if overlap:
         raise SystemExit(f"[ERR] CNN ↔ Contrastive class OVERLAP detected: {sorted(overlap)}")
-    print(f"[classes] CNN: {len(cnn_classes)}, Contrastive: {len(cl_classes)}, overlap: 0")
+    print(f"[classes] CNN: {len(cnn_classes)} (+Normal noise if present), "
+          f"Contrastive: {len(cl_classes)}, overlap: 0")
 
     cnn_train = resolve_path(cnn_train_dir); cl_train = resolve_path(cl_train_dir); cl_eval = resolve_path(cl_eval_dir)
     print("[paths]")
@@ -105,6 +113,22 @@ def main():
             d.mkdir(parents=True, exist_ok=True)
 
     random.seed(seed)
+    normal_split = {"cnn": [], "cl_train": [], "cl_eval": []}
+    has_normal_split = False
+    normal_dir = src / NORMAL_CLASS
+    if NORMAL_CLASS in cl_classes and normal_dir.is_dir():
+        has_normal_split = True
+        normal_pngs = sorted(normal_dir.glob("*.png"))
+        random.shuffle(normal_pngs)
+        n_cnn_normal = int(len(normal_pngs) * normal_cnn_ratio)
+        normal_split["cnn"] = normal_pngs[:n_cnn_normal]
+        normal_remain = normal_pngs[n_cnn_normal:]
+        n_cl_train_normal = int(len(normal_remain) * CL_TRAIN_RATIO)
+        normal_split["cl_train"] = normal_remain[:n_cl_train_normal]
+        normal_split["cl_eval"] = normal_remain[n_cl_train_normal:]
+        print("[normal split]")
+        print(f"  total={len(normal_pngs)} cnn={len(normal_split['cnn'])} "
+              f"cl_train={len(normal_split['cl_train'])} cl_eval={len(normal_split['cl_eval'])}")
 
     # ---- CNN classes ----
     cnn_summary = defaultdict(int)
@@ -120,6 +144,13 @@ def main():
             dst = out_cls / src_png.name
             place_file(src_png, dst, copy_mode, dry_run)
             cnn_summary[cls] += 1
+    if normal_split["cnn"]:
+        out_cls = cnn_train / NORMAL_CLASS
+        if not dry_run: out_cls.mkdir(exist_ok=True)
+        for src_png in normal_split["cnn"]:
+            dst = out_cls / src_png.name
+            place_file(src_png, dst, copy_mode, dry_run)
+            cnn_summary[NORMAL_CLASS] += 1
     print(f"[CNN_TRAIN] {dict(cnn_summary)}")
     print(f"[CNN_TRAIN] total: {sum(cnn_summary.values())} images, {len(cnn_summary)} classes")
 
@@ -132,11 +163,15 @@ def main():
         if cls in EXCLUDE_CLASSES: continue
         if cls not in cl_classes: continue
 
-        pngs = sorted(cls_dir.glob("*.png"))
-        random.shuffle(pngs)
-        n_train = int(len(pngs) * CL_TRAIN_RATIO)
-        train_split = pngs[:n_train]
-        eval_split = pngs[n_train:]
+        if cls == NORMAL_CLASS and has_normal_split:
+            train_split = normal_split["cl_train"]
+            eval_split = normal_split["cl_eval"]
+        else:
+            pngs = sorted(cls_dir.glob("*.png"))
+            random.shuffle(pngs)
+            n_train = int(len(pngs) * CL_TRAIN_RATIO)
+            train_split = pngs[:n_train]
+            eval_split = pngs[n_train:]
 
         # Contrastive train: flat (class label 숨김)
         # 파일명 prefix 로 원본 class 보존 (debug 용 — model 은 못 봄)
@@ -170,12 +205,15 @@ def main():
         "resolved_cl_train_dir": str(cl_train),
         "resolved_cl_eval_dir": str(cl_eval),
         "cl_train_ratio": CL_TRAIN_RATIO,
+        "normal_class": NORMAL_CLASS,
+        "normal_cnn_ratio": normal_cnn_ratio,
         "copy_mode": copy_mode,
         "seed": seed,
         "summary": {
             "cnn_train": dict(cnn_summary),
             "cl_train": cl_train_summary,
             "cl_eval": dict(cl_eval_summary),
+            "normal_split": {k: len(v) for k, v in normal_split.items()},
         },
     }
     if not dry_run:
