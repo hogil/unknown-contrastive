@@ -16,6 +16,7 @@ SOURCE_ROOT           = "E:/data/images/unknown"          # generate_data.py 출
 CNN_DATA_DIR          = "E:/data/images/cnn_train"        # ↓ 아래 3개는 _split_data.py 가 SOURCE_ROOT 에서 생성
 CL_TRAIN_DIR          = "E:/data/images/contrastive_train"
 CL_EVAL_DIR           = "E:/data/images/contrastive_eval"
+AUTO_GENERATE         = True                                # SOURCE_ROOT 없으면 generate_data.py 자동 실행
 AUTO_SPLIT            = True                                # split 폴더 없으면 _split_data.py 자동 실행
 
 # ★ H100 batch per GPU (80GB). 0 = 각 _ddp.py CONFIG default (로컬 16GB: CNN16/CL8) 그대로.
@@ -55,11 +56,65 @@ def parse_args():
                    help="Contrastive batch per GPU override.")
     p.add_argument("--source-root", type=str, default=None,
                    help="split source (generate_data 출력 unknown/). split 폴더 없을 때 사용.")
+    p.add_argument("--generate-workers", type=int, default=None,
+                   help="generate_data.py worker 수. 기본 None=os.cpu_count() 전체 사용.")
     p.add_argument("--clean-split", action="store_true",
                    help="학습 전 _split_data.py --clean-output 실행. 기존 split stale 파일 제거.")
+    p.add_argument("--no-auto-generate", action="store_true",
+                   help="SOURCE_ROOT 없거나 비었을 때 generate_data.py 자동 실행 안 함.")
     p.add_argument("--no-auto-split", action="store_true",
                    help="split 폴더 없어도 _split_data.py 자동 실행 안 함 (에러).")
     return p.parse_args()
+
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+
+
+def _has_any_images(root: Path) -> bool:
+    return root.exists() and any(
+        p.is_file() and p.suffix.lower() in IMAGE_EXTS for p in root.rglob("*")
+    )
+
+
+def _has_class_images(root: Path) -> bool:
+    if not root.exists():
+        return False
+    for cls_dir in root.iterdir():
+        if cls_dir.is_dir() and _has_any_images(cls_dir):
+            return True
+    return False
+
+
+def _find_source_root(repo: Path, resolve_path, source_root: str | None) -> Path | None:
+    candidates = [source_root] if source_root else [
+        SOURCE_ROOT,
+        "data/images/unknown",
+        "data/unknown",
+    ]
+    for c in candidates:
+        if not c:
+            continue
+        p = resolve_path(c)
+        if _has_any_images(p):
+            return p
+    return None
+
+
+def _generate_source(repo: Path, resolve_path, source_root: str, workers: int | None) -> Path:
+    out = resolve_path(source_root)
+    print(f"[auto-generate] SOURCE_ROOT 없음/비어있음 → generate_data.py 실행 (output={out})")
+    cmd = [
+        sys.executable, "-u", str(repo / "scripts" / "generate_data.py"),
+        "--output-dir", str(out),
+    ]
+    if workers is not None:
+        cmd += ["--workers", str(workers)]
+    rc = subprocess.run(cmd, cwd=str(repo)).returncode
+    if rc != 0:
+        raise SystemExit(f"generate_data.py 실패 rc={rc}")
+    if not _has_any_images(out):
+        raise SystemExit(f"generate_data.py 완료 후에도 이미지가 없음: {out}")
+    return out
 
 
 def main():
@@ -84,18 +139,37 @@ def main():
     sys.path.insert(0, str(repo / "scripts"))
     from _common import resolve_path
 
-    # split 폴더(cnn_train/contrastive_train/contrastive_eval) 중 하나라도 없으면
-    # _split_data.py 를 SOURCE_ROOT 기준으로 자동 실행 (generate_data 만 한 상태 대응).
-    missing = [resolve_path(p) for p in (CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR)
-               if not resolve_path(p).exists()]
-    if (missing or args.clean_split) and not args.no_auto_split:
-        src = resolve_path(SOURCE_ROOT)
-        if not src.exists():
+    src = _find_source_root(repo, resolve_path, args.source_root)
+    if src is None:
+        if args.no_auto_generate or not AUTO_GENERATE:
+            checked = args.source_root or f"{SOURCE_ROOT}, data/images/unknown, data/unknown"
             raise SystemExit(
-                f"split 출력 폴더가 없고 SOURCE_ROOT 도 없음: {src}\n"
-                f"  먼저 합성: python scripts/generate_data.py\n"
-                f"  (또는 --source-root 로 unknown/ 경로 지정)")
-        reason = "clean-split 요청" if args.clean_split else "split 폴더 없음"
+                f"SOURCE_ROOT 이미지 없음: {checked}\n"
+                f"  서버 기준 후보: {resolve_path(SOURCE_ROOT)}, {repo / 'data' / 'images' / 'unknown'}, {repo / 'data' / 'unknown'}")
+        src = _generate_source(repo, resolve_path, SOURCE_ROOT, args.generate_workers)
+    SOURCE_ROOT = str(src)
+
+    resolved_cnn = resolve_path(CNN_DATA_DIR)
+    resolved_cl_train = resolve_path(CL_TRAIN_DIR)
+    resolved_cl_eval = resolve_path(CL_EVAL_DIR)
+    split_ready = (
+        _has_class_images(resolved_cnn)
+        and _has_any_images(resolved_cl_train)
+        and _has_class_images(resolved_cl_eval)
+    )
+
+    if (not split_ready or args.clean_split) and (args.no_auto_split or not AUTO_SPLIT):
+        raise SystemExit(
+            "split 출력이 준비되지 않음.\n"
+            f"  source_root: {src}\n"
+            f"  CNN_DATA_DIR ready={_has_class_images(resolved_cnn)} path={resolved_cnn}\n"
+            f"  CL_TRAIN_DIR ready={_has_any_images(resolved_cl_train)} path={resolved_cl_train}\n"
+            f"  CL_EVAL_DIR  ready={_has_class_images(resolved_cl_eval)} path={resolved_cl_eval}\n"
+            f"  --no-auto-split 제거하면 pipeline 이 _split_data.py 를 자동 실행함")
+
+    # split 폴더가 없거나 비어 있거나 clean 요청이면 SOURCE_ROOT 기준으로 자동 생성.
+    if (not split_ready or args.clean_split) and not args.no_auto_split and AUTO_SPLIT:
+        reason = "clean-split 요청" if args.clean_split else "split 출력 없음/비어있음"
         print(f"[auto-split] {reason} → _split_data.py 실행 (source={src})")
         split_cmd = [
             sys.executable, "-u", str(repo / "scripts" / "_split_data.py"),
@@ -104,12 +178,9 @@ def main():
             "--cl-train-dir", CL_TRAIN_DIR,
             "--cl-eval-dir", CL_EVAL_DIR,
         ]
-        if args.clean_split:
+        if args.clean_split or not split_ready:
             split_cmd.append("--clean-output")
-        rc = subprocess.run(
-            split_cmd,
-            cwd=str(repo),
-        ).returncode
+        rc = subprocess.run(split_cmd, cwd=str(repo)).returncode
         if rc != 0:
             raise SystemExit(f"_split_data.py 실패 rc={rc}")
 
@@ -120,13 +191,15 @@ def main():
         ("CL_EVAL_DIR", CL_EVAL_DIR),
     ]:
         resolved = resolve_path(path)
-        if not resolved.exists():
+        ready = _has_any_images(resolved)
+        if name in ("CNN_DATA_DIR", "CL_EVAL_DIR"):
+            ready = _has_class_images(resolved)
+        if not ready:
             raise SystemExit(
-                f"{name} not found: {resolved}\n"
-                f"  split 미실행 상태. 다음 중 하나:\n"
-                f"  1) python scripts/generate_data.py  (이미지 합성)\n"
-                f"  2) python scripts/_split_data.py    (cnn_train/contrastive_* 생성)\n"
-                f"  pipeline 은 split 폴더가 있어야 함 (AUTO_SPLIT 로 자동 시도하지만 SOURCE_ROOT 필요).")
+                f"{name} not ready: {resolved}\n"
+                f"  source_root: {src}\n"
+                f"  pipeline 은 source 생성/감지 → split → CNN → contrastive 순서로 자동 처리함.\n"
+                f"  직접 source 를 쓰려면 --source-root data/unknown 처럼 지정.")
         resolved_dirs[name] = resolved
 
     ts = datetime.now().strftime("%y%m%d_%H%M%S")
@@ -134,6 +207,7 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
     log = run_dir / "pipeline.log"
     print(f"[pipeline_ddp] {run_dir}")
+    print(f"[source_root] {src}")
     print("[data dirs]")
     for name, resolved in resolved_dirs.items():
         print(f"  {name}: {resolved}")
@@ -143,6 +217,8 @@ def main():
         f.write(f"CNN_DATA_DIR={CNN_DATA_DIR}\n")
         f.write(f"CL_TRAIN_DIR={CL_TRAIN_DIR}\n")
         f.write(f"CL_EVAL_DIR={CL_EVAL_DIR}\n\n")
+        f.write(f"SOURCE_ROOT={SOURCE_ROOT}\n")
+        f.write(f"RESOLVED_SOURCE_ROOT={src}\n")
         f.write(f"RESOLVED_CNN_DATA_DIR={resolved_dirs['CNN_DATA_DIR']}\n")
         f.write(f"RESOLVED_CL_TRAIN_DIR={resolved_dirs['CL_TRAIN_DIR']}\n")
         f.write(f"RESOLVED_CL_EVAL_DIR={resolved_dirs['CL_EVAL_DIR']}\n\n")
@@ -214,6 +290,8 @@ def main():
         "cnn_data_dir": CNN_DATA_DIR,
         "cl_train_dir": CL_TRAIN_DIR,
         "cl_eval_dir": CL_EVAL_DIR,
+        "source_root": SOURCE_ROOT,
+        "resolved_source_root": str(src),
         "resolved_cnn_data_dir": str(resolved_dirs["CNN_DATA_DIR"]),
         "resolved_cl_train_dir": str(resolved_dirs["CL_TRAIN_DIR"]),
         "resolved_cl_eval_dir": str(resolved_dirs["CL_EVAL_DIR"]),

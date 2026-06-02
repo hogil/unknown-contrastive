@@ -308,34 +308,83 @@ def _apply_args():
     if a.min_samples is not None:      MIN_SAMPLES = a.min_samples
 
 
+def _pipeline_summary_model(run_dir: Path) -> Path | None:
+    summary = run_dir / "summary.json"
+    if not summary.exists():
+        return None
+    try:
+        info = json.loads(summary.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    best = info.get("contrastive_best")
+    if not best:
+        return None
+    p = resolve_path(best)
+    return p if p.exists() else None
+
+
+def _resolve_model_path(model_arg: str) -> Path:
+    """사용자가 .pt, contrastive run dir, pipeline run dir 중 무엇을 줘도 실제 .pt 로 해석."""
+    p = resolve_path(model_arg)
+    if p.is_file():
+        if p.name == "summary.json":
+            from_summary = _pipeline_summary_model(p.parent)
+            if from_summary is not None:
+                return from_summary
+        return p
+
+    if p.is_dir():
+        direct = p / "contrastive" / "best_model.pt"
+        if direct.exists():
+            return direct
+        from_summary = _pipeline_summary_model(p)
+        if from_summary is not None:
+            return from_summary
+
+    # 흔한 실수: runs/<pipeline>/contrastive/best_model.pt 를 줌.
+    # pipeline run 안에는 모델이 없고 summary.json 이 실제 contrastive run 을 가리킨다.
+    for parent in [p.parent, p.parent.parent, p.parent.parent.parent]:
+        if parent and parent != parent.parent:
+            from_summary = _pipeline_summary_model(parent)
+            if from_summary is not None:
+                return from_summary
+
+    return p
+
+
+def _model_not_found_message(model_arg: str, model_path: Path) -> str:
+    repo = Path(__file__).resolve().parent.parent
+    found_models = sorted(repo.glob("runs/*/contrastive/best_model.pt"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
+    found_pipelines = []
+    for summary in sorted(repo.glob("runs/*/summary.json"),
+                          key=lambda p: p.stat().st_mtime, reverse=True):
+        p = _pipeline_summary_model(summary.parent)
+        if p is not None:
+            found_pipelines.append((summary.parent, p))
+
+    msg = [f"MODEL_PATH not found: {model_path}",
+           f"  받은 --model 값: {model_arg}",
+           "  pipeline 재학습이 필요한 뜻이 아님. 실제 contrastive best_model.pt 경로만 필요함."]
+    if found_pipelines:
+        msg.append("pipeline run 폴더를 바로 줄 수도 있음:")
+        for run, p in found_pipelines[:5]:
+            msg.append(f"  --model {run}    # → {p}")
+    if found_models:
+        msg.append("디스크에서 찾은 contrastive 모델 (.pt):")
+        for p in found_models[:10]:
+            msg.append(f"  --model {p}")
+    if not found_models and not found_pipelines:
+        msg.append("contrastive best_model.pt 가 없음 → stage2 만 학습:")
+        msg.append("  python scripts/train_contrastive_ddp.py --backbone runs/<CNN run>/cnn/best_model.pth")
+    return "\n".join(msg)
+
+
 def main():
     _apply_args()
-    run_dir = make_run_dir(OUTPUT_DIR, "grouping")
-    print(f"[run_dir] {run_dir.resolve()}")
-
-    cfg = {k: v for k, v in globals().items()
-           if k.isupper() and not k.startswith("_")
-           and isinstance(v, (str, int, float, bool, tuple, list, type(None), set))}
-    cfg = {k: (list(v) if isinstance(v, set) else v) for k, v in cfg.items()}
-    snapshot_config(run_dir, cfg)
-    system_info(run_dir)
-
-    model_path = resolve_path(MODEL_PATH)
+    model_path = _resolve_model_path(MODEL_PATH)
     if not model_path.exists():
-        # 디스크에 있는 contrastive 모델 자동 탐색해서 안내 (pipeline 재학습 불필요)
-        repo = Path(__file__).resolve().parent.parent
-        found = sorted(repo.glob("runs/*/contrastive/best_model.pt"),
-                       key=lambda p: p.stat().st_mtime, reverse=True)
-        msg = [f"MODEL_PATH not found: {model_path}",
-               f"  (받은 --model 값: {MODEL_PATH})"]
-        if found:
-            msg.append("디스크에서 찾은 contrastive 모델 (.pt) — 이 중 하나를 --model 로:")
-            for p in found[:10]:
-                msg.append(f"  --model {p}")
-        else:
-            msg.append("contrastive best_model.pt 가 없음 → stage2 만 학습하면 됨 (pipeline 전체 X):")
-            msg.append("  python scripts/train_contrastive_ddp.py --backbone runs/<CNN run>/cnn/best_model.pth")
-        raise SystemExit("\n".join(msg))
+        raise SystemExit(_model_not_found_message(MODEL_PATH, model_path))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ContrastiveInferModel(BACKBONE, PROJ_DIM).to(device)
@@ -349,10 +398,21 @@ def main():
             f"MODEL_PATH is not a compatible contrastive best_model.pt: {model_path}\n"
             f"  missing_keys={len(load.missing_keys)} unexpected_keys={len(load.unexpected_keys)}\n"
             f"  grouping에는 CNN .pth 가 아니라 contrastive best_model.pt 를 넣어야 함")
-    print(f"[model] loaded from {MODEL_PATH}")
+    print(f"[model] loaded from {model_path}")
+
+    run_dir = make_run_dir(OUTPUT_DIR, "grouping")
+    print(f"[run_dir] {run_dir.resolve()}")
+
+    cfg = {k: v for k, v in globals().items()
+           if k.isupper() and not k.startswith("_")
+           and isinstance(v, (str, int, float, bool, tuple, list, type(None), set))}
+    cfg = {k: (list(v) if isinstance(v, set) else v) for k, v in cfg.items()}
+    cfg["RESOLVED_MODEL_PATH"] = str(model_path)
+    snapshot_config(run_dir, cfg)
+    system_info(run_dir)
 
     log_stage_metric(run_dir, "grouping_setup", {
-        "model": MODEL_PATH,
+        "model": str(model_path),
         "image_base": IMAGE_BASE,
         "image_root": IMAGE_ROOT,
     })
