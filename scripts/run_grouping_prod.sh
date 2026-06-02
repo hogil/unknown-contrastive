@@ -9,11 +9,6 @@ set -euo pipefail
 #   bash scripts/run_grouping_prod.sh
 # ============================================================
 
-# 비워두면 CUDA_VISIBLE_DEVICES 를 건드리지 않음.
-# 필요할 때만 쉘 앞에서 지정:
-#   CUDA_VISIBLE_DEVICES=0 bash scripts/run_grouping_prod.sh
-CUDA_DEVICES="${CUDA_DEVICES:-}"
-
 # 비워두면 최신 contrastive best_model.pt 자동 사용.
 # runs/<run_dir> 또는 runs/<run_dir>/contrastive/best_model.pt 둘 다 가능.
 MODEL=""
@@ -54,8 +49,5 @@ if [[ "$POOL" == "1" ]]; then
   cmd+=(--pool --pool-name "$POOL_NAME")
 fi
 
-if [[ -n "$CUDA_DEVICES" ]]; then
-  export CUDA_VISIBLE_DEVICES="$CUDA_DEVICES"
-fi
-echo "[run] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-'(scheduler/default)'} ${cmd[*]}"
+echo "[run] ${cmd[*]}"
 "${cmd[@]}"
