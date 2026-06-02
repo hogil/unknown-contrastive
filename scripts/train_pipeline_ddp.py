@@ -124,6 +124,7 @@ def _generate_source(repo: Path, resolve_path, source_root: str, workers: int | 
     ]
     if workers is not None:
         cmd += ["--workers", str(workers)]
+    print(f"[auto-generate cmd] {' '.join(cmd)}", flush=True)
     rc = subprocess.run(cmd, cwd=str(repo)).returncode
     if rc != 0:
         raise SystemExit(f"generate_data.py 실패 rc={rc}")
@@ -194,9 +195,9 @@ def main():
         split_cmd = [
             sys.executable, "-u", str(repo / "scripts" / "_split_data.py"),
             "--source-root", str(src),
-            "--cnn-train-dir", CNN_DATA_DIR,
-            "--cl-train-dir", CL_TRAIN_DIR,
-            "--cl-eval-dir", CL_EVAL_DIR,
+            "--cnn-train-dir", str(resolved_cnn),
+            "--cl-train-dir", str(resolved_cl_train),
+            "--cl-eval-dir", str(resolved_cl_eval),
         ]
         if args.clean_split or not split_ready:
             split_cmd.append("--clean-output")
@@ -244,9 +245,10 @@ def main():
         f.write(f"RESOLVED_CL_EVAL_DIR={resolved_dirs['CL_EVAL_DIR']}\n\n")
 
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-    env["CNN_DATA_DIR"] = CNN_DATA_DIR
-    env["CL_TRAIN_DIRS"] = CL_TRAIN_DIR
-    env["CL_EVAL_DIRS"] = CL_EVAL_DIR
+    env["CNN_SOURCE_ROOT"] = str(src)
+    env["CNN_DATA_DIR"] = str(resolved_dirs["CNN_DATA_DIR"])
+    env["CL_TRAIN_DIRS"] = str(resolved_dirs["CL_TRAIN_DIR"])
+    env["CL_EVAL_DIRS"] = str(resolved_dirs["CL_EVAL_DIR"])
     # H100 batch 주입 (0 이면 각 스크립트 CONFIG default 유지)
     if CNN_BATCH_PER_GPU:
         env["CNN_BATCH_PER_GPU"] = str(CNN_BATCH_PER_GPU)
@@ -258,6 +260,7 @@ def main():
     print("STAGE 1 — CNN DDP")
     print("=" * 60)
     t0 = time.time()
+    stage1_started_at = t0
     rc = subprocess.run(
         [sys.executable, "-u", str(repo / "scripts" / "train_cnn_ddp.py")],
         env=env, cwd=str(repo),
@@ -266,16 +269,23 @@ def main():
     if rc != 0:
         raise SystemExit(f"CNN DDP failed rc={rc}")
 
-    # latest CNN run dir from runs/
-    cnn_runs = sorted((repo / "runs").glob("*_cnn_ddp"),
-                      key=lambda p: p.stat().st_mtime, reverse=True)
-    if not cnn_runs:
-        raise SystemExit("no *_cnn_ddp run dir found after CNN stage")
-    cnn_run = cnn_runs[0]
-    cnn_best = cnn_run / "cnn" / "best_model.pth"
-    print(f"[stage1 result] {cnn_run}  best={cnn_best.exists()}")
-    if not cnn_best.exists():
-        raise SystemExit(f"no best_model.pth in {cnn_run}")
+    # latest valid CNN best. Run dir mtime can be newer even when no best exists
+    # (aborted/empty run), so select by the actual checkpoint file.
+    cnn_best_files = sorted((repo / "runs").glob("*_cnn_ddp/cnn/best_model.pth"),
+                            key=lambda p: p.stat().st_mtime, reverse=True)
+    fresh_best_files = [p for p in cnn_best_files if p.stat().st_mtime >= stage1_started_at - 5]
+    if not fresh_best_files:
+        latest_runs = sorted((repo / "runs").glob("*_cnn_ddp"),
+                             key=lambda p: p.stat().st_mtime, reverse=True)
+        detail = "\n".join(f"  {p}" for p in latest_runs[:5])
+        latest_best = "\n".join(f"  {p}" for p in cnn_best_files[:5])
+        raise SystemExit(
+            "no fresh CNN best_model.pth found after CNN stage\n"
+            f"latest cnn runs:\n{detail}\n"
+            f"latest existing best files:\n{latest_best}")
+    cnn_best = fresh_best_files[0]
+    cnn_run = cnn_best.parent.parent
+    print(f"[stage1 result] {cnn_run}  best={cnn_best}")
 
     # ============ Stage 2: Contrastive DDP ============
     print("\n" + "=" * 60)
