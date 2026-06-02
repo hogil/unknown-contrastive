@@ -11,6 +11,7 @@ from __future__ import annotations
 # ===================================================================
 TRAIN_DATA_DIR        = "E:/data/images/contrastive_train"  # ★ 절대규. 콤마구분 다중 가능: "a,b,c"
 EVAL_DATA_DIR         = "E:/data/images/contrastive_eval"   # ★ 절대규. 콤마구분 다중(class 통합) 가능
+NO_EVAL               = False                               # 현업 class 없음: metric/eval 생략
 ACTIVE_CLASSES_YAML   = None
 EXCLUDE_CLASSES       = {"classification", "classification_chips"}
 
@@ -108,6 +109,7 @@ if os.environ.get("CL_BATCH_PER_GPU"):
     BATCH_PER_GPU = int(os.environ["CL_BATCH_PER_GPU"])
 TRAIN_DATA_DIR = os.environ.get("CL_TRAIN_DIRS") or TRAIN_DATA_DIR   # 콤마구분 다중 가능
 EVAL_DATA_DIR  = os.environ.get("CL_EVAL_DIRS") or EVAL_DATA_DIR
+NO_EVAL = NO_EVAL or os.environ.get("CL_NO_EVAL", "").strip().lower() in {"1", "true", "yes", "y"}
 
 
 def seed_all(s=42):
@@ -610,31 +612,47 @@ def train_worker(rank, world_size):
             active_classes = yaml.safe_load(f).get("classes")
 
     # train/eval — 콤마구분 다중 폴더 지원 (학습/eval 따로 여러 개 선택)
+    # 현업 데이터는 class label 이 없으므로 --no-eval 에서는 metric/eval 을 완전히 생략.
     train_roots = [resolve_path(x.strip()) for x in str(TRAIN_DATA_DIR).split(",") if x.strip()]
-    eval_roots  = [resolve_path(x.strip()) for x in str(EVAL_DATA_DIR).split(",") if x.strip()]
+    no_eval = bool(NO_EVAL) or str(EVAL_DATA_DIR).strip().lower() in {"", "none", "null", "skip", "no"}
+    eval_roots  = [] if no_eval else [resolve_path(x.strip()) for x in str(EVAL_DATA_DIR).split(",") if x.strip()]
     for d in train_roots:
         if not d.exists():
             raise SystemExit(f"TRAIN dir not found: {d}\n  python scripts/generate_data.py && python scripts/_split_data.py")
-    for d in eval_roots:
-        if not d.exists():
-            raise SystemExit(f"EVAL dir not found: {d}")
+    if not train_roots:
+        raise SystemExit("--train-dirs is empty")
+    if not no_eval:
+        for d in eval_roots:
+            if not d.exists():
+                raise SystemExit(f"EVAL dir not found: {d}")
     if is_main(rank):
         print(f"[train dirs] {[str(d) for d in train_roots]}")
-        print(f"[eval  dirs] {[str(d) for d in eval_roots]}")
+        if no_eval:
+            print("[eval  dirs] skipped (--no-eval: 현업 class label 없음)")
+        else:
+            print(f"[eval  dirs] {[str(d) for d in eval_roots]}")
     train_aug = build_aug(); eval_tf = build_eval_tf()
     train_ds = FlatPairDataset(train_roots, train_aug)
-    eval_base = MultiRootImageFolder(eval_roots, transform=eval_tf,
-                                     exclude=EXCLUDE_CLASSES, active_classes=active_classes,
-                                     per_class_cap=PER_CLASS_CAP, normal_cap=NORMAL_CAP)
-    classes = eval_base.classes
+    eval_base = None
+    classes = []
+    class_to_idx = {}
+    if not no_eval:
+        eval_base = MultiRootImageFolder(eval_roots, transform=eval_tf,
+                                         exclude=EXCLUDE_CLASSES, active_classes=active_classes,
+                                         per_class_cap=PER_CLASS_CAP, normal_cap=NORMAL_CAP)
+        classes = eval_base.classes
+        class_to_idx = eval_base.class_to_idx
 
     if is_main(rank):
         print(f"[train] {len(train_ds)} from {TRAIN_DATA_DIR}")
-        print(f"[eval]  {len(eval_base)} from {EVAL_DATA_DIR} ({len(classes)} classes)")
+        if no_eval:
+            print("[eval]  skipped — no metric because production data has no class labels")
+        else:
+            print(f"[eval]  {len(eval_base)} from {EVAL_DATA_DIR} ({len(classes)} classes)")
         (run_dir / "classes.json").write_text(
-            json.dumps({"classes": classes, "class_to_idx": eval_base.class_to_idx,
+            json.dumps({"classes": classes, "class_to_idx": class_to_idx,
                         "train_dir": TRAIN_DATA_DIR, "eval_dir": EVAL_DATA_DIR,
-                        "world_size": world_size}, indent=2),
+                        "no_eval": no_eval, "world_size": world_size}, indent=2),
             encoding="utf-8")
 
     # model + DDP wrap. FREEZE_BACKBONE 면 find_unused_parameters=True
@@ -652,8 +670,10 @@ def train_worker(rank, world_size):
             "batch_per_gpu": BATCH_PER_GPU, "total_batch": BATCH_PER_GPU * world_size,
             "queue_size": QUEUE_SIZE if USE_QUEUE else 0,
             "ignore_neg_sim": IGNORE_NEG_SIM,
-            "n_train": len(train_ds), "n_eval": len(eval_base), "n_classes_eval": len(classes),
-        }, notes=f"DDP {world_size} GPUs — train flat (class hidden), eval ImageFolder")
+            "n_train": len(train_ds), "n_eval": 0 if no_eval else len(eval_base),
+            "n_classes_eval": len(classes), "no_eval": no_eval,
+        }, notes=f"DDP {world_size} GPUs — train flat (class hidden)"
+                 + (", eval skipped" if no_eval else ", eval ImageFolder"))
 
     history = []
     for ep in range(1, EPOCHS + 1):
@@ -709,12 +729,28 @@ def train_worker(rank, world_size):
         torch.save({
             "state_dict": model.module.state_dict(),
             "classes": classes,
-            "class_to_idx": eval_base.class_to_idx,
+            "class_to_idx": class_to_idx,
             "config": cfg,
             "backbone_source": str(bp),
             "world_size": world_size,
         }, cl_dir / "best_model.pt")
         (cl_dir / "history.json").write_text(json.dumps(history, indent=2), encoding="utf-8")
+
+    if no_eval:
+        if is_main(rank):
+            log_stage_metric(run_dir, "contrastive_ddp_train_done_no_eval", {
+                "n_train": len(train_ds),
+                "epochs": EPOCHS,
+                "final_loss": history[-1]["loss"] if history else None,
+                "backbone_source": str(bp),
+                "best_model": str(cl_dir / "best_model.pt"),
+            }, notes="Production contrastive train only; classless data so metric/eval skipped")
+            print("[eval] skipped (--no-eval). Use predict_grouping_prod.py for classless grouping.")
+            print(f"\n[OUT] {run_dir.resolve()}")
+        if dist.is_initialized():
+            dist.barrier()
+        cleanup_ddp()
+        return
 
     # ---------- Eval: embed + HDBSCAN (rank 0 모음, all ranks compute) ----------
     eval_sampler = DistributedSampler(eval_base, num_replicas=world_size, rank=rank, shuffle=False)
@@ -884,6 +920,8 @@ if __name__ == "__main__":
                      help="학습 폴더 (콤마구분 다중 가능). 예: a/unknown,a/unknown_archive")
     _ap.add_argument("--eval-dirs", type=str, default=None,
                      help="eval 폴더 (콤마구분 다중 가능, class 통합). 예: a/eval1,a/eval2")
+    _ap.add_argument("--no-eval", action="store_true",
+                     help="현업 classless train only. eval/HDBSCAN metric 생략.")
     _ap.add_argument("--batch", type=int, default=None, help="BATCH_PER_GPU override.")
     _a = _ap.parse_args()
     # env 로 세팅 → mp.spawn 자식이 module re-import 시 위 module-level block 에서 읽음
@@ -893,6 +931,7 @@ if __name__ == "__main__":
     if _a.epochs is not None: os.environ["CL_EPOCHS"] = str(_a.epochs)
     if _a.train_dirs:         os.environ["CL_TRAIN_DIRS"] = _a.train_dirs
     if _a.eval_dirs:          os.environ["CL_EVAL_DIRS"] = _a.eval_dirs
+    if _a.no_eval:            os.environ["CL_NO_EVAL"] = "1"
     if _a.batch is not None:  os.environ["CL_BATCH_PER_GPU"] = str(_a.batch)
     # 부모 프로세스의 현재 module global 도 즉시 반영 (world_size<=1 직접 호출 경로)
     if _a.backbone:           BACKBONE_CKPT = _a.backbone
@@ -901,5 +940,6 @@ if __name__ == "__main__":
     if _a.epochs is not None: EPOCHS = _a.epochs
     if _a.train_dirs:         TRAIN_DATA_DIR = _a.train_dirs
     if _a.eval_dirs:          EVAL_DATA_DIR = _a.eval_dirs
+    if _a.no_eval:            NO_EVAL = True
     if _a.batch is not None:  BATCH_PER_GPU = _a.batch
     launch_ddp(train_worker)
