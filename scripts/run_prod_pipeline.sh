@@ -10,16 +10,14 @@ set -euo pipefail
 #   bash scripts/run_prod_pipeline.sh
 # ============================================================
 
-# 비워두면 train_pipeline_ddp.py CONFIG/default 자동 탐색 사용.
-# 필요할 때만 지정. 반드시 <class>/*.png 구조.
-SOURCE_ROOT="${SOURCE_ROOT:-}"
+# CNN supervised source. 반드시 <class>/*.png 구조.
+SOURCE_ROOT="${SOURCE_ROOT:-data/images/unknown}"
 
-# 비워두면 기본 contrastive split/eval 흐름. 현업 classless 학습을 할 때만 지정.
-# 콤마로 여러 개 가능.
-PROD_TRAIN_DIRS="${PROD_TRAIN_DIRS:-}"
+# 현업 classless contrastive 학습 폴더. 콤마로 여러 개 가능.
+PROD_TRAIN_DIRS="${PROD_TRAIN_DIRS:-data/images/prod_train}"
 
-# 비워두면 grouping 생략. 현업 grouping 할 때만 지정. 콤마로 여러 개 가능.
-PROD_PRED_DIRS="${PROD_PRED_DIRS:-}"
+# grouping/pred 할 다른 현업 폴더. 콤마로 여러 개 가능.
+PROD_PRED_DIRS="${PROD_PRED_DIRS:-data/images/prod_pred}"
 
 # Split/CNN/contrastive/grouping options.
 CLEAN_SPLIT=1
@@ -32,28 +30,33 @@ GROUPING_REPS_PER_CLUSTER=5
 
 cd "$(dirname "$0")/.."
 
+if [[ "$PROD_TRAIN_DIRS" == "data/images/prod_train" || "$PROD_PRED_DIRS" == "data/images/prod_pred" ]]; then
+  cat >&2 <<'EOF'
+[ERR] scripts/run_prod_pipeline.sh 상단 CONFIG 를 실제 현업 폴더로 수정하세요.
+  PROD_TRAIN_DIRS="data/images/<현업_contrastive_train_폴더>"
+  PROD_PRED_DIRS="data/images/<현업_grouping_대상_폴더>"
+
+또는 환경변수로 한 번만 지정:
+  PROD_TRAIN_DIRS=data/images/A PROD_PRED_DIRS=data/images/B bash scripts/run_prod_pipeline.sh
+EOF
+  exit 1
+fi
+
 cmd=(
   python -u scripts/train_pipeline_ddp.py
+  --source-root "$SOURCE_ROOT"
+  --prod-train-dirs "$PROD_TRAIN_DIRS"
+  --prod-pred-dirs "$PROD_PRED_DIRS"
+  --prod-epochs "$PROD_EPOCHS"
   --cnn-batch "$CNN_BATCH"
   --cl-batch "$CL_BATCH"
+  --grouping-batch "$GROUPING_BATCH"
+  --grouping-workers "$GROUPING_WORKERS"
+  --grouping-reps-per-cluster "$GROUPING_REPS_PER_CLUSTER"
 )
 
-if [[ -n "$SOURCE_ROOT" ]]; then
-  cmd+=(--source-root "$SOURCE_ROOT")
-fi
 if [[ "$CLEAN_SPLIT" == "1" ]]; then
   cmd+=(--clean-split)
-fi
-if [[ -n "$PROD_TRAIN_DIRS" ]]; then
-  cmd+=(--prod-train-dirs "$PROD_TRAIN_DIRS" --prod-epochs "$PROD_EPOCHS")
-fi
-if [[ -n "$PROD_PRED_DIRS" ]]; then
-  cmd+=(
-    --prod-pred-dirs "$PROD_PRED_DIRS"
-    --grouping-batch "$GROUPING_BATCH"
-    --grouping-workers "$GROUPING_WORKERS"
-    --grouping-reps-per-cluster "$GROUPING_REPS_PER_CLUSTER"
-  )
 fi
 
 echo "[run] ${cmd[*]}"
