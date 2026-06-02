@@ -47,6 +47,7 @@ COPY_PNG_TO_GROUPS  = False        # True 면 group 폴더에 PNG 복사 (디스
 IMG_SIZE            = 384
 BATCH               = 32
 NUM_WORKERS         = 4
+PROGRESS_EVERY      = 20          # embedding loop 진행률 출력 batch 간격
 
 # HDBSCAN
 MIN_CLUSTER_SIZE    = 12
@@ -191,7 +192,7 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
     if len(ds) == 0:
         print(f"[skip] {disp}: no images")
         return None
-    print(f"[{disp}] {len(ds)} images")
+    print(f"[{disp}] {len(ds)} images", flush=True)
     loader = DataLoader(ds, batch_size=BATCH, shuffle=False,
                         num_workers=NUM_WORKERS, pin_memory=True)
 
@@ -199,16 +200,22 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
     all_z, all_path = [], []
     model.eval()
     t0 = time.time()
+    total_batches = len(loader)
+    print(f"[embed] start batch={BATCH} workers={NUM_WORKERS} batches={total_batches}", flush=True)
     with torch.no_grad():
-        for imgs, paths in loader:
+        for bi, (imgs, paths) in enumerate(loader, start=1):
             imgs = imgs.to(device, non_blocking=True)
             z = model(imgs).cpu().numpy()
             all_z.append(z); all_path.extend(paths)
+            if bi == 1 or bi % PROGRESS_EVERY == 0 or bi == total_batches:
+                print(f"[embed] {len(all_path)}/{len(ds)} images "
+                      f"({bi}/{total_batches} batches, {time.time()-t0:.0f}s)", flush=True)
     embeddings = np.concatenate(all_z, axis=0)
-    print(f"[embed] {len(all_path)} images in {time.time()-t0:.0f}s")
+    print(f"[embed] done {len(all_path)} images in {time.time()-t0:.0f}s", flush=True)
 
     # cluster
     import hdbscan
+    print(f"[cluster] HDBSCAN start n={len(embeddings)} dim={embeddings.shape[1]}", flush=True)
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size=MIN_CLUSTER_SIZE,
         min_samples=MIN_SAMPLES,
@@ -219,7 +226,7 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
     pred = clusterer.fit_predict(embeddings)
     n_clusters = len(set(p for p in pred if p >= 0))
     n_noise = int((pred == -1).sum())
-    print(f"[cluster] {n_clusters} groups + {n_noise} noise ({n_noise/len(pred)*100:.1f}%)")
+    print(f"[cluster] {n_clusters} groups + {n_noise} noise ({n_noise/len(pred)*100:.1f}%)", flush=True)
 
     # save
     output_subdir.mkdir(parents=True, exist_ok=True)
@@ -282,6 +289,7 @@ def _apply_args():
     import argparse
     global MODEL_PATH, IMAGE_ROOT, IMAGE_BASE, IMAGE_ROOTS, POOL, POOL_NAME
     global OUTPUT_DIR, COPY_PNG_TO_GROUPS, MIN_CLUSTER_SIZE, MIN_SAMPLES
+    global BATCH, NUM_WORKERS, PROGRESS_EVERY
     global PRODUCT_FILTER, LINE_FILTER, DATE_FILTER
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", type=str, default=None, help="contrastive best_model.pt 경로")
@@ -293,6 +301,9 @@ def _apply_args():
     ap.add_argument("--image-base", type=str, default=None, help="product/line/date walk base")
     ap.add_argument("--output-dir", type=str, default=None)
     ap.add_argument("--copy-png", action="store_true", help="group 폴더에 PNG 복사 (시각 review)")
+    ap.add_argument("--batch", type=int, default=None, help="inference batch size")
+    ap.add_argument("--workers", type=int, default=None, help="DataLoader num_workers")
+    ap.add_argument("--progress-every", type=int, default=None, help="embedding progress 출력 batch 간격")
     ap.add_argument("--min-cluster-size", type=int, default=None)
     ap.add_argument("--min-samples", type=int, default=None)
     a = ap.parse_args()
@@ -304,6 +315,9 @@ def _apply_args():
     if a.image_base:       IMAGE_BASE = a.image_base
     if a.output_dir:       OUTPUT_DIR = a.output_dir
     if a.copy_png:         COPY_PNG_TO_GROUPS = True
+    if a.batch is not None: BATCH = a.batch
+    if a.workers is not None: NUM_WORKERS = a.workers
+    if a.progress_every is not None: PROGRESS_EVERY = max(1, a.progress_every)
     if a.min_cluster_size is not None: MIN_CLUSTER_SIZE = a.min_cluster_size
     if a.min_samples is not None:      MIN_SAMPLES = a.min_samples
 
