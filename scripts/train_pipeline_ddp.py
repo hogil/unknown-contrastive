@@ -55,6 +55,8 @@ def parse_args():
                    help="Contrastive batch per GPU override.")
     p.add_argument("--source-root", type=str, default=None,
                    help="split source (generate_data 출력 unknown/). split 폴더 없을 때 사용.")
+    p.add_argument("--clean-split", action="store_true",
+                   help="학습 전 _split_data.py --clean-output 실행. 기존 split stale 파일 제거.")
     p.add_argument("--no-auto-split", action="store_true",
                    help="split 폴더 없어도 _split_data.py 자동 실행 안 함 (에러).")
     return p.parse_args()
@@ -75,6 +77,8 @@ def main():
         CL_BATCH_PER_GPU = args.cl_batch
     if args.source_root:
         SOURCE_ROOT = args.source_root
+    if args.clean_split and args.no_auto_split:
+        raise SystemExit("--clean-split and --no-auto-split cannot be used together")
 
     repo = Path(__file__).parent.parent.resolve()
     sys.path.insert(0, str(repo / "scripts"))
@@ -84,17 +88,26 @@ def main():
     # _split_data.py 를 SOURCE_ROOT 기준으로 자동 실행 (generate_data 만 한 상태 대응).
     missing = [resolve_path(p) for p in (CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR)
                if not resolve_path(p).exists()]
-    if missing and not args.no_auto_split:
+    if (missing or args.clean_split) and not args.no_auto_split:
         src = resolve_path(SOURCE_ROOT)
         if not src.exists():
             raise SystemExit(
                 f"split 출력 폴더가 없고 SOURCE_ROOT 도 없음: {src}\n"
                 f"  먼저 합성: python scripts/generate_data.py\n"
                 f"  (또는 --source-root 로 unknown/ 경로 지정)")
-        print(f"[auto-split] split 폴더 없음 → _split_data.py 실행 (source={src})")
+        reason = "clean-split 요청" if args.clean_split else "split 폴더 없음"
+        print(f"[auto-split] {reason} → _split_data.py 실행 (source={src})")
+        split_cmd = [
+            sys.executable, "-u", str(repo / "scripts" / "_split_data.py"),
+            "--source-root", str(src),
+            "--cnn-train-dir", CNN_DATA_DIR,
+            "--cl-train-dir", CL_TRAIN_DIR,
+            "--cl-eval-dir", CL_EVAL_DIR,
+        ]
+        if args.clean_split:
+            split_cmd.append("--clean-output")
         rc = subprocess.run(
-            [sys.executable, "-u", str(repo / "scripts" / "_split_data.py"),
-             "--source-root", str(src)],
+            split_cmd,
             cwd=str(repo),
         ).returncode
         if rc != 0:

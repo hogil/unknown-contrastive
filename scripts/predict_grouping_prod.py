@@ -341,9 +341,15 @@ def main():
     model = ContrastiveInferModel(BACKBONE, PROJ_DIM).to(device)
     ck = torch.load(model_path, map_location=device, weights_only=False)
     sd = ck["state_dict"] if isinstance(ck, dict) and "state_dict" in ck else ck
-    missing = model.load_state_dict(sd, strict=False)
-    print(f"[model] loaded from {MODEL_PATH}, missing={len(missing.missing_keys)}, "
-          f"unexpected={len(missing.unexpected_keys)}")
+    if isinstance(sd, dict) and any(k.startswith("module.") for k in sd):
+        sd = {k.removeprefix("module."): v for k, v in sd.items()}
+    load = model.load_state_dict(sd, strict=False)
+    if load.missing_keys or load.unexpected_keys:
+        raise SystemExit(
+            f"MODEL_PATH is not a compatible contrastive best_model.pt: {model_path}\n"
+            f"  missing_keys={len(load.missing_keys)} unexpected_keys={len(load.unexpected_keys)}\n"
+            f"  grouping에는 CNN .pth 가 아니라 contrastive best_model.pt 를 넣어야 함")
+    print(f"[model] loaded from {MODEL_PATH}")
 
     log_stage_metric(run_dir, "grouping_setup", {
         "model": MODEL_PATH,
