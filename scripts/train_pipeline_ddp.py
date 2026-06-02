@@ -12,10 +12,10 @@ from __future__ import annotations
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
-SOURCE_ROOT           = "E:/data/images/unknown"          # generate_data.py 출력 (split 의 source)
-CNN_DATA_DIR          = "E:/data/images/cnn_train"        # ↓ 아래 3개는 _split_data.py 가 SOURCE_ROOT 에서 생성
-CL_TRAIN_DIR          = "E:/data/images/contrastive_train"
-CL_EVAL_DIR           = "E:/data/images/contrastive_eval"
+SOURCE_ROOT           = "data/images/unknown"             # generate_data.py 출력 (split 의 source)
+CNN_DATA_DIR          = "data/images/cnn_train"           # ↓ 아래 3개는 _split_data.py 가 SOURCE_ROOT 에서 생성
+CL_TRAIN_DIR          = "data/images/contrastive_train"
+CL_EVAL_DIR           = "data/images/contrastive_eval"
 AUTO_GENERATE         = True                                # SOURCE_ROOT 없으면 generate_data.py 자동 실행
 AUTO_SPLIT            = True                                # split 폴더 없으면 _split_data.py 자동 실행
 
@@ -115,15 +115,18 @@ def _find_source_root(repo: Path, resolve_path, source_root: str | None) -> Path
     return None
 
 
-def _generate_source(repo: Path, resolve_path, source_root: str, workers: int | None) -> Path:
+def _generate_source(repo: Path, resolve_path, source_root: str, workers: int | None, log_line=None) -> Path:
     out = resolve_path(source_root)
-    print(f"[auto-generate] SOURCE_ROOT 없음/비어있음 → generate_data.py 실행 (output={out})")
+    msg = f"[auto-generate] SOURCE_ROOT 없음/비어있음 → generate_data.py 실행 (output={out})"
+    (log_line or print)(msg)
     cmd = [
         sys.executable, "-u", str(repo / "scripts" / "generate_data.py"),
         "--output-dir", str(out),
     ]
     if workers is not None:
         cmd += ["--workers", str(workers)]
+    if log_line:
+        log_line(f"[auto-generate cmd] {' '.join(cmd)}")
     rc = subprocess.run(cmd, cwd=str(repo)).returncode
     if rc != 0:
         raise SystemExit(f"generate_data.py 실패 rc={rc}")
@@ -159,24 +162,64 @@ def main():
     sys.path.insert(0, str(repo / "scripts"))
     from _common import resolve_path
 
-    src = _find_source_root(repo, resolve_path, args.source_root)
-    if src is None:
-        if args.no_auto_generate or not AUTO_GENERATE:
-            checked = args.source_root or f"{SOURCE_ROOT}, data/images/unknown, data/unknown"
-            raise SystemExit(
-                f"SOURCE_ROOT 이미지 없음: {checked}\n"
-                f"  서버 기준 후보: {resolve_path(SOURCE_ROOT)}, {repo / 'data' / 'images' / 'unknown'}, {repo / 'data' / 'unknown'}")
-        src = _generate_source(repo, resolve_path, SOURCE_ROOT, args.generate_workers)
-    SOURCE_ROOT = str(src)
+    ts = datetime.now().strftime("%y%m%d_%H%M%S")
+    run_dir = repo / "runs" / f"{ts}_{PIPELINE_TAG}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    log = run_dir / "pipeline.log"
 
+    def log_line(msg: str = "") -> None:
+        print(msg, flush=True)
+        with open(log, "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+
+    resolved_source_requested = resolve_path(SOURCE_ROOT)
     resolved_cnn = resolve_path(CNN_DATA_DIR)
     resolved_cl_train = resolve_path(CL_TRAIN_DIR)
     resolved_cl_eval = resolve_path(CL_EVAL_DIR)
+
+    log_line(f"[pipeline_ddp] {run_dir}")
+    log_line(f"[project_root] {repo}")
+    log_line("[configured paths]")
+    log_line(f"  SOURCE_ROOT:  {SOURCE_ROOT}")
+    log_line(f"  CNN_DATA_DIR: {CNN_DATA_DIR}")
+    log_line(f"  CL_TRAIN_DIR: {CL_TRAIN_DIR}")
+    log_line(f"  CL_EVAL_DIR:  {CL_EVAL_DIR}")
+    log_line("[resolved paths]")
+    log_line(f"  SOURCE_ROOT:  {resolved_source_requested}")
+    log_line(f"  CNN_DATA_DIR: {resolved_cnn}")
+    log_line(f"  CL_TRAIN_DIR: {resolved_cl_train}")
+    log_line(f"  CL_EVAL_DIR:  {resolved_cl_eval}")
+    log_line(f"[cuda] CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES','(unset)')}")
+
     split_ready = (
         _has_class_images(resolved_cnn)
         and _has_any_images(resolved_cl_train)
         and _has_class_images(resolved_cl_eval)
     )
+    log_line("[split status]")
+    log_line(f"  CNN_DATA_DIR ready={_has_class_images(resolved_cnn)} path={resolved_cnn}")
+    log_line(f"  CL_TRAIN_DIR ready={_has_any_images(resolved_cl_train)} path={resolved_cl_train}")
+    log_line(f"  CL_EVAL_DIR  ready={_has_class_images(resolved_cl_eval)} path={resolved_cl_eval}")
+
+    src = None
+    if split_ready and not args.clean_split:
+        src = _find_source_root(repo, resolve_path, args.source_root) or resolved_source_requested
+        if _has_class_images(src):
+            log_line(f"[source] existing unknown 사용: {src}")
+        else:
+            log_line(f"[source] split 준비됨 → unknown 없음/비어있어도 generate 생략: {src}")
+    else:
+        src = _find_source_root(repo, resolve_path, args.source_root)
+        if src is None:
+            if args.no_auto_generate or not AUTO_GENERATE:
+                checked = args.source_root or f"{SOURCE_ROOT}, data/images/unknown, data/unknown"
+                raise SystemExit(
+                    f"SOURCE_ROOT 이미지 없음: {checked}\n"
+                    f"  서버 기준 후보: {resolve_path(SOURCE_ROOT)}, {repo / 'data' / 'images' / 'unknown'}, {repo / 'data' / 'unknown'}")
+            src = _generate_source(repo, resolve_path, SOURCE_ROOT, args.generate_workers, log_line=log_line)
+        else:
+            log_line(f"[source] existing unknown 사용: {src}")
+    SOURCE_ROOT = str(src)
 
     if (not split_ready or args.clean_split) and (args.no_auto_split or not AUTO_SPLIT):
         raise SystemExit(
@@ -190,19 +233,22 @@ def main():
     # split 폴더가 없거나 비어 있거나 clean 요청이면 SOURCE_ROOT 기준으로 자동 생성.
     if (not split_ready or args.clean_split) and not args.no_auto_split and AUTO_SPLIT:
         reason = "clean-split 요청" if args.clean_split else "split 출력 없음/비어있음"
-        print(f"[auto-split] {reason} → _split_data.py 실행 (source={src})")
+        log_line(f"[auto-split] {reason} → _split_data.py 실행 (source={src})")
         split_cmd = [
             sys.executable, "-u", str(repo / "scripts" / "_split_data.py"),
             "--source-root", str(src),
-            "--cnn-train-dir", CNN_DATA_DIR,
-            "--cl-train-dir", CL_TRAIN_DIR,
-            "--cl-eval-dir", CL_EVAL_DIR,
+            "--cnn-train-dir", str(resolved_cnn),
+            "--cl-train-dir", str(resolved_cl_train),
+            "--cl-eval-dir", str(resolved_cl_eval),
         ]
         if args.clean_split or not split_ready:
             split_cmd.append("--clean-output")
+        log_line(f"[auto-split cmd] {' '.join(split_cmd)}")
         rc = subprocess.run(split_cmd, cwd=str(repo)).returncode
         if rc != 0:
             raise SystemExit(f"_split_data.py 실패 rc={rc}")
+    else:
+        log_line("[auto-split] split 출력 이미 준비됨 → split 생략")
 
     resolved_dirs = {}
     for name, path in [
@@ -222,16 +268,12 @@ def main():
                 f"  직접 source 를 쓰려면 --source-root data/unknown 처럼 지정.")
         resolved_dirs[name] = resolved
 
-    ts = datetime.now().strftime("%y%m%d_%H%M%S")
-    run_dir = repo / "runs" / f"{ts}_{PIPELINE_TAG}"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    log = run_dir / "pipeline.log"
-    print(f"[pipeline_ddp] {run_dir}")
-    print(f"[source_root] {src}")
-    print("[data dirs]")
+    log_line(f"[source_root] {src}")
+    log_line("[data dirs]")
     for name, resolved in resolved_dirs.items():
-        print(f"  {name}: {resolved}")
-    with open(log, "w", encoding="utf-8") as f:
+        log_line(f"  {name}: {resolved}")
+    with open(log, "a", encoding="utf-8") as f:
+        f.write("\n[resolved summary]\n")
         f.write(f"[pipeline_ddp] {datetime.now().isoformat()}\n")
         f.write(f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES','(unset)')}\n\n")
         f.write(f"CNN_DATA_DIR={CNN_DATA_DIR}\n")
@@ -244,9 +286,10 @@ def main():
         f.write(f"RESOLVED_CL_EVAL_DIR={resolved_dirs['CL_EVAL_DIR']}\n\n")
 
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-    env["CNN_DATA_DIR"] = CNN_DATA_DIR
-    env["CL_TRAIN_DIRS"] = CL_TRAIN_DIR
-    env["CL_EVAL_DIRS"] = CL_EVAL_DIR
+    env["CNN_SOURCE_ROOT"] = str(src)
+    env["CNN_DATA_DIR"] = str(resolved_dirs["CNN_DATA_DIR"])
+    env["CL_TRAIN_DIRS"] = str(resolved_dirs["CL_TRAIN_DIR"])
+    env["CL_EVAL_DIRS"] = str(resolved_dirs["CL_EVAL_DIR"])
     # H100 batch 주입 (0 이면 각 스크립트 CONFIG default 유지)
     if CNN_BATCH_PER_GPU:
         env["CNN_BATCH_PER_GPU"] = str(CNN_BATCH_PER_GPU)
