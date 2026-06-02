@@ -42,6 +42,9 @@ MODEL_PATH          = "runs/<TS>_pipeline/contrastive/best_model.pt"
 # 출력
 OUTPUT_DIR          = "result_grouping"
 COPY_PNG_TO_GROUPS  = False        # True 면 group 폴더에 PNG 복사 (디스크 증가)
+SAVE_REPRESENTATIVES = True        # cluster별 중심에 가까운 대표 이미지만 저장
+REPS_PER_CLUSTER    = 5
+REPRESENTATIVES_ONLY = None        # 기존 grouping 결과 폴더에 representatives 만 후처리
 
 # Inference
 IMG_SIZE            = 384
@@ -142,6 +145,116 @@ def make_pbar(*args, **kwargs):
     except Exception:
         return None
     return tqdm(*args, **kwargs)
+
+
+def save_grouping_representatives(output_subdir: Path, embeddings: np.ndarray,
+                                  pred: np.ndarray, paths: list[str],
+                                  per_cluster: int) -> int:
+    """cluster별 centroid에 가까운 이미지 몇 장만 복사. -1은 HDBSCAN noise."""
+    rep_dir = output_subdir / "representatives"
+    if rep_dir.exists():
+        shutil.rmtree(rep_dir)
+    rep_dir.mkdir(parents=True, exist_ok=True)
+
+    rows = []
+    saved = 0
+    pred = np.asarray(pred, dtype=int)
+    cluster_ids = sorted(int(c) for c in set(pred.tolist()) if int(c) != -1)
+    for cl_id in cluster_ids:
+        idx = np.where(pred == cl_id)[0]
+        if len(idx) == 0:
+            continue
+        center = embeddings[idx].mean(axis=0)
+        dist = np.linalg.norm(embeddings[idx] - center[None, :], axis=1)
+        order = idx[np.argsort(dist)[:per_cluster]]
+        sub = rep_dir / f"cluster_{cl_id:03d}_n-{len(idx)}"
+        sub.mkdir(parents=True, exist_ok=True)
+        for rank_i, i in enumerate(order, 1):
+            src = Path(paths[i])
+            if not src.exists():
+                continue
+            dst = sub / f"rep-{rank_i:02d}_{src.name}"
+            try:
+                shutil.copy2(src, dst)
+                saved += 1
+                rows.append({
+                    "cluster_id": cl_id,
+                    "rank": rank_i,
+                    "cluster_size": len(idx),
+                    "distance_to_centroid": f"{float(np.linalg.norm(embeddings[i] - center)):.6f}",
+                    "src": str(src),
+                    "dst": str(dst),
+                })
+            except Exception:
+                pass
+
+    noise_idx = np.where(pred == -1)[0][:per_cluster]
+    if len(noise_idx):
+        sub = rep_dir / f"_noise_n-{int((pred == -1).sum())}"
+        sub.mkdir(parents=True, exist_ok=True)
+        for rank_i, i in enumerate(noise_idx, 1):
+            src = Path(paths[i])
+            if not src.exists():
+                continue
+            dst = sub / f"noise-{rank_i:02d}_{src.name}"
+            try:
+                shutil.copy2(src, dst)
+                saved += 1
+                rows.append({
+                    "cluster_id": -1,
+                    "rank": rank_i,
+                    "cluster_size": int((pred == -1).sum()),
+                    "distance_to_centroid": "",
+                    "src": str(src),
+                    "dst": str(dst),
+                })
+            except Exception:
+                pass
+
+    import csv
+    with (rep_dir / "representatives.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=[
+            "cluster_id", "rank", "cluster_size",
+            "distance_to_centroid", "src", "dst",
+        ])
+        w.writeheader()
+        w.writerows(rows)
+    return saved
+
+
+def add_representatives_to_existing_result(result_dir: Path, per_cluster: int) -> int:
+    """기존 result_grouping run 에 representatives/ 만 추가."""
+    if not result_dir.exists():
+        raise SystemExit(f"result dir not found: {result_dir}")
+    targets = []
+    for emb in result_dir.rglob("embeddings.npy"):
+        out_dir = emb.parent
+        csv_path = out_dir / "clusters.csv"
+        if csv_path.exists():
+            targets.append((out_dir, emb, csv_path))
+    if not targets:
+        raise SystemExit(f"embeddings.npy + clusters.csv pair not found under: {result_dir}")
+
+    total = 0
+    print(f"[representatives-only] {len(targets)} target(s) under {result_dir}", flush=True)
+    for out_dir, emb_path, csv_path in targets:
+        import pandas as pd
+        print(f"[representatives-only] {out_dir}", flush=True)
+        embeddings = np.load(emb_path)
+        df = pd.read_csv(csv_path)
+        if "path" not in df.columns or "group_id" not in df.columns:
+            raise SystemExit(f"clusters.csv missing path/group_id columns: {csv_path}")
+        n = min(len(df), len(embeddings))
+        saved = save_grouping_representatives(
+            out_dir,
+            embeddings[:n],
+            df["group_id"].to_numpy(dtype=int)[:n],
+            df["path"].astype(str).tolist()[:n],
+            per_cluster,
+        )
+        print(f"  saved={saved} → {out_dir / 'representatives'}", flush=True)
+        total += saved
+    return total
 
 
 class ContrastiveInferModel(nn.Module):
@@ -326,6 +439,15 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
     cnts = Counter(pred.tolist())
     for g, c in sorted(cnts.items()):
         summary["groups"][str(int(g))] = c
+
+    n_representatives = 0
+    if SAVE_REPRESENTATIVES:
+        print(f"[representatives] saving {REPS_PER_CLUSTER}/cluster", flush=True)
+        n_representatives = save_grouping_representatives(
+            output_subdir, embeddings, pred, all_path, REPS_PER_CLUSTER)
+        print(f"[representatives] saved={n_representatives} → "
+              f"{output_subdir / 'representatives'}", flush=True)
+    summary["n_representatives_saved"] = n_representatives
     (output_subdir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     print("[save] summary.json done", flush=True)
@@ -364,7 +486,8 @@ def _apply_args():
     """CLI 로 CONFIG global override (실전 폴더/모델 선택)."""
     import argparse
     global MODEL_PATH, IMAGE_ROOT, IMAGE_BASE, IMAGE_ROOTS, POOL, POOL_NAME
-    global OUTPUT_DIR, COPY_PNG_TO_GROUPS, MIN_CLUSTER_SIZE, MIN_SAMPLES
+    global OUTPUT_DIR, COPY_PNG_TO_GROUPS, SAVE_REPRESENTATIVES, REPS_PER_CLUSTER
+    global REPRESENTATIVES_ONLY, MIN_CLUSTER_SIZE, MIN_SAMPLES
     global BATCH, NUM_WORKERS, PREFETCH_FACTOR, PROGRESS_EVERY
     global PRODUCT_FILTER, LINE_FILTER, DATE_FILTER
     ap = argparse.ArgumentParser()
@@ -377,6 +500,12 @@ def _apply_args():
     ap.add_argument("--image-base", type=str, default=None, help="product/line/date walk base")
     ap.add_argument("--output-dir", type=str, default=None)
     ap.add_argument("--copy-png", action="store_true", help="group 폴더에 PNG 복사 (시각 review)")
+    ap.add_argument("--no-representatives", action="store_true",
+                    help="cluster 대표 이미지 저장 끄기")
+    ap.add_argument("--reps-per-cluster", type=int, default=None,
+                    help="cluster별 대표 이미지 저장 개수")
+    ap.add_argument("--representatives-only", type=str, default=None,
+                    help="기존 result_grouping run 폴더에 representatives/ 만 후처리 생성")
     ap.add_argument("--batch", type=int, default=None, help="inference batch size")
     ap.add_argument("--workers", type=int, default=None, help="DataLoader num_workers")
     ap.add_argument("--prefetch-factor", type=int, default=None, help="DataLoader prefetch_factor (workers>0)")
@@ -392,6 +521,9 @@ def _apply_args():
     if a.image_base:       IMAGE_BASE = a.image_base
     if a.output_dir:       OUTPUT_DIR = a.output_dir
     if a.copy_png:         COPY_PNG_TO_GROUPS = True
+    if a.no_representatives: SAVE_REPRESENTATIVES = False
+    if a.reps_per_cluster is not None: REPS_PER_CLUSTER = max(1, a.reps_per_cluster)
+    if a.representatives_only: REPRESENTATIVES_ONLY = a.representatives_only
     if a.batch is not None: BATCH = a.batch
     if a.workers is not None: NUM_WORKERS = a.workers
     if a.prefetch_factor is not None: PREFETCH_FACTOR = max(1, a.prefetch_factor)
@@ -474,6 +606,12 @@ def _model_not_found_message(model_arg: str, model_path: Path) -> str:
 
 def main():
     _apply_args()
+    if REPRESENTATIVES_ONLY:
+        n = add_representatives_to_existing_result(
+            resolve_path(REPRESENTATIVES_ONLY), REPS_PER_CLUSTER)
+        print(f"[OUT] representatives saved={n}")
+        return
+
     model_path = _resolve_model_path(MODEL_PATH)
     if not model_path.exists():
         raise SystemExit(_model_not_found_message(MODEL_PATH, model_path))
