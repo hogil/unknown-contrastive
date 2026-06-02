@@ -48,3 +48,4 @@ PyYAML>=6.0                    # tested: 6.0.1
 
 # --- System ---
 psutil>=5.9                    # tested: 5.9.5
+tqdm>=4.66                     # grouping embedding/copy progress bar

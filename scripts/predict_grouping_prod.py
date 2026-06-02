@@ -45,8 +45,9 @@ COPY_PNG_TO_GROUPS  = False        # True 면 group 폴더에 PNG 복사 (디스
 
 # Inference
 IMG_SIZE            = 384
-BATCH               = 32
-NUM_WORKERS         = 4
+BATCH               = 128         # H100 inference 기본. OOM 나면 --batch 64/32 로 낮춤.
+NUM_WORKERS         = 16          # 6400 PNG decode 병목 완화. RAM 부족하면 --workers 8.
+PREFETCH_FACTOR     = 2
 PROGRESS_EVERY      = 20          # embedding loop 진행률 출력 batch 간격
 
 # HDBSCAN
@@ -125,6 +126,15 @@ def build_eval_tf():
     ])
 
 
+def make_pbar(*args, **kwargs):
+    """tqdm 있으면 진행바, 없으면 None."""
+    try:
+        from tqdm.auto import tqdm
+    except Exception:
+        return None
+    return tqdm(*args, **kwargs)
+
+
 class ContrastiveInferModel(nn.Module):
     """backbone + projection head — same architecture as train_contrastive.ContrastiveModel."""
     def __init__(self, backbone_name: str, proj_dim: int):
@@ -193,8 +203,13 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
         print(f"[skip] {disp}: no images")
         return None
     print(f"[{disp}] {len(ds)} images", flush=True)
-    loader = DataLoader(ds, batch_size=BATCH, shuffle=False,
-                        num_workers=NUM_WORKERS, pin_memory=True)
+    ld_kw = {"batch_size": BATCH, "shuffle": False,
+             "num_workers": NUM_WORKERS, "pin_memory": True}
+    if NUM_WORKERS > 0:
+        ld_kw["prefetch_factor"] = PREFETCH_FACTOR
+    print(f"[loader] batch={BATCH} workers={NUM_WORKERS} "
+          f"prefetch={PREFETCH_FACTOR if NUM_WORKERS > 0 else 'n/a'}", flush=True)
+    loader = DataLoader(ds, **ld_kw)
 
     # embed
     all_z, all_path = [], []
@@ -202,14 +217,22 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
     t0 = time.time()
     total_batches = len(loader)
     print(f"[embed] start batch={BATCH} workers={NUM_WORKERS} batches={total_batches}", flush=True)
+    pbar = make_pbar(total=len(ds), desc="embed", unit="img", dynamic_ncols=True,
+                     mininterval=1.0)
     with torch.no_grad():
         for bi, (imgs, paths) in enumerate(loader, start=1):
             imgs = imgs.to(device, non_blocking=True)
             z = model(imgs).cpu().numpy()
             all_z.append(z); all_path.extend(paths)
-            if bi == 1 or bi % PROGRESS_EVERY == 0 or bi == total_batches:
+            if pbar is not None:
+                pbar.update(len(paths))
+                pbar.set_postfix(batch=f"{bi}/{total_batches}",
+                                 elapsed=f"{time.time()-t0:.0f}s")
+            elif bi == 1 or bi % PROGRESS_EVERY == 0 or bi == total_batches:
                 print(f"[embed] {len(all_path)}/{len(ds)} images "
                       f"({bi}/{total_batches} batches, {time.time()-t0:.0f}s)", flush=True)
+    if pbar is not None:
+        pbar.close()
     embeddings = np.concatenate(all_z, axis=0)
     print(f"[embed] done {len(all_path)} images in {time.time()-t0:.0f}s", flush=True)
 
@@ -231,6 +254,7 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
     # save
     output_subdir.mkdir(parents=True, exist_ok=True)
     # parquet (DB ingestion)
+    print(f"[save] writing outputs → {output_subdir}", flush=True)
     try:
         import pandas as pd
         df = pd.DataFrame({
@@ -243,6 +267,7 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
         })
         df.to_parquet(output_subdir / "clusters.parquet", index=False)
         df.to_csv(output_subdir / "clusters.csv", index=False)
+        print("[save] clusters.parquet + clusters.csv done", flush=True)
     except Exception as e:
         print(f"[warn] parquet save fail: {e}, fallback to JSON")
         (output_subdir / "clusters.json").write_text(
@@ -250,6 +275,7 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
                        indent=2), encoding="utf-8")
 
     np.save(output_subdir / "embeddings.npy", embeddings)
+    print("[save] embeddings.npy done", flush=True)
 
     summary = {
         "folder": disp,
@@ -267,19 +293,30 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
         summary["groups"][str(int(g))] = c
     (output_subdir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    print("[save] summary.json done", flush=True)
 
     # optional: copy images into group/<id>/ for review
     if COPY_PNG_TO_GROUPS:
+        print("[copy] PNG → groups/ start", flush=True)
         groups_dir = output_subdir / "groups"
         for gid in set(int(g) for g in pred):
             (groups_dir / str(gid)).mkdir(parents=True, exist_ok=True)
-        for p, g in zip(all_path, pred):
+        pairs = list(zip(all_path, pred))
+        pbar = make_pbar(pairs, desc="copy", unit="img", dynamic_ncols=True,
+                         mininterval=1.0)
+        it = pbar if pbar is not None else pairs
+        copied = 0
+        for p, g in it:
             src = Path(p)
             dst = groups_dir / str(int(g)) / src.name
             try:
                 shutil.copy2(src, dst)
+                copied += 1
             except Exception:
                 pass
+        if pbar is not None:
+            pbar.close()
+        print(f"[copy] done copied={copied}/{len(all_path)}", flush=True)
 
     return summary
 
@@ -289,7 +326,7 @@ def _apply_args():
     import argparse
     global MODEL_PATH, IMAGE_ROOT, IMAGE_BASE, IMAGE_ROOTS, POOL, POOL_NAME
     global OUTPUT_DIR, COPY_PNG_TO_GROUPS, MIN_CLUSTER_SIZE, MIN_SAMPLES
-    global BATCH, NUM_WORKERS, PROGRESS_EVERY
+    global BATCH, NUM_WORKERS, PREFETCH_FACTOR, PROGRESS_EVERY
     global PRODUCT_FILTER, LINE_FILTER, DATE_FILTER
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", type=str, default=None, help="contrastive best_model.pt 경로")
@@ -303,6 +340,7 @@ def _apply_args():
     ap.add_argument("--copy-png", action="store_true", help="group 폴더에 PNG 복사 (시각 review)")
     ap.add_argument("--batch", type=int, default=None, help="inference batch size")
     ap.add_argument("--workers", type=int, default=None, help="DataLoader num_workers")
+    ap.add_argument("--prefetch-factor", type=int, default=None, help="DataLoader prefetch_factor (workers>0)")
     ap.add_argument("--progress-every", type=int, default=None, help="embedding progress 출력 batch 간격")
     ap.add_argument("--min-cluster-size", type=int, default=None)
     ap.add_argument("--min-samples", type=int, default=None)
@@ -317,6 +355,7 @@ def _apply_args():
     if a.copy_png:         COPY_PNG_TO_GROUPS = True
     if a.batch is not None: BATCH = a.batch
     if a.workers is not None: NUM_WORKERS = a.workers
+    if a.prefetch_factor is not None: PREFETCH_FACTOR = max(1, a.prefetch_factor)
     if a.progress_every is not None: PROGRESS_EVERY = max(1, a.progress_every)
     if a.min_cluster_size is not None: MIN_CLUSTER_SIZE = a.min_cluster_size
     if a.min_samples is not None:      MIN_SAMPLES = a.min_samples
@@ -401,6 +440,7 @@ def main():
         raise SystemExit(_model_not_found_message(MODEL_PATH, model_path))
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[model] loading {model_path} on {device}", flush=True)
     model = ContrastiveInferModel(BACKBONE, PROJ_DIM).to(device)
     ck = torch.load(model_path, map_location=device, weights_only=False)
     sd = ck["state_dict"] if isinstance(ck, dict) and "state_dict" in ck else ck
@@ -432,11 +472,17 @@ def main():
     })
 
     targets = enumerate_targets()
-    print(f"[targets] {len(targets)} folder(s)")
+    print(f"[targets] {len(targets)} folder(s)", flush=True)
+    for i, (_product, _line, _date, folder, out_name) in enumerate(targets[:20], start=1):
+        disp = ", ".join(str(Path(p)) for p in folder) if isinstance(folder, (list, tuple)) else str(folder)
+        print(f"  [target {i}] {disp} -> {out_name or 'product/line/date'}", flush=True)
+    if len(targets) > 20:
+        print(f"  ... {len(targets)-20} more targets", flush=True)
 
     all_summaries = []
-    for product, line, date, folder, out_name in targets:
+    for ti, (product, line, date, folder, out_name) in enumerate(targets, start=1):
         folders = folder if isinstance(folder, (list, tuple)) else [folder]
+        print(f"[target {ti}/{len(targets)}] start", flush=True)
         if not any(Path(f).exists() for f in folders):
             print(f"[miss] {folder}")
             continue
@@ -451,6 +497,8 @@ def main():
             log_stage_metric(run_dir, f"grouping_{product}_{line}_{date}" if product else "grouping",
                              {"n_images": s["n_images"], "n_clusters": s["n_clusters"],
                               "n_noise": s["n_noise"], "noise_pct": s["noise_pct"]})
+            print(f"[target {ti}/{len(targets)}] done clusters={s['n_clusters']} "
+                  f"noise={s['n_noise']} ({s['noise_pct']}%)", flush=True)
 
     # global summary
     (run_dir / "all_summaries.json").write_text(
