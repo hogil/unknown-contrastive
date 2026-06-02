@@ -9,21 +9,36 @@ set -euo pipefail
 #   bash scripts/run_grouping_prod.sh
 # ============================================================
 
-# 폴더/모델 옵션 사용법:
-# - MODEL 은 runs/<contrastive_run> 또는 contrastive/best_model.pt 경로.
-# - PROD_PRED_DIRS 는 grouping 할 현업 이미지 폴더. 콤마 다중 가능.
-# - 상대경로는 프로젝트 루트 기준, 절대경로도 가능.
+# Contrastive model. runs/<run_dir> 또는 best_model.pt 둘 다 가능.
 MODEL="runs/<CONTRASTIVE_RUN>"
+
+# grouping/pred 할 현업 폴더. 콤마로 여러 개 가능.
 PROD_PRED_DIRS="data/images/prod_pred"
+
+GROUPING_BATCH=128
+GROUPING_WORKERS=16
+GROUPING_REPS_PER_CLUSTER=5
+COPY_PNG=0
+POOL=0
+POOL_NAME="pooled"
 
 cd "$(dirname "$0")/.."
 
-# python -u: print/log 를 버퍼링하지 않고 바로 출력. 학습 동작에는 영향 없음.
 cmd=(
   python -u scripts/predict_grouping_prod.py
   --model "$MODEL"
   --image-roots "$PROD_PRED_DIRS"
+  --batch "$GROUPING_BATCH"
+  --workers "$GROUPING_WORKERS"
+  --reps-per-cluster "$GROUPING_REPS_PER_CLUSTER"
 )
+
+if [[ "$COPY_PNG" == "1" ]]; then
+  cmd+=(--copy-png)
+fi
+if [[ "$POOL" == "1" ]]; then
+  cmd+=(--pool --pool-name "$POOL_NAME")
+fi
 
 echo "[run] ${cmd[*]}"
 "${cmd[@]}"

@@ -10,25 +10,44 @@ set -euo pipefail
 #   bash scripts/run_prod_pipeline.sh
 # ============================================================
 
-# 폴더 옵션 사용법:
-# - 상대경로: 프로젝트 루트 기준. 예: data/images/unknown
-# - 절대경로: 그대로 사용. 예: /mnt/data/unknown
-# - 다중 폴더: 콤마로 연결. 예: /mnt/a,/mnt/b
-#
-# SOURCE_ROOT 는 반드시 <class>/*.png 구조.
+# CNN supervised source. 반드시 <class>/*.png 구조.
 SOURCE_ROOT="data/images/unknown"
+
+# 현업 classless contrastive 학습 폴더. 콤마로 여러 개 가능.
+# 기본은 train_pipeline_ddp.py 의 CL_TRAIN_DIR 와 동일.
 PROD_TRAIN_DIRS="data/images/contrastive_train"
+
+# grouping/pred 할 다른 현업 폴더. 콤마로 여러 개 가능.
+# 기본은 train_pipeline_ddp.py 의 CL_EVAL_DIR 와 동일.
 PROD_PRED_DIRS="data/images/contrastive_eval"
+
+# Split/CNN/contrastive/grouping options.
+CLEAN_SPLIT=1
+PROD_EPOCHS=5
+CNN_BATCH=32
+CL_BATCH=64
+GROUPING_BATCH=128
+GROUPING_WORKERS=16
+GROUPING_REPS_PER_CLUSTER=5
 
 cd "$(dirname "$0")/.."
 
-# python -u: print/log 를 버퍼링하지 않고 바로 출력. 학습 동작에는 영향 없음.
 cmd=(
   python -u scripts/train_pipeline_ddp.py
   --source-root "$SOURCE_ROOT"
   --prod-train-dirs "$PROD_TRAIN_DIRS"
   --prod-pred-dirs "$PROD_PRED_DIRS"
+  --prod-epochs "$PROD_EPOCHS"
+  --cnn-batch "$CNN_BATCH"
+  --cl-batch "$CL_BATCH"
+  --grouping-batch "$GROUPING_BATCH"
+  --grouping-workers "$GROUPING_WORKERS"
+  --grouping-reps-per-cluster "$GROUPING_REPS_PER_CLUSTER"
 )
+
+if [[ "$CLEAN_SPLIT" == "1" ]]; then
+  cmd+=(--clean-split)
+fi
 
 echo "[run] ${cmd[*]}"
 "${cmd[@]}"
