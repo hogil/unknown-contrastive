@@ -38,7 +38,6 @@ PIPELINE_TAG          = "pipeline_ddp"
 import json
 import argparse
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -131,38 +130,6 @@ def _generate_source(repo: Path, resolve_path, source_root: str, workers: int | 
     if not _has_class_images(out):
         raise SystemExit(f"generate_data.py 완료 후에도 <class>/*.png 구조가 없음: {out}")
     return out
-
-
-def _latest_best_after(repo: Path, pattern: str, started_at: float) -> tuple[Path | None, Path | None]:
-    bests = [
-        p for p in (repo / "runs").glob(pattern)
-        if p.exists() and p.stat().st_mtime >= started_at - 5
-    ]
-    if not bests:
-        return None, None
-    best = sorted(bests, key=lambda p: p.stat().st_mtime, reverse=True)[0]
-    return best.parent.parent, best
-
-
-def _recent_run_diagnostics(repo: Path, suffix: str, best_rel: str) -> str:
-    rows = []
-    for run in sorted((repo / "runs").glob(f"*_{suffix}"),
-                      key=lambda p: p.stat().st_mtime, reverse=True)[:8]:
-        best = run / best_rel
-        rows.append(f"  {run} best={best.exists()} best_path={best}")
-    return "\n".join(rows) if rows else "  (no runs found)"
-
-
-def _link_or_copy(src: Path, dst: Path) -> Path:
-    """Pipeline run 안에도 model artifact 를 남긴다. hardlink 우선, 실패 시 copy."""
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists():
-        dst.unlink()
-    try:
-        os.link(src, dst)
-    except Exception:
-        shutil.copy2(src, dst)
-    return dst
 
 
 def main():
@@ -291,7 +258,6 @@ def main():
     print("STAGE 1 — CNN DDP")
     print("=" * 60)
     t0 = time.time()
-    stage1_start = t0
     rc = subprocess.run(
         [sys.executable, "-u", str(repo / "scripts" / "train_cnn_ddp.py")],
         env=env, cwd=str(repo),
@@ -300,23 +266,23 @@ def main():
     if rc != 0:
         raise SystemExit(f"CNN DDP failed rc={rc}")
 
-    cnn_run, cnn_best = _latest_best_after(
-        repo, "*_cnn_ddp/cnn/best_model.pth", stage1_start)
-    if cnn_run is None or cnn_best is None:
-        raise SystemExit(
-            "CNN stage finished but no new cnn/best_model.pth was found.\n"
-            "Recent CNN runs:\n"
-            f"{_recent_run_diagnostics(repo, 'cnn_ddp', 'cnn/best_model.pth')}")
-    pipeline_cnn_best = _link_or_copy(cnn_best, run_dir / "cnn" / "best_model.pth")
-    print(f"[stage1 result] {cnn_run}  best={cnn_best}")
-    print(f"[pipeline save] CNN best: {pipeline_cnn_best}")
+    # latest CNN run dir from runs/
+    cnn_runs = sorted((repo / "runs").glob("*_cnn_ddp"),
+                      key=lambda p: p.stat().st_mtime, reverse=True)
+    if not cnn_runs:
+        raise SystemExit("no *_cnn_ddp run dir found after CNN stage")
+    cnn_run = cnn_runs[0]
+    cnn_best = cnn_run / "cnn" / "best_model.pth"
+    print(f"[stage1 result] {cnn_run}  best={cnn_best.exists()}")
+    if not cnn_best.exists():
+        raise SystemExit(f"no best_model.pth in {cnn_run}")
 
     # ============ Stage 2: Contrastive DDP ============
     print("\n" + "=" * 60)
     print("STAGE 2 — Contrastive DDP" + (" (production classless)" if args.prod_train_dirs else ""))
     print("=" * 60)
     # CNN backbone + tag 를 env 로 주입 (mp.spawn 자식이 module-level 에서 읽음)
-    env["CL_BACKBONE_CKPT"] = str(pipeline_cnn_best)
+    env["CL_BACKBONE_CKPT"] = str(cnn_best)
     if args.prod_train_dirs:
         env["CL_TAG"] = "contrastive_prod_ddp_pipe"
         env["CL_TRAIN_DIRS"] = args.prod_train_dirs
@@ -330,7 +296,6 @@ def main():
         env.pop("CL_NO_EVAL", None)
 
     t0 = time.time()
-    stage2_start = t0
     rc = subprocess.run(
         [sys.executable, "-u", str(repo / "scripts" / "train_contrastive_ddp.py")],
         env=env, cwd=str(repo),
@@ -340,16 +305,12 @@ def main():
         raise SystemExit(f"Contrastive DDP failed rc={rc}")
 
     cl_tag = "contrastive_prod_ddp_pipe" if args.prod_train_dirs else "contrastive_ddp_pipe"
-    cl_run, cl_best = _latest_best_after(
-        repo, f"*_{cl_tag}/contrastive/best_model.pt", stage2_start)
-    if cl_run is None or cl_best is None:
-        raise SystemExit(
-            "Contrastive stage finished but no new contrastive/best_model.pt was found.\n"
-            "Recent contrastive runs:\n"
-            f"{_recent_run_diagnostics(repo, cl_tag, 'contrastive/best_model.pt')}")
-    pipeline_cl_best = _link_or_copy(cl_best, run_dir / "contrastive" / "best_model.pt")
-    print(f"[stage2 result] {cl_run}  best={cl_best}")
-    print(f"[pipeline save] Contrastive best: {pipeline_cl_best}")
+    cl_runs = sorted((repo / "runs").glob(f"*_{cl_tag}"),
+                     key=lambda p: p.stat().st_mtime, reverse=True)
+    cl_run = None
+    if cl_runs:
+        cl_run = cl_runs[0]
+        print(f"[stage2 result] {cl_run}")
 
     grouping_run = None
     if args.prod_pred_dirs:
@@ -360,7 +321,7 @@ def main():
         print("=" * 60)
         group_cmd = [
             sys.executable, "-u", str(repo / "scripts" / "predict_grouping_prod.py"),
-            "--model", str(pipeline_cl_best),
+            "--model", str(cl_run),
             "--image-roots", args.prod_pred_dirs,
             "--batch", str(grouping_batch),
             "--workers", str(grouping_workers),
@@ -382,11 +343,9 @@ def main():
     summary = {
         "pipeline_run": str(run_dir),
         "cnn_run": str(cnn_run),
-        "cnn_best": str(pipeline_cnn_best),
-        "cnn_best_source": str(cnn_best),
-        "contrastive_run": str(cl_run),
-        "contrastive_best": str(pipeline_cl_best),
-        "contrastive_best_source": str(cl_best),
+        "cnn_best": str(cnn_best),
+        "contrastive_run": str(cl_run) if cl_runs else None,
+        "contrastive_best": str(cl_run / "contrastive" / "best_model.pt") if cl_runs else None,
         "production_mode": bool(args.prod_train_dirs),
         "prod_train_dirs": args.prod_train_dirs,
         "prod_pred_dirs": args.prod_pred_dirs,
@@ -405,8 +364,9 @@ def main():
     (run_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\n[OUT] {run_dir}")
-    print(f"  CNN best:         {pipeline_cnn_best}")
-    print(f"  Contrastive best: {pipeline_cl_best}")
+    print(f"  CNN best:         {cnn_best}")
+    if cl_runs:
+        print(f"  Contrastive best: {cl_run / 'contrastive' / 'best_model.pt'}")
     if grouping_run:
         print(f"  Grouping result:   {grouping_run}")
 
