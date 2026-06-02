@@ -14,12 +14,10 @@ set -euo pipefail
 SOURCE_ROOT="data/images/unknown"
 
 # 현업 classless contrastive 학습 폴더. 콤마로 여러 개 가능.
-# 기본은 train_pipeline_ddp.py 의 CL_TRAIN_DIR 와 동일.
-PROD_TRAIN_DIRS="data/images/contrastive_train"
+PROD_TRAIN_DIRS="data/images/prod_train"
 
 # grouping/pred 할 다른 현업 폴더. 콤마로 여러 개 가능.
-# 기본은 train_pipeline_ddp.py 의 CL_EVAL_DIR 와 동일.
-PROD_PRED_DIRS="data/images/contrastive_eval"
+PROD_PRED_DIRS="data/images/prod_pred"
 
 # Split/CNN/contrastive/grouping options.
 CLEAN_SPLIT=1
