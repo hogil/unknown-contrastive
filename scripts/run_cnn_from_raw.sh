@@ -9,7 +9,10 @@ set -euo pipefail
 #   bash scripts/run_cnn_from_raw.sh
 # ============================================================
 
-CUDA_DEVICES="${CUDA_DEVICES:-0,1,2,3,4,5,6,7}"
+# 비워두면 CUDA_VISIBLE_DEVICES 를 건드리지 않음.
+# 필요할 때만 쉘 앞에서 지정:
+#   CUDA_VISIBLE_DEVICES=0,1 bash scripts/run_cnn_from_raw.sh
+CUDA_DEVICES="${CUDA_DEVICES:-}"
 
 # 반드시 <class>/*.png 구조.
 SOURCE_ROOT="data/images/unknown"
@@ -39,5 +42,8 @@ if [[ -n "$CNN_PREFETCH" ]]; then
   cmd+=(--prefetch "$CNN_PREFETCH")
 fi
 
-echo "[run] CUDA_VISIBLE_DEVICES=$CUDA_DEVICES ${cmd[*]}"
-CUDA_VISIBLE_DEVICES="$CUDA_DEVICES" "${cmd[@]}"
+if [[ -n "$CUDA_DEVICES" ]]; then
+  export CUDA_VISIBLE_DEVICES="$CUDA_DEVICES"
+fi
+echo "[run] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-'(scheduler/default)'} ${cmd[*]}"
+"${cmd[@]}"
