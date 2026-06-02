@@ -9,24 +9,21 @@ set -euo pipefail
 #   bash scripts/run_contrastive_prod.sh
 # ============================================================
 
-# CNN best model. 필요하면 직접 수정.
+# 폴더/모델 옵션 사용법:
+# - CNN_BEST 는 CNN 학습 결과 best_model.pth 경로.
+# - PROD_TRAIN_DIRS 는 class 없는 현업 이미지 폴더. 콤마 다중 가능.
+# - 상대경로는 프로젝트 루트 기준, 절대경로도 가능.
 CNN_BEST="runs/<CNN_RUN>/cnn/best_model.pth"
-
-# 현업 classless contrastive 학습 폴더. 콤마로 여러 개 가능.
 PROD_TRAIN_DIRS="data/images/prod_train"
-
-PROD_EPOCHS=5
-CL_BATCH=64
 
 cd "$(dirname "$0")/.."
 
+# python -u: print/log 를 버퍼링하지 않고 바로 출력. 학습 동작에는 영향 없음.
 cmd=(
   python -u scripts/train_contrastive_ddp.py
   --backbone "$CNN_BEST"
   --train-dirs "$PROD_TRAIN_DIRS"
   --no-eval
-  --epochs "$PROD_EPOCHS"
-  --batch "$CL_BATCH"
 )
 
 echo "[run] ${cmd[*]}"

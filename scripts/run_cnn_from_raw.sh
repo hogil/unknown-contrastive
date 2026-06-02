@@ -9,33 +9,20 @@ set -euo pipefail
 #   bash scripts/run_cnn_from_raw.sh
 # ============================================================
 
-# 반드시 <class>/*.png 구조.
+# 폴더 옵션 사용법:
+# - SOURCE_ROOT 는 반드시 <class>/*.png 구조.
+# - 상대경로는 프로젝트 루트 기준, 절대경로도 가능.
 SOURCE_ROOT="data/images/unknown"
-
-CLEAN_SPLIT=1
-CNN_BATCH=32
-CNN_EPOCHS=30
-CNN_WORKERS_PER_GPU=""     # 빈 값이면 script auto
-CNN_PREFETCH=""            # 빈 값이면 script default
+CNN_DATA_DIR="data/images/cnn_train"
 
 cd "$(dirname "$0")/.."
 
+# python -u: print/log 를 버퍼링하지 않고 바로 출력. 학습 동작에는 영향 없음.
 cmd=(
   python -u scripts/train_cnn_ddp.py
   --source-root "$SOURCE_ROOT"
-  --batch "$CNN_BATCH"
-  --epochs "$CNN_EPOCHS"
+  --data-dir "$CNN_DATA_DIR"
 )
-
-if [[ "$CLEAN_SPLIT" == "1" ]]; then
-  cmd+=(--clean-split)
-fi
-if [[ -n "$CNN_WORKERS_PER_GPU" ]]; then
-  cmd+=(--workers "$CNN_WORKERS_PER_GPU")
-fi
-if [[ -n "$CNN_PREFETCH" ]]; then
-  cmd+=(--prefetch "$CNN_PREFETCH")
-fi
 
 echo "[run] ${cmd[*]}"
 "${cmd[@]}"
