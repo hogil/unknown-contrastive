@@ -23,6 +23,9 @@ AUTO_SPLIT            = True                                # split 폴더 없�
 #   total batch = BATCH_PER_GPU × GPU 수. CNN 은 full fine-tune(무거움), CL 은 frozen(가벼움).
 CNN_BATCH_PER_GPU     = 32             # convnextv2_base 384 full-ft + AMP → H100 80GB 32 안전
 CL_BATCH_PER_GPU      = 64             # frozen backbone → 가벼움, contrastive 는 batch 클수록 negative↑ 유리
+GROUPING_BATCH        = 128
+GROUPING_WORKERS      = 16
+GROUPING_REPS_PER_CLUSTER = 5
 
 # 두 stage 의 hyperparam 은 각 _ddp.py 의 CONFIG block 을 직접 수정
 #   scripts/train_cnn_ddp.py        ← CNN
@@ -64,6 +67,18 @@ def parse_args():
                    help="SOURCE_ROOT 없거나 비었을 때 generate_data.py 자동 실행 안 함.")
     p.add_argument("--no-auto-split", action="store_true",
                    help="split 폴더 없어도 _split_data.py 자동 실행 안 함 (에러).")
+    p.add_argument("--prod-train-dirs", type=str, default=None,
+                   help="현업 classless contrastive 학습 폴더(콤마구분). 지정 시 --no-eval 로 stage2 실행.")
+    p.add_argument("--prod-pred-dirs", type=str, default=None,
+                   help="stage2 결과로 바로 grouping 할 현업 폴더(콤마구분).")
+    p.add_argument("--prod-epochs", type=int, default=None,
+                   help="현업 contrastive epoch override.")
+    p.add_argument("--grouping-batch", type=int, default=None,
+                   help="predict_grouping_prod.py batch override.")
+    p.add_argument("--grouping-workers", type=int, default=None,
+                   help="predict_grouping_prod.py workers override.")
+    p.add_argument("--grouping-reps-per-cluster", type=int, default=None,
+                   help="grouping cluster별 대표 이미지 개수.")
     return p.parse_args()
 
 
@@ -95,7 +110,7 @@ def _find_source_root(repo: Path, resolve_path, source_root: str | None) -> Path
         if not c:
             continue
         p = resolve_path(c)
-        if _has_any_images(p):
+        if _has_class_images(p):
             return p
     return None
 
@@ -112,8 +127,8 @@ def _generate_source(repo: Path, resolve_path, source_root: str, workers: int | 
     rc = subprocess.run(cmd, cwd=str(repo)).returncode
     if rc != 0:
         raise SystemExit(f"generate_data.py 실패 rc={rc}")
-    if not _has_any_images(out):
-        raise SystemExit(f"generate_data.py 완료 후에도 이미지가 없음: {out}")
+    if not _has_class_images(out):
+        raise SystemExit(f"generate_data.py 완료 후에도 <class>/*.png 구조가 없음: {out}")
     return out
 
 
@@ -132,6 +147,11 @@ def main():
         CL_BATCH_PER_GPU = args.cl_batch
     if args.source_root:
         SOURCE_ROOT = args.source_root
+    grouping_batch = args.grouping_batch if args.grouping_batch is not None else GROUPING_BATCH
+    grouping_workers = args.grouping_workers if args.grouping_workers is not None else GROUPING_WORKERS
+    grouping_reps = (args.grouping_reps_per_cluster
+                     if args.grouping_reps_per_cluster is not None
+                     else GROUPING_REPS_PER_CLUSTER)
     if args.clean_split and args.no_auto_split:
         raise SystemExit("--clean-split and --no-auto-split cannot be used together")
 
@@ -259,11 +279,21 @@ def main():
 
     # ============ Stage 2: Contrastive DDP ============
     print("\n" + "=" * 60)
-    print("STAGE 2 — Contrastive DDP")
+    print("STAGE 2 — Contrastive DDP" + (" (production classless)" if args.prod_train_dirs else ""))
     print("=" * 60)
     # CNN backbone + tag 를 env 로 주입 (mp.spawn 자식이 module-level 에서 읽음)
     env["CL_BACKBONE_CKPT"] = str(cnn_best)
-    env["CL_TAG"] = "contrastive_ddp_pipe"
+    if args.prod_train_dirs:
+        env["CL_TAG"] = "contrastive_prod_ddp_pipe"
+        env["CL_TRAIN_DIRS"] = args.prod_train_dirs
+        env["CL_NO_EVAL"] = "1"
+        if args.prod_epochs is not None:
+            env["CL_EPOCHS"] = str(args.prod_epochs)
+        print(f"[prod train dirs] {args.prod_train_dirs}")
+        print("[prod eval] skipped (--no-eval, classless production data)")
+    else:
+        env["CL_TAG"] = "contrastive_ddp_pipe"
+        env.pop("CL_NO_EVAL", None)
 
     t0 = time.time()
     rc = subprocess.run(
@@ -274,11 +304,40 @@ def main():
     if rc != 0:
         raise SystemExit(f"Contrastive DDP failed rc={rc}")
 
-    cl_runs = sorted((repo / "runs").glob("*_contrastive_ddp_pipe"),
+    cl_tag = "contrastive_prod_ddp_pipe" if args.prod_train_dirs else "contrastive_ddp_pipe"
+    cl_runs = sorted((repo / "runs").glob(f"*_{cl_tag}"),
                      key=lambda p: p.stat().st_mtime, reverse=True)
+    cl_run = None
     if cl_runs:
         cl_run = cl_runs[0]
         print(f"[stage2 result] {cl_run}")
+
+    grouping_run = None
+    if args.prod_pred_dirs:
+        if cl_run is None:
+            raise SystemExit("grouping requested but no contrastive run found")
+        print("\n" + "=" * 60)
+        print("STAGE 3 — Production Grouping")
+        print("=" * 60)
+        group_cmd = [
+            sys.executable, "-u", str(repo / "scripts" / "predict_grouping_prod.py"),
+            "--model", str(cl_run),
+            "--image-roots", args.prod_pred_dirs,
+            "--batch", str(grouping_batch),
+            "--workers", str(grouping_workers),
+            "--reps-per-cluster", str(grouping_reps),
+        ]
+        print(f"[prod pred dirs] {args.prod_pred_dirs}")
+        t0 = time.time()
+        rc = subprocess.run(group_cmd, env=env, cwd=str(repo)).returncode
+        print(f"[stage3 done] rc={rc}, elapsed={(time.time()-t0)/60:.1f} min")
+        if rc != 0:
+            raise SystemExit(f"Production grouping failed rc={rc}")
+        group_runs = sorted((repo / "result_grouping").glob("*_grouping"),
+                            key=lambda p: p.stat().st_mtime, reverse=True)
+        if group_runs:
+            grouping_run = group_runs[0]
+            print(f"[stage3 result] {grouping_run}")
 
     # ============ Pipeline summary ============
     summary = {
@@ -287,6 +346,10 @@ def main():
         "cnn_best": str(cnn_best),
         "contrastive_run": str(cl_run) if cl_runs else None,
         "contrastive_best": str(cl_run / "contrastive" / "best_model.pt") if cl_runs else None,
+        "production_mode": bool(args.prod_train_dirs),
+        "prod_train_dirs": args.prod_train_dirs,
+        "prod_pred_dirs": args.prod_pred_dirs,
+        "grouping_run": str(grouping_run) if grouping_run else None,
         "cnn_data_dir": CNN_DATA_DIR,
         "cl_train_dir": CL_TRAIN_DIR,
         "cl_eval_dir": CL_EVAL_DIR,
@@ -304,6 +367,8 @@ def main():
     print(f"  CNN best:         {cnn_best}")
     if cl_runs:
         print(f"  Contrastive best: {cl_run / 'contrastive' / 'best_model.pt'}")
+    if grouping_run:
+        print(f"  Grouping result:   {grouping_run}")
 
 
 if __name__ == "__main__":

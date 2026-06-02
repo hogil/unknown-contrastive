@@ -16,6 +16,10 @@ from __future__ import annotations
 # === CONFIG ===
 # ===================================================================
 DATA_DIR             = "E:/data/images/cnn_train"  # ★ 절대규: 모든 이미지 E:/data/images/
+SOURCE_ROOT          = "E:/data/images/unknown"    # split 전 원본 <class>/*.png
+CL_TRAIN_DIR         = "E:/data/images/contrastive_train"
+CL_EVAL_DIR          = "E:/data/images/contrastive_eval"
+AUTO_SPLIT           = True                         # DATA_DIR 없거나 비었으면 _split_data.py 자동 실행
 ACTIVE_CLASSES_YAML  = None
 EXCLUDE_CLASSES      = {"classification", "classification_chips", "Normal"}
 
@@ -54,6 +58,7 @@ import json
 import os
 import random
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -96,6 +101,7 @@ if os.environ.get("CNN_NUM_WORKERS_PER_GPU"):
 if os.environ.get("CNN_PREFETCH_FACTOR"):
     PREFETCH_FACTOR = int(os.environ["CNN_PREFETCH_FACTOR"])
 DATA_DIR = os.environ.get("CNN_DATA_DIR") or DATA_DIR
+SOURCE_ROOT = os.environ.get("CNN_SOURCE_ROOT") or SOURCE_ROOT
 
 
 def seed_all(s=42):
@@ -201,6 +207,70 @@ def resolve_num_workers(world_size: int) -> int:
     return min(MAX_AUTO_WORKERS_PER_GPU, auto)
 
 
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+
+
+def has_any_images(root: Path) -> bool:
+    return root.exists() and any(
+        p.is_file() and p.suffix.lower() in IMAGE_EXTS for p in root.rglob("*")
+    )
+
+
+def has_class_images(root: Path) -> bool:
+    if not root.exists():
+        return False
+    return any(p.is_dir() and has_any_images(p) for p in root.iterdir())
+
+
+def find_source_root(source_root: str | None) -> Path | None:
+    candidates = [source_root] if source_root else [
+        SOURCE_ROOT,
+        "data/images/unknown",
+        "data/unknown",
+    ]
+    for c in candidates:
+        if not c:
+            continue
+        p = resolve_path(c)
+        if has_class_images(p):
+            return p
+    return None
+
+
+def ensure_cnn_data_dir(source_root: str | None, clean_split: bool, no_auto_split: bool) -> None:
+    data_dir = resolve_path(DATA_DIR)
+    ready = has_class_images(data_dir)
+    if ready and not clean_split:
+        return
+    if no_auto_split or not AUTO_SPLIT:
+        return
+
+    src = find_source_root(source_root)
+    if src is None:
+        raise SystemExit(
+            f"DATA_DIR not ready: {data_dir}\n"
+            f"  split 전 원본도 못 찾음. 필요한 구조: data/images/unknown/<class>/*.png\n"
+            f"  후보: {resolve_path(SOURCE_ROOT)}, {Path.cwd() / 'data' / 'images' / 'unknown'}, {Path.cwd() / 'data' / 'unknown'}"
+        )
+    if src.resolve() == data_dir.resolve():
+        raise SystemExit(f"source-root 와 CNN data-dir 가 같음: {src}")
+
+    repo = Path(__file__).resolve().parent.parent
+    reason = "clean-split 요청" if clean_split else "CNN DATA_DIR 없음/비어있음"
+    print(f"[auto-split] {reason} → _split_data.py 실행 (source={src}, cnn={data_dir})", flush=True)
+    cmd = [
+        sys.executable, "-u", str(repo / "scripts" / "_split_data.py"),
+        "--source-root", str(src),
+        "--cnn-train-dir", DATA_DIR,
+        "--cl-train-dir", CL_TRAIN_DIR,
+        "--cl-eval-dir", CL_EVAL_DIR,
+        "--clean-output",
+    ]
+    rc = subprocess.run(cmd, cwd=str(repo)).returncode
+    if rc != 0:
+        raise SystemExit(f"_split_data.py 실패 rc={rc}")
+
+
 def loader_kwargs(num_workers: int, *, persistent: bool) -> dict:
     kw = {"num_workers": num_workers, "pin_memory": torch.cuda.is_available()}
     if num_workers > 0:
@@ -227,10 +297,11 @@ def shutdown_loader_workers(*loaders) -> None:
 
 def preflight_data_dir() -> None:
     data_dir = resolve_path(DATA_DIR)
-    if not data_dir.exists():
+    if not has_class_images(data_dir):
         raise SystemExit(
-            f"DATA_DIR not found: {data_dir}\n"
-            f"  --data-dir 로 CNN train 폴더를 지정하거나 scripts/_split_data.py 를 먼저 실행하세요."
+            f"DATA_DIR not ready: {data_dir}\n"
+            f"  CNN supervised 는 <class>/*.png 구조가 필요함.\n"
+            f"  분리 전 원본만 있으면 --source-root data/images/unknown 을 주거나 AUTO_SPLIT 을 켜세요."
         )
     class_dirs = [p for p in data_dir.iterdir() if p.is_dir() and p.name not in EXCLUDE_CLASSES]
     if not class_dirs:
@@ -556,6 +627,12 @@ if __name__ == "__main__":
     _ap = argparse.ArgumentParser()
     _ap.add_argument("--data-dir", type=str, default=None,
                      help="CNN ImageFolder train 폴더. 예: E:/data/images/cnn_train_260601_v2")
+    _ap.add_argument("--source-root", type=str, default=None,
+                     help="split 전 원본 폴더. 구조: <class>/*.png. 기본: data/images/unknown 자동 탐색")
+    _ap.add_argument("--clean-split", action="store_true",
+                     help="학습 전 _split_data.py --clean-output 실행")
+    _ap.add_argument("--no-auto-split", action="store_true",
+                     help="DATA_DIR 없거나 비어도 자동 split 안 함")
     _ap.add_argument("--batch", type=int, default=None, help="CNN_BATCH_PER_GPU override.")
     _ap.add_argument("--epochs", type=int, default=None, help="CNN_EPOCHS override.")
     _ap.add_argument("--workers", type=int, default=None, help="CNN_NUM_WORKERS_PER_GPU override.")
@@ -564,6 +641,9 @@ if __name__ == "__main__":
     if _a.data_dir:
         os.environ["CNN_DATA_DIR"] = _a.data_dir
         DATA_DIR = _a.data_dir
+    if _a.source_root:
+        os.environ["CNN_SOURCE_ROOT"] = _a.source_root
+        SOURCE_ROOT = _a.source_root
     if _a.batch is not None:
         os.environ["CNN_BATCH_PER_GPU"] = str(_a.batch)
         BATCH_PER_GPU = _a.batch
@@ -576,5 +656,6 @@ if __name__ == "__main__":
     if _a.prefetch is not None:
         os.environ["CNN_PREFETCH_FACTOR"] = str(_a.prefetch)
         PREFETCH_FACTOR = _a.prefetch
+    ensure_cnn_data_dir(_a.source_root, _a.clean_split, _a.no_auto_split)
     preflight_data_dir()
     launch_ddp(train_worker)
