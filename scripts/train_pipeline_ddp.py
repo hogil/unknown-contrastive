@@ -57,6 +57,10 @@ def parse_args():
                    help="CNN batch per GPU override.")
     p.add_argument("--cl-batch", type=int, default=None,
                    help="Contrastive batch per GPU override.")
+    p.add_argument("--cnn-run-dir", type=str, default=None,
+                   help="기존 CNN run 폴더. 지정 시 stage1 CNN 학습을 건너뛰고 cnn/best_model.pth 사용.")
+    p.add_argument("--backbone", type=str, default=None,
+                   help="기존 CNN best_model.pth 경로. 지정 시 stage1 CNN 학습을 건너뜀.")
     p.add_argument("--source-root", type=str, default=None,
                    help="split source (generate_data 출력 unknown/). split 폴더 없을 때 사용.")
     p.add_argument("--generate-workers", type=int, default=None,
@@ -297,28 +301,40 @@ def main():
         env["CL_BATCH_PER_GPU"] = str(CL_BATCH_PER_GPU)
 
     # ============ Stage 1: CNN DDP ============
-    print("\n" + "=" * 60)
-    print("STAGE 1 — CNN DDP")
-    print("=" * 60)
-    t0 = time.time()
-    rc = subprocess.run(
-        [sys.executable, "-u", str(repo / "scripts" / "train_cnn_ddp.py")],
-        env=env, cwd=str(repo),
-    ).returncode
-    print(f"[stage1 done] rc={rc}, elapsed={(time.time()-t0)/60:.1f} min")
-    if rc != 0:
-        raise SystemExit(f"CNN DDP failed rc={rc}")
+    if args.backbone or args.cnn_run_dir:
+        print("\n" + "=" * 60)
+        print("STAGE 1 — CNN DDP SKIPPED (existing CNN)")
+        print("=" * 60)
+        if args.backbone:
+            cnn_best = resolve_path(args.backbone)
+            cnn_run = cnn_best.parent.parent if cnn_best.name == "best_model.pth" else cnn_best.parent
+        else:
+            cnn_run = resolve_path(args.cnn_run_dir)
+            cnn_best = cnn_run / "cnn" / "best_model.pth"
+        print(f"[stage1 existing] cnn_run={cnn_run} best={cnn_best}")
+    else:
+        print("\n" + "=" * 60)
+        print("STAGE 1 — CNN DDP")
+        print("=" * 60)
+        t0 = time.time()
+        rc = subprocess.run(
+            [sys.executable, "-u", str(repo / "scripts" / "train_cnn_ddp.py")],
+            env=env, cwd=str(repo),
+        ).returncode
+        print(f"[stage1 done] rc={rc}, elapsed={(time.time()-t0)/60:.1f} min")
+        if rc != 0:
+            raise SystemExit(f"CNN DDP failed rc={rc}")
 
-    # latest CNN run dir from runs/
-    cnn_runs = sorted((repo / "runs").glob("*_cnn_ddp"),
-                      key=lambda p: p.stat().st_mtime, reverse=True)
-    if not cnn_runs:
-        raise SystemExit("no *_cnn_ddp run dir found after CNN stage")
-    cnn_run = cnn_runs[0]
-    cnn_best = cnn_run / "cnn" / "best_model.pth"
-    print(f"[stage1 result] {cnn_run}  best={cnn_best.exists()}")
+        # latest CNN run dir from runs/
+        cnn_runs = sorted((repo / "runs").glob("*_cnn_ddp"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
+        if not cnn_runs:
+            raise SystemExit("no *_cnn_ddp run dir found after CNN stage")
+        cnn_run = cnn_runs[0]
+        cnn_best = cnn_run / "cnn" / "best_model.pth"
+        print(f"[stage1 result] {cnn_run}  best={cnn_best.exists()}")
     if not cnn_best.exists():
-        raise SystemExit(f"no best_model.pth in {cnn_run}")
+        raise SystemExit(f"no best_model.pth: {cnn_best}")
 
     # ============ Stage 2: Contrastive DDP ============
     print("\n" + "=" * 60)
