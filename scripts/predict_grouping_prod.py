@@ -109,12 +109,21 @@ class FolderImageDataset(Dataset):
         p = self.paths[i]
         try:
             img = Image.open(p).convert("RGB")
+            if self.transform is not None:
+                img = self.transform(img)
         except Exception as e:
-            print(f"[CORRUPT-SKIP] {p}: {type(e).__name__}", flush=True)
-            img = Image.new("RGB", (IMG_SIZE, IMG_SIZE), color=(0, 0, 0))
-        if self.transform is not None:
-            img = self.transform(img)
-        return img, str(p)
+            return None, str(p), f"{type(e).__name__}: {e}"
+        return img, str(p), None
+
+
+def collate_skip_corrupt(batch):
+    good = [x for x in batch if x[0] is not None]
+    bad = [(path, err) for _img, path, err in batch if err is not None]
+    if not good:
+        return None, [], bad
+    imgs = torch.stack([x[0] for x in good], dim=0)
+    paths = [x[1] for x in good]
+    return imgs, paths, bad
 
 
 def build_eval_tf():
@@ -209,7 +218,7 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
         ld_kw["prefetch_factor"] = PREFETCH_FACTOR
     print(f"[loader] batch={BATCH} workers={NUM_WORKERS} "
           f"prefetch={PREFETCH_FACTOR if NUM_WORKERS > 0 else 'n/a'}", flush=True)
-    loader = DataLoader(ds, **ld_kw)
+    loader = DataLoader(ds, collate_fn=collate_skip_corrupt, **ld_kw)
 
     # embed
     all_z, all_path = [], []
@@ -219,22 +228,46 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
     print(f"[embed] start batch={BATCH} workers={NUM_WORKERS} batches={total_batches}", flush=True)
     pbar = make_pbar(total=len(ds), desc="embed", unit="img", dynamic_ncols=True,
                      mininterval=1.0)
+    corrupt = []
+    processed = 0
     with torch.no_grad():
-        for bi, (imgs, paths) in enumerate(loader, start=1):
+        for bi, (imgs, paths, bad) in enumerate(loader, start=1):
+            if bad:
+                corrupt.extend(bad)
+                for path, err in bad[:3]:
+                    print(f"[CORRUPT-SKIP] {path}: {err}", flush=True)
+                if len(bad) > 3:
+                    print(f"[CORRUPT-SKIP] batch {bi}: +{len(bad)-3} more", flush=True)
+            processed += len(paths) + len(bad)
+            if imgs is None:
+                if pbar is not None:
+                    pbar.update(len(bad))
+                    pbar.set_postfix(batch=f"{bi}/{total_batches}",
+                                     good=len(all_path), skip=len(corrupt))
+                continue
             imgs = imgs.to(device, non_blocking=True)
             z = model(imgs).cpu().numpy()
             all_z.append(z); all_path.extend(paths)
             if pbar is not None:
-                pbar.update(len(paths))
+                pbar.update(len(paths) + len(bad))
                 pbar.set_postfix(batch=f"{bi}/{total_batches}",
-                                 elapsed=f"{time.time()-t0:.0f}s")
+                                 good=len(all_path), skip=len(corrupt))
             elif bi == 1 or bi % PROGRESS_EVERY == 0 or bi == total_batches:
-                print(f"[embed] {len(all_path)}/{len(ds)} images "
-                      f"({bi}/{total_batches} batches, {time.time()-t0:.0f}s)", flush=True)
+                print(f"[embed] processed={processed}/{len(ds)} good={len(all_path)} "
+                      f"skip={len(corrupt)} ({bi}/{total_batches} batches, {time.time()-t0:.0f}s)",
+                      flush=True)
     if pbar is not None:
         pbar.close()
+    if not all_z:
+        output_subdir.mkdir(parents=True, exist_ok=True)
+        if corrupt:
+            (output_subdir / "corrupt_files.txt").write_text(
+                "\n".join(f"{p}\t{e}" for p, e in corrupt), encoding="utf-8")
+        print(f"[skip] no valid images after corrupt skip: {disp}", flush=True)
+        return None
     embeddings = np.concatenate(all_z, axis=0)
-    print(f"[embed] done {len(all_path)} images in {time.time()-t0:.0f}s", flush=True)
+    print(f"[embed] done good={len(all_path)} skipped_corrupt={len(corrupt)} "
+          f"total={len(ds)} in {time.time()-t0:.0f}s", flush=True)
 
     # cluster
     import hdbscan
@@ -281,6 +314,8 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
         "folder": disp,
         "product": product, "line": line, "date": date,
         "n_images": len(all_path),
+        "n_input_images": len(ds),
+        "n_corrupt_skipped": len(corrupt),
         "n_clusters": n_clusters,
         "n_noise": n_noise,
         "noise_pct": round(n_noise / len(pred) * 100, 2),
@@ -294,6 +329,10 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
     (output_subdir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     print("[save] summary.json done", flush=True)
+    if corrupt:
+        (output_subdir / "corrupt_files.txt").write_text(
+            "\n".join(f"{p}\t{e}" for p, e in corrupt), encoding="utf-8")
+        print(f"[save] corrupt_files.txt done ({len(corrupt)} skipped)", flush=True)
 
     # optional: copy images into group/<id>/ for review
     if COPY_PNG_TO_GROUPS:
