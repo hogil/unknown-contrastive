@@ -11,13 +11,13 @@ set -euo pipefail
 # ============================================================
 
 # CNN supervised source. 반드시 <class>/*.png 구조.
-SOURCE_ROOT="data/images/unknown"
+SOURCE_ROOT="${SOURCE_ROOT:-data/images/unknown}"
 
 # 현업 classless contrastive 학습 폴더. 콤마로 여러 개 가능.
-PROD_TRAIN_DIRS="data/images/prod_train"
+PROD_TRAIN_DIRS="${PROD_TRAIN_DIRS:-data/images/prod_train}"
 
 # grouping/pred 할 다른 현업 폴더. 콤마로 여러 개 가능.
-PROD_PRED_DIRS="data/images/prod_pred"
+PROD_PRED_DIRS="${PROD_PRED_DIRS:-data/images/prod_pred}"
 
 # Split/CNN/contrastive/grouping options.
 CLEAN_SPLIT=1
@@ -29,6 +29,18 @@ GROUPING_WORKERS=16
 GROUPING_REPS_PER_CLUSTER=5
 
 cd "$(dirname "$0")/.."
+
+if [[ "$PROD_TRAIN_DIRS" == "data/images/prod_train" || "$PROD_PRED_DIRS" == "data/images/prod_pred" ]]; then
+  cat >&2 <<'EOF'
+[ERR] scripts/run_prod_pipeline.sh 상단 CONFIG 를 실제 현업 폴더로 수정하세요.
+  PROD_TRAIN_DIRS="data/images/<현업_contrastive_train_폴더>"
+  PROD_PRED_DIRS="data/images/<현업_grouping_대상_폴더>"
+
+또는 환경변수로 한 번만 지정:
+  PROD_TRAIN_DIRS=data/images/A PROD_PRED_DIRS=data/images/B bash scripts/run_prod_pipeline.sh
+EOF
+  exit 1
+fi
 
 cmd=(
   python -u scripts/train_pipeline_ddp.py
