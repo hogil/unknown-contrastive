@@ -43,7 +43,7 @@ MODEL_PATH          = "runs/<TS>_pipeline/contrastive/best_model.pt"
 OUTPUT_DIR          = "result_grouping"
 COPY_PNG_TO_GROUPS  = False        # True 면 group 폴더에 PNG 복사 (디스크 증가)
 SAVE_REPRESENTATIVES = True        # cluster별 중심에 가까운 대표 이미지만 저장
-REPS_PER_CLUSTER    = 5
+REPS_PER_CLUSTER    = 30
 REPRESENTATIVES_ONLY = None        # 기존 grouping 결과 폴더에 representatives 만 후처리
 
 # Inference

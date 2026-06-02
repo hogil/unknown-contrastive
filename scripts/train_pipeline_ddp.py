@@ -25,7 +25,7 @@ CNN_BATCH_PER_GPU     = 32             # convnextv2_base 384 full-ft + AMP → H
 CL_BATCH_PER_GPU      = 64             # frozen backbone → 가벼움, contrastive 는 batch 클수록 negative↑ 유리
 GROUPING_BATCH        = 128
 GROUPING_WORKERS      = 16
-GROUPING_REPS_PER_CLUSTER = 5
+GROUPING_REPS_PER_CLUSTER = 30
 
 # 두 stage 의 hyperparam 은 각 _ddp.py 의 CONFIG block 을 직접 수정
 #   scripts/train_cnn_ddp.py        ← CNN
