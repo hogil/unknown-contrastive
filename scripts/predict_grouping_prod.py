@@ -167,11 +167,13 @@ def _reference_palette(source_palette: list[int] | None) -> list[int]:
     if len(palette) < 768:
         palette.extend([0] * (768 - len(palette)))
 
-    # mapviewer default composite gradient: quantile0 white -> quantile100 red.
+    # mapviewer style composite gradient, slightly darker than pure white->red
+    # so low/mid weighted-square signals remain visible in reference maps.
     start, end, count = 24, 255, 255 - 24 + 1
     for i in range(count):
         ratio = i / max(count - 1, 1)
-        gb = int(round(255 * (1.0 - ratio)))
+        ratio = ratio ** 0.72
+        gb = int(round(238 * (1.0 - ratio)))
         idx = (start + i) * 3
         palette[idx:idx + 3] = [255, gb, gb]
     return palette[:768]
