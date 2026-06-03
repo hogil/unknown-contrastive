@@ -44,7 +44,7 @@ OUTPUT_DIR          = "result_grouping"
 COPY_PNG_TO_GROUPS  = False        # True 면 group 폴더에 PNG 복사 (디스크 증가)
 SAVE_REPRESENTATIVES = True        # cluster별 중심에 가까운 대표 이미지만 저장
 REPS_PER_CLUSTER    = 30
-SAVE_REFERENCE_COMPOSITES = True   # representatives/reference/ 에 cluster별 composite map 저장
+SAVE_REFERENCE_COMPOSITES = True   # representatives/reference/ 에 cluster별 square_weighted_average 저장
 REFERENCE_COMPOSITE_MAX_PX = 1536  # reference 용 최대 한 변 크기. 0 이면 원본 크기 유지
 REPRESENTATIVES_ONLY = None        # 기존 grouping 결과 폴더에 representatives 만 후처리
 
@@ -162,58 +162,121 @@ def _reference_target_size(size: tuple[int, int]) -> tuple[int, int]:
     return max(1, int(round(w * scale))), max(1, int(round(h * scale)))
 
 
-def save_reference_composite(reference_dir: Path, label: str, cluster_size: int,
-                             image_paths: list[Path]) -> dict | None:
-    """대표 이미지들을 RGB 평균으로 합쳐 cluster reference composite map 저장."""
+def _load_palette_index_array(src: Path, target_size: tuple[int, int]) -> np.ndarray | None:
+    """palette wafer PNG를 grade index array로 로드. RGB fallback은 0~7 grayscale quantize."""
+    try:
+        with Image.open(src) as img:
+            if img.size != target_size:
+                img = img.resize(target_size, Image.NEAREST)
+            if img.mode == "P":
+                return np.asarray(img, dtype=np.uint8)
+            gray = np.asarray(img.convert("L"), dtype=np.float32)
+            return np.clip(np.rint(gray / 255.0 * 7.0), 0, 7).astype(np.uint8)
+    except Exception:
+        return None
+
+
+def _render_reference_heatmap(value_map: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """mapviewer composite처럼 값 맵을 heat RGB로 렌더링."""
+    out = np.zeros((*value_map.shape, 3), dtype=np.uint8)
+    if value_map.size == 0 or not np.any(mask):
+        return out
+
+    vals = value_map[mask]
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return out
+
+    v_min = 0.0
+    v_max = float(vals.max())
+    if v_max <= v_min:
+        scaled = np.zeros_like(value_map, dtype=np.float32)
+    else:
+        scaled = np.clip((value_map.astype(np.float32) - v_min) / (v_max - v_min), 0.0, 1.0)
+
+    # compact default gradient: dark -> blue -> cyan -> yellow -> red
+    stops = np.asarray([
+        [8, 12, 24],
+        [31, 91, 181],
+        [35, 166, 154],
+        [246, 211, 64],
+        [211, 47, 47],
+    ], dtype=np.float32)
+    x = scaled * (len(stops) - 1)
+    lo = np.floor(x).astype(np.int32)
+    hi = np.clip(lo + 1, 0, len(stops) - 1)
+    t = (x - lo)[..., None]
+    rgb = stops[lo] * (1.0 - t) + stops[hi] * t
+    out[mask] = np.clip(rgb[mask], 0, 255).astype(np.uint8)
+    return out
+
+
+def save_reference_composites(reference_dir: Path, label: str, cluster_size: int,
+                              image_paths: list[Path]) -> list[dict]:
+    """대표 이미지들로 mapviewer식 square_weighted_average 저장."""
     valid = [Path(p) for p in image_paths if Path(p).exists()]
     if not valid:
-        return None
+        return []
     reference_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         with Image.open(valid[0]) as first:
             target_size = _reference_target_size(first.size)
     except Exception:
-        return None
+        return []
 
-    acc = None
+    grade_counts = None
     used = 0
     for src in valid:
-        try:
-            with Image.open(src) as img:
-                if img.size != target_size:
-                    img = img.resize(target_size, Image.NEAREST)
-                arr = np.asarray(img.convert("RGB"), dtype=np.float32)
-            if acc is None:
-                acc = np.zeros_like(arr, dtype=np.float32)
-            if arr.shape != acc.shape:
-                continue
-            acc += arr
-            used += 1
-        except Exception:
+        arr = _load_palette_index_array(src, target_size)
+        if arr is None:
             continue
-    if acc is None or used == 0:
-        return None
+        if grade_counts is None:
+            h, w = arr.shape
+            grade_counts = np.zeros((8, h, w), dtype=np.float32)
+        if arr.shape != grade_counts.shape[1:]:
+            continue
+        for grade in range(8):
+            grade_counts[grade] += (arr == grade)
+        used += 1
+    if grade_counts is None or used == 0:
+        return []
 
-    out = reference_dir / (
-        f"{_safe_name(label)}_n-{cluster_size}_reps-{used}_composite.png"
-    )
-    avg = np.clip(acc / used, 0, 255).astype(np.uint8)
-    Image.fromarray(avg, mode="RGB").save(out)
-    return {
-        "label": label,
-        "cluster_size": cluster_size,
-        "representatives_used": used,
-        "path": str(out),
-        "width": target_size[0],
-        "height": target_size[1],
-    }
+    square_weights = (np.arange(8, dtype=np.float32) ** 2).reshape(8, 1, 1)
+    square_sums = np.sum(grade_counts * square_weights, axis=0, dtype=np.float32)
+    presence = grade_counts.sum(axis=0) > 0
+
+    weight_factors = np.asarray([1, 1, 2, 3, 4, 5, 6, 7], dtype=np.float32).reshape(8, 1, 1)
+    weight_sum = np.sum(grade_counts * weight_factors, axis=0, dtype=np.float32)
+    weighted_mask = presence & (weight_sum > 0)
+    square_weighted_average = np.zeros_like(square_sums, dtype=np.float32)
+    square_weighted_average[weighted_mask] = square_sums[weighted_mask] / weight_sum[weighted_mask]
+
+    rows = []
+    safe = _safe_name(label)
+    variants = [
+        ("square_weighted_average", "weighted_square_mean", square_weighted_average, weighted_mask),
+    ]
+    for suffix, variant_type, value_map, mask in variants:
+        out = reference_dir / f"{safe}_n-{cluster_size}_reps-{used}_{suffix}.png"
+        Image.fromarray(_render_reference_heatmap(value_map, mask), mode="RGB").save(out)
+        rows.append({
+            "label": label,
+            "type": variant_type,
+            "filename": out.name,
+            "cluster_size": cluster_size,
+            "representatives_used": used,
+            "path": str(out),
+            "width": target_size[0],
+            "height": target_size[1],
+        })
+    return rows
 
 
 def save_grouping_representatives(output_subdir: Path, embeddings: np.ndarray,
                                   pred: np.ndarray, paths: list[str],
                                   per_cluster: int) -> int:
-    """cluster별 centroid에 가까운 이미지 몇 장만 복사. -1은 HDBSCAN noise."""
+    """cluster별 centroid에 가까운 이미지 몇 장만 복사. -1(HDBSCAN noise)은 제외."""
     rep_dir = output_subdir / "representatives"
     if rep_dir.exists():
         shutil.rmtree(rep_dir)
@@ -257,41 +320,10 @@ def save_grouping_representatives(output_subdir: Path, embeddings: np.ndarray,
             except Exception:
                 pass
         if SAVE_REFERENCE_COMPOSITES:
-            ref = save_reference_composite(
+            refs = save_reference_composites(
                 reference_dir, f"cluster_{cl_id:03d}", len(idx), selected_srcs)
-            if ref is not None:
+            for ref in refs:
                 ref["cluster_id"] = cl_id
-                reference_rows.append(ref)
-
-    noise_idx = np.where(pred == -1)[0][:per_cluster]
-    if len(noise_idx):
-        sub = rep_dir / f"_noise_n-{int((pred == -1).sum())}"
-        sub.mkdir(parents=True, exist_ok=True)
-        selected_srcs = []
-        for rank_i, i in enumerate(noise_idx, 1):
-            src = Path(paths[i])
-            if not src.exists():
-                continue
-            selected_srcs.append(src)
-            dst = sub / f"noise-{rank_i:02d}_{src.name}"
-            try:
-                shutil.copy2(src, dst)
-                saved += 1
-                rows.append({
-                    "cluster_id": -1,
-                    "rank": rank_i,
-                    "cluster_size": int((pred == -1).sum()),
-                    "distance_to_centroid": "",
-                    "src": str(src),
-                    "dst": str(dst),
-                })
-            except Exception:
-                pass
-        if SAVE_REFERENCE_COMPOSITES:
-            ref = save_reference_composite(
-                reference_dir, "noise", int((pred == -1).sum()), selected_srcs)
-            if ref is not None:
-                ref["cluster_id"] = -1
                 reference_rows.append(ref)
 
     import csv
@@ -305,8 +337,8 @@ def save_grouping_representatives(output_subdir: Path, embeddings: np.ndarray,
     if SAVE_REFERENCE_COMPOSITES:
         with (reference_dir / "reference_composites.csv").open("w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=[
-                "cluster_id", "label", "cluster_size", "representatives_used",
-                "width", "height", "path",
+                "cluster_id", "label", "type", "filename", "cluster_size",
+                "representatives_used", "width", "height", "path",
             ])
             w.writeheader()
             w.writerows(reference_rows)
@@ -539,7 +571,7 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
             output_subdir, embeddings, pred, all_path, REPS_PER_CLUSTER)
         ref_dir = output_subdir / "representatives" / "reference"
         if ref_dir.exists():
-            n_reference_composites = len(list(ref_dir.glob("*_composite.png")))
+            n_reference_composites = len(list(ref_dir.glob("*.png")))
         print(f"[representatives] saved={n_representatives} → "
               f"{output_subdir / 'representatives'}", flush=True)
         if SAVE_REFERENCE_COMPOSITES:
