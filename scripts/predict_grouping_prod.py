@@ -162,8 +162,89 @@ def _reference_target_size(size: tuple[int, int]) -> tuple[int, int]:
     return max(1, int(round(w * scale))), max(1, int(round(h * scale)))
 
 
+def _reference_palette(source_palette: list[int] | None) -> list[int]:
+    palette = list(source_palette or [])
+    if len(palette) < 768:
+        palette.extend([0] * (768 - len(palette)))
+
+    # mapviewer default composite gradient: quantile0 white -> quantile100 red.
+    start, end, count = 24, 255, 255 - 24 + 1
+    for i in range(count):
+        ratio = i / max(count - 1, 1)
+        gb = int(round(255 * (1.0 - ratio)))
+        idx = (start + i) * 3
+        palette[idx:idx + 3] = [255, gb, gb]
+    return palette[:768]
+
+
+def _reference_positions_path(src: Path) -> Path | None:
+    stem = src.stem + ".json"
+    candidates = [src.with_suffix(".json")]
+    parts = list(src.parts)
+    lowered = [p.lower() for p in parts]
+    if "images" in lowered:
+        i = lowered.index("images")
+        candidates.append(Path(*parts[:i]) / "positions" / Path(*parts[i + 1:]).with_suffix(".json"))
+    candidates.append(Path("data") / "positions" / stem)
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
+def _build_reference_base_indices(src: Path, target_size: tuple[int, int],
+                                  chip_area: np.ndarray) -> np.ndarray:
+    width, height = target_size
+    base = np.full((height, width), 8, dtype=np.uint8)
+    pos_path = _reference_positions_path(src)
+    if pos_path is None:
+        base[chip_area] = 0
+        return base
+    try:
+        data = json.loads(pos_path.read_text(encoding="utf-8"))
+    except Exception:
+        base[chip_area] = 0
+        return base
+
+    chips = data.get("chips")
+    if not isinstance(chips, list) or not chips:
+        base[chip_area] = 0
+        return base
+
+    coord = data.get("coord", {})
+    canvas = coord.get("canvas", {}) if isinstance(coord, dict) else {}
+    canvas_w = int(canvas.get("width", width)) if isinstance(canvas, dict) else width
+    canvas_h = int(canvas.get("height", height)) if isinstance(canvas, dict) else height
+    scale_x = width / float(canvas_w or width)
+    scale_y = height / float(canvas_h or height)
+
+    for chip in chips:
+        if not isinstance(chip, dict):
+            continue
+        rect = chip.get("rect", {})
+        if not isinstance(rect, dict):
+            continue
+        try:
+            x0 = float(rect["x0"]); y0 = float(rect["y0"])
+            x1 = float(rect["x1"]); y1 = float(rect["y1"])
+        except Exception:
+            continue
+        sx0 = max(0, min(width, int(x0 * scale_x)))
+        sy0 = max(0, min(height, int(y0 * scale_y)))
+        sx1 = max(0, min(width, int(x1 * scale_x + 0.9999)))
+        sy1 = max(0, min(height, int(y1 * scale_y + 0.9999)))
+        if sx1 <= sx0 or sy1 <= sy0:
+            continue
+        base[sy0:sy1, sx0:sx1] = 0
+        base[sy0, sx0:sx1] = 10
+        base[sy1 - 1, sx0:sx1] = 10
+        base[sy0:sy1, sx0] = 10
+        base[sy0:sy1, sx1 - 1] = 10
+    return base
+
+
 def _load_palette_index_array(src: Path, target_size: tuple[int, int]) -> np.ndarray | None:
-    """palette wafer PNG를 grade index array로 로드. RGB fallback은 0~7 grayscale quantize."""
+    """palette wafer PNG를 index array로 로드."""
     try:
         with Image.open(src) as img:
             if img.size != target_size:
@@ -176,39 +257,24 @@ def _load_palette_index_array(src: Path, target_size: tuple[int, int]) -> np.nda
         return None
 
 
-def _render_reference_heatmap(value_map: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    """mapviewer composite처럼 값 맵을 heat RGB로 렌더링."""
-    out = np.zeros((*value_map.shape, 3), dtype=np.uint8)
-    if value_map.size == 0 or not np.any(mask):
-        return out
-
+def _render_reference_sum_map(base_indices: np.ndarray, value_map: np.ndarray,
+                              mask: np.ndarray) -> np.ndarray:
+    """mapviewer _render_sum_map_palette와 같은 palette-index 렌더."""
+    result = base_indices.copy()
+    if not np.any(mask):
+        return result
     vals = value_map[mask]
     vals = vals[np.isfinite(vals)]
     if vals.size == 0:
-        return out
-
-    v_min = 0.0
-    v_max = float(vals.max())
+        return result
+    v_min, v_max = 0.0, float(vals.max())
     if v_max <= v_min:
-        scaled = np.zeros_like(value_map, dtype=np.float32)
+        grad_idx = np.full(value_map[mask].shape, 255 if v_max > 0 else 24, dtype=np.uint8)
     else:
-        scaled = np.clip((value_map.astype(np.float32) - v_min) / (v_max - v_min), 0.0, 1.0)
-
-    # compact default gradient: dark -> blue -> cyan -> yellow -> red
-    stops = np.asarray([
-        [8, 12, 24],
-        [31, 91, 181],
-        [35, 166, 154],
-        [246, 211, 64],
-        [211, 47, 47],
-    ], dtype=np.float32)
-    x = scaled * (len(stops) - 1)
-    lo = np.floor(x).astype(np.int32)
-    hi = np.clip(lo + 1, 0, len(stops) - 1)
-    t = (x - lo)[..., None]
-    rgb = stops[lo] * (1.0 - t) + stops[hi] * t
-    out[mask] = np.clip(rgb[mask], 0, 255).astype(np.uint8)
-    return out
+        scaled = (value_map[mask].astype(np.float32) - v_min) / (v_max - v_min)
+        grad_idx = np.clip(np.rint(scaled * (255 - 24) + 24), 24, 255).astype(np.uint8)
+    result[mask] = grad_idx
+    return result
 
 
 def save_reference_composites(reference_dir: Path, label: str, cluster_size: int,
@@ -219,36 +285,51 @@ def save_reference_composites(reference_dir: Path, label: str, cluster_size: int
         return []
     reference_dir.mkdir(parents=True, exist_ok=True)
 
+    first_src = valid[0]
     try:
-        with Image.open(valid[0]) as first:
+        with Image.open(first_src) as first:
             target_size = _reference_target_size(first.size)
+            palette = _reference_palette(first.getpalette())
     except Exception:
         return []
 
-    grade_counts = None
+    width, height = target_size
+    grade_counts = np.zeros((8, height, width), dtype=np.uint16)
+    has_0_7 = np.zeros((height, width), dtype=bool)
+    has_8_13 = np.zeros((height, width), dtype=bool)
+    all_invalid = np.ones((height, width), dtype=bool)
     used = 0
     for src in valid:
         arr = _load_palette_index_array(src, target_size)
         if arr is None:
             continue
-        if grade_counts is None:
-            h, w = arr.shape
-            grade_counts = np.zeros((8, h, w), dtype=np.float32)
-        if arr.shape != grade_counts.shape[1:]:
+        if arr.shape != (height, width):
             continue
+        ge14 = arr >= 14
+        ge8 = arr >= 8
+        mid = ge8 & ~ge14
+        has_0_7 |= (~ge8) | ge14
+        has_8_13 |= mid
+        all_invalid &= ge14
+        grade_counts[0] += ge14
         for grade in range(8):
             grade_counts[grade] += (arr == grade)
         used += 1
-    if grade_counts is None or used == 0:
+    if used == 0:
         return []
 
-    square_weights = (np.arange(8, dtype=np.float32) ** 2).reshape(8, 1, 1)
-    square_sums = np.sum(grade_counts * square_weights, axis=0, dtype=np.float32)
-    presence = grade_counts.sum(axis=0) > 0
+    idx_8_13_only = has_8_13 & ~has_0_7
+    invalid_mask = all_invalid
+    chip_area = (has_0_7 | idx_8_13_only) & ~invalid_mask
+    base_indices = _build_reference_base_indices(first_src, target_size, chip_area)
+    chip_inner_mask = base_indices == 0
 
+    grade_counts_float = grade_counts.astype(np.float32, copy=False)
+    square_weights = (np.arange(8, dtype=np.float32) ** 2).reshape(8, 1, 1)
+    square_sums = np.sum(grade_counts_float * square_weights, axis=0, dtype=np.float32)
     weight_factors = np.asarray([1, 1, 2, 3, 4, 5, 6, 7], dtype=np.float32).reshape(8, 1, 1)
-    weight_sum = np.sum(grade_counts * weight_factors, axis=0, dtype=np.float32)
-    weighted_mask = presence & (weight_sum > 0)
+    weight_sum = np.sum(grade_counts_float * weight_factors, axis=0, dtype=np.float32)
+    weighted_mask = chip_inner_mask & ~idx_8_13_only & ~invalid_mask & (weight_sum > 0)
     square_weighted_average = np.zeros_like(square_sums, dtype=np.float32)
     square_weighted_average[weighted_mask] = square_sums[weighted_mask] / weight_sum[weighted_mask]
 
@@ -259,7 +340,11 @@ def save_reference_composites(reference_dir: Path, label: str, cluster_size: int
     ]
     for suffix, variant_type, value_map, mask in variants:
         out = reference_dir / f"{safe}_n-{cluster_size}_reps-{used}_{suffix}.png"
-        Image.fromarray(_render_reference_heatmap(value_map, mask), mode="RGB").save(out)
+        idx_arr = _render_reference_sum_map(base_indices, value_map, mask)
+        idx_arr = idx_arr.astype(np.uint8, copy=False)
+        img = Image.frombytes("P", (idx_arr.shape[1], idx_arr.shape[0]), idx_arr.tobytes())
+        img.putpalette(palette)
+        img.save(out)
         rows.append({
             "label": label,
             "type": variant_type,
