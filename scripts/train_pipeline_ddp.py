@@ -364,8 +364,11 @@ def main():
         raise SystemExit(f"Contrastive DDP failed rc={rc}")
 
     cl_tag = "contrastive_prod_ddp_pipe" if args.prod_train_dirs else "contrastive_ddp_pipe"
-    cl_runs = sorted((repo / "runs").glob(f"*_{cl_tag}"),
-                     key=lambda p: p.stat().st_mtime, reverse=True)
+    cl_runs = [
+        p for p in sorted((repo / "runs").glob(f"*_{cl_tag}"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)
+        if (p / "contrastive" / "best_model.pt").exists()
+    ]
     cl_run = None
     if cl_runs:
         cl_run = cl_runs[0]
@@ -380,7 +383,7 @@ def main():
         print("=" * 60)
         group_cmd = [
             sys.executable, "-u", str(repo / "scripts" / "predict_grouping_prod.py"),
-            "--model", str(cl_run),
+            "--model", str(cl_run / "contrastive" / "best_model.pt"),
             "--image-roots", args.prod_pred_dirs,
             "--batch", str(grouping_batch),
             "--workers", str(grouping_workers),

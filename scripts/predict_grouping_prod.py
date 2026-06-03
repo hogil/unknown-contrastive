@@ -558,6 +558,9 @@ def _resolve_model_path(model_arg: str) -> Path:
         return p
 
     if p.is_dir():
+        direct_self = p / "best_model.pt"
+        if direct_self.exists():
+            return direct_self
         direct = p / "contrastive" / "best_model.pt"
         if direct.exists():
             return direct
@@ -615,6 +618,11 @@ def main():
     model_path = _resolve_model_path(MODEL_PATH)
     if not model_path.exists():
         raise SystemExit(_model_not_found_message(MODEL_PATH, model_path))
+    if model_path.is_dir():
+        raise SystemExit(
+            f"MODEL_PATH resolved to a directory, not a .pt file: {model_path}\n"
+            f"  use --model {model_path / 'best_model.pt'} "
+            f"or --model {model_path / 'contrastive' / 'best_model.pt'}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[model] loading {model_path} on {device}", flush=True)
