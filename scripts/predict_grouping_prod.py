@@ -44,6 +44,8 @@ OUTPUT_DIR          = "result_grouping"
 COPY_PNG_TO_GROUPS  = False        # True 면 group 폴더에 PNG 복사 (디스크 증가)
 SAVE_REPRESENTATIVES = True        # cluster별 중심에 가까운 대표 이미지만 저장
 REPS_PER_CLUSTER    = 30
+SAVE_REFERENCE_COMPOSITES = True   # representatives/reference/ 에 cluster별 composite map 저장
+REFERENCE_COMPOSITE_MAX_PX = 1536  # reference 용 최대 한 변 크기. 0 이면 원본 크기 유지
 REPRESENTATIVES_ONLY = None        # 기존 grouping 결과 폴더에 representatives 만 후처리
 
 # Inference
@@ -147,6 +149,67 @@ def make_pbar(*args, **kwargs):
     return tqdm(*args, **kwargs)
 
 
+def _safe_name(s: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "._-+" else "_" for ch in str(s))
+
+
+def _reference_target_size(size: tuple[int, int]) -> tuple[int, int]:
+    max_px = int(REFERENCE_COMPOSITE_MAX_PX or 0)
+    if max_px <= 0:
+        return size
+    w, h = size
+    scale = min(1.0, max_px / max(1, max(w, h)))
+    return max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+
+
+def save_reference_composite(reference_dir: Path, label: str, cluster_size: int,
+                             image_paths: list[Path]) -> dict | None:
+    """대표 이미지들을 RGB 평균으로 합쳐 cluster reference composite map 저장."""
+    valid = [Path(p) for p in image_paths if Path(p).exists()]
+    if not valid:
+        return None
+    reference_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with Image.open(valid[0]) as first:
+            target_size = _reference_target_size(first.size)
+    except Exception:
+        return None
+
+    acc = None
+    used = 0
+    for src in valid:
+        try:
+            with Image.open(src) as img:
+                if img.size != target_size:
+                    img = img.resize(target_size, Image.NEAREST)
+                arr = np.asarray(img.convert("RGB"), dtype=np.float32)
+            if acc is None:
+                acc = np.zeros_like(arr, dtype=np.float32)
+            if arr.shape != acc.shape:
+                continue
+            acc += arr
+            used += 1
+        except Exception:
+            continue
+    if acc is None or used == 0:
+        return None
+
+    out = reference_dir / (
+        f"{_safe_name(label)}_n-{cluster_size}_reps-{used}_composite.png"
+    )
+    avg = np.clip(acc / used, 0, 255).astype(np.uint8)
+    Image.fromarray(avg, mode="RGB").save(out)
+    return {
+        "label": label,
+        "cluster_size": cluster_size,
+        "representatives_used": used,
+        "path": str(out),
+        "width": target_size[0],
+        "height": target_size[1],
+    }
+
+
 def save_grouping_representatives(output_subdir: Path, embeddings: np.ndarray,
                                   pred: np.ndarray, paths: list[str],
                                   per_cluster: int) -> int:
@@ -155,6 +218,10 @@ def save_grouping_representatives(output_subdir: Path, embeddings: np.ndarray,
     if rep_dir.exists():
         shutil.rmtree(rep_dir)
     rep_dir.mkdir(parents=True, exist_ok=True)
+    reference_dir = rep_dir / "reference"
+    reference_rows = []
+    if SAVE_REFERENCE_COMPOSITES:
+        reference_dir.mkdir(parents=True, exist_ok=True)
 
     rows = []
     saved = 0
@@ -169,10 +236,12 @@ def save_grouping_representatives(output_subdir: Path, embeddings: np.ndarray,
         order = idx[np.argsort(dist)[:per_cluster]]
         sub = rep_dir / f"cluster_{cl_id:03d}_n-{len(idx)}"
         sub.mkdir(parents=True, exist_ok=True)
+        selected_srcs = []
         for rank_i, i in enumerate(order, 1):
             src = Path(paths[i])
             if not src.exists():
                 continue
+            selected_srcs.append(src)
             dst = sub / f"rep-{rank_i:02d}_{src.name}"
             try:
                 shutil.copy2(src, dst)
@@ -187,15 +256,23 @@ def save_grouping_representatives(output_subdir: Path, embeddings: np.ndarray,
                 })
             except Exception:
                 pass
+        if SAVE_REFERENCE_COMPOSITES:
+            ref = save_reference_composite(
+                reference_dir, f"cluster_{cl_id:03d}", len(idx), selected_srcs)
+            if ref is not None:
+                ref["cluster_id"] = cl_id
+                reference_rows.append(ref)
 
     noise_idx = np.where(pred == -1)[0][:per_cluster]
     if len(noise_idx):
         sub = rep_dir / f"_noise_n-{int((pred == -1).sum())}"
         sub.mkdir(parents=True, exist_ok=True)
+        selected_srcs = []
         for rank_i, i in enumerate(noise_idx, 1):
             src = Path(paths[i])
             if not src.exists():
                 continue
+            selected_srcs.append(src)
             dst = sub / f"noise-{rank_i:02d}_{src.name}"
             try:
                 shutil.copy2(src, dst)
@@ -210,6 +287,12 @@ def save_grouping_representatives(output_subdir: Path, embeddings: np.ndarray,
                 })
             except Exception:
                 pass
+        if SAVE_REFERENCE_COMPOSITES:
+            ref = save_reference_composite(
+                reference_dir, "noise", int((pred == -1).sum()), selected_srcs)
+            if ref is not None:
+                ref["cluster_id"] = -1
+                reference_rows.append(ref)
 
     import csv
     with (rep_dir / "representatives.csv").open("w", newline="", encoding="utf-8") as f:
@@ -219,6 +302,14 @@ def save_grouping_representatives(output_subdir: Path, embeddings: np.ndarray,
         ])
         w.writeheader()
         w.writerows(rows)
+    if SAVE_REFERENCE_COMPOSITES:
+        with (reference_dir / "reference_composites.csv").open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=[
+                "cluster_id", "label", "cluster_size", "representatives_used",
+                "width", "height", "path",
+            ])
+            w.writeheader()
+            w.writerows(reference_rows)
     return saved
 
 
@@ -441,13 +532,21 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
         summary["groups"][str(int(g))] = c
 
     n_representatives = 0
+    n_reference_composites = 0
     if SAVE_REPRESENTATIVES:
         print(f"[representatives] saving {REPS_PER_CLUSTER}/cluster", flush=True)
         n_representatives = save_grouping_representatives(
             output_subdir, embeddings, pred, all_path, REPS_PER_CLUSTER)
+        ref_dir = output_subdir / "representatives" / "reference"
+        if ref_dir.exists():
+            n_reference_composites = len(list(ref_dir.glob("*_composite.png")))
         print(f"[representatives] saved={n_representatives} → "
               f"{output_subdir / 'representatives'}", flush=True)
+        if SAVE_REFERENCE_COMPOSITES:
+            print(f"[reference composites] saved={n_reference_composites} → {ref_dir}",
+                  flush=True)
     summary["n_representatives_saved"] = n_representatives
+    summary["n_reference_composites_saved"] = n_reference_composites
     (output_subdir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     print("[save] summary.json done", flush=True)
@@ -487,6 +586,7 @@ def _apply_args():
     import argparse
     global MODEL_PATH, IMAGE_ROOT, IMAGE_BASE, IMAGE_ROOTS, POOL, POOL_NAME
     global OUTPUT_DIR, COPY_PNG_TO_GROUPS, SAVE_REPRESENTATIVES, REPS_PER_CLUSTER
+    global SAVE_REFERENCE_COMPOSITES, REFERENCE_COMPOSITE_MAX_PX
     global REPRESENTATIVES_ONLY, MIN_CLUSTER_SIZE, MIN_SAMPLES
     global BATCH, NUM_WORKERS, PREFETCH_FACTOR, PROGRESS_EVERY
     global PRODUCT_FILTER, LINE_FILTER, DATE_FILTER
@@ -504,6 +604,10 @@ def _apply_args():
                     help="cluster 대표 이미지 저장 끄기")
     ap.add_argument("--reps-per-cluster", type=int, default=None,
                     help="cluster별 대표 이미지 저장 개수")
+    ap.add_argument("--no-reference-composites", action="store_true",
+                    help="representatives/reference cluster composite map 저장 끄기")
+    ap.add_argument("--reference-composite-size", type=int, default=None,
+                    help="reference composite 최대 한 변 크기. 0이면 원본 크기")
     ap.add_argument("--representatives-only", type=str, default=None,
                     help="기존 result_grouping run 폴더에 representatives/ 만 후처리 생성")
     ap.add_argument("--batch", type=int, default=None, help="inference batch size")
@@ -523,6 +627,9 @@ def _apply_args():
     if a.copy_png:         COPY_PNG_TO_GROUPS = True
     if a.no_representatives: SAVE_REPRESENTATIVES = False
     if a.reps_per_cluster is not None: REPS_PER_CLUSTER = max(1, a.reps_per_cluster)
+    if a.no_reference_composites: SAVE_REFERENCE_COMPOSITES = False
+    if a.reference_composite_size is not None:
+        REFERENCE_COMPOSITE_MAX_PX = max(0, a.reference_composite_size)
     if a.representatives_only: REPRESENTATIVES_ONLY = a.representatives_only
     if a.batch is not None: BATCH = a.batch
     if a.workers is not None: NUM_WORKERS = a.workers
