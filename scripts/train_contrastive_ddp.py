@@ -218,14 +218,14 @@ class MultiRootImageFolder(Dataset):
 
 class FlatPairDataset(Dataset):
     """flat folder(s) recursive glob → two views (no class label). roots = str 또는 list."""
-    EXTS = (".png", ".jpg", ".jpeg", ".bmp")
+    EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
     def __init__(self, roots, tfm):
         if isinstance(roots, (str, Path)):
             roots = [roots]
         paths = []
         for r in roots:
-            for ext in self.EXTS:
-                paths.extend(Path(r).rglob(f"*{ext}"))
+            paths.extend(p for p in Path(r).rglob("*")
+                         if p.is_file() and p.suffix.lower() in self.EXTS)
         self.paths = sorted(set(paths))
         self.tfm = tfm
     def __len__(self): return len(self.paths)

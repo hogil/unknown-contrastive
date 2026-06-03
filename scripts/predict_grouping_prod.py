@@ -93,7 +93,7 @@ from _common import (
 
 class FolderImageDataset(Dataset):
     """폴더 하위 모든 .png (recursive). class 없음 — grouping 전용."""
-    EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
+    EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 
     def __init__(self, root, transform=None):
         roots = root if isinstance(root, (list, tuple)) else [root]
@@ -102,8 +102,8 @@ class FolderImageDataset(Dataset):
         self.transform = transform
         paths: list[Path] = []
         for r in self.roots:
-            for ext in self.EXTS:
-                paths.extend(Path(r).rglob(f"*{ext}"))
+            paths.extend(p for p in Path(r).rglob("*")
+                         if p.is_file() and p.suffix.lower() in self.EXTS)
         self.paths = sorted(set(paths))
 
     def __len__(self): return len(self.paths)
