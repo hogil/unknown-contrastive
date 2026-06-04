@@ -27,6 +27,10 @@ CL_IMG_SIZE           = 512
 GROUPING_BATCH        = 128
 GROUPING_WORKERS      = 64
 GROUPING_REPS_PER_CLUSTER = 30
+GROUPING_MIN_CLUSTER_SIZE = 12
+GROUPING_MIN_SAMPLES = 15
+GROUPING_CLUSTER_SELECTION_METHOD = "leaf"
+GROUPING_CLUSTER_SELECTION_EPSILON = 0.06
 CL_IGNORE_NEG_SIM     = 0.95
 CL_NCE_TEMP           = 0.05
 CL_NECO_WEIGHT        = 0.2
@@ -62,6 +66,16 @@ def parse_args():
                    help="CNN batch per GPU override.")
     p.add_argument("--cl-batch", type=int, default=None,
                    help="Contrastive batch per GPU override.")
+    p.add_argument("--cl-img-size", type=int, default=None,
+                   help="Contrastive/grouping input image size override.")
+    p.add_argument("--ignore-neg-sim", type=float, default=None,
+                   help="Contrastive IGNORE_NEG_SIM override.")
+    p.add_argument("--nce-temp", type=float, default=None,
+                   help="Contrastive NCE_TEMP override.")
+    p.add_argument("--neco-weight", type=float, default=None,
+                   help="Contrastive NeCo weight override.")
+    p.add_argument("--neco-tau", type=float, default=None,
+                   help="Contrastive NeCo tau override.")
     p.add_argument("--cnn-run-dir", type=str, default=None,
                    help="기존 CNN run 폴더. 지정 시 stage1 CNN 학습을 건너뛰고 cnn/best_model.pth 사용.")
     p.add_argument("--backbone", type=str, default=None,
@@ -88,6 +102,15 @@ def parse_args():
                    help="predict_grouping_prod.py workers override.")
     p.add_argument("--grouping-reps-per-cluster", type=int, default=None,
                    help="grouping cluster별 대표 이미지 개수.")
+    p.add_argument("--grouping-min-cluster-size", type=int, default=None,
+                   help="HDBSCAN min_cluster_size override.")
+    p.add_argument("--grouping-min-samples", type=int, default=None,
+                   help="HDBSCAN min_samples override.")
+    p.add_argument("--grouping-cluster-selection-method", type=str, default=None,
+                   choices=["eom", "leaf"],
+                   help="HDBSCAN cluster_selection_method override.")
+    p.add_argument("--grouping-cluster-selection-epsilon", type=float, default=None,
+                   help="HDBSCAN cluster_selection_epsilon override.")
     return p.parse_args()
 
 
@@ -146,6 +169,9 @@ def _generate_source(repo: Path, resolve_path, source_root: str, workers: int | 
 
 def main():
     global CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR, CNN_BATCH_PER_GPU, CL_BATCH_PER_GPU, SOURCE_ROOT
+    global CL_IMG_SIZE, CL_IGNORE_NEG_SIM, CL_NCE_TEMP, CL_NECO_WEIGHT, CL_NECO_TAU
+    global GROUPING_MIN_CLUSTER_SIZE, GROUPING_MIN_SAMPLES
+    global GROUPING_CLUSTER_SELECTION_METHOD, GROUPING_CLUSTER_SELECTION_EPSILON
     args = parse_args()
     if args.cnn_data_dir:
         CNN_DATA_DIR = args.cnn_data_dir
@@ -157,6 +183,16 @@ def main():
         CNN_BATCH_PER_GPU = args.cnn_batch
     if args.cl_batch is not None:
         CL_BATCH_PER_GPU = args.cl_batch
+    if args.cl_img_size is not None:
+        CL_IMG_SIZE = args.cl_img_size
+    if args.ignore_neg_sim is not None:
+        CL_IGNORE_NEG_SIM = args.ignore_neg_sim
+    if args.nce_temp is not None:
+        CL_NCE_TEMP = args.nce_temp
+    if args.neco_weight is not None:
+        CL_NECO_WEIGHT = args.neco_weight
+    if args.neco_tau is not None:
+        CL_NECO_TAU = args.neco_tau
     if args.source_root:
         SOURCE_ROOT = args.source_root
     grouping_batch = args.grouping_batch if args.grouping_batch is not None else GROUPING_BATCH
@@ -164,6 +200,18 @@ def main():
     grouping_reps = (args.grouping_reps_per_cluster
                      if args.grouping_reps_per_cluster is not None
                      else GROUPING_REPS_PER_CLUSTER)
+    grouping_min_cluster_size = (args.grouping_min_cluster_size
+                                 if args.grouping_min_cluster_size is not None
+                                 else GROUPING_MIN_CLUSTER_SIZE)
+    grouping_min_samples = (args.grouping_min_samples
+                            if args.grouping_min_samples is not None
+                            else GROUPING_MIN_SAMPLES)
+    grouping_method = (args.grouping_cluster_selection_method
+                       if args.grouping_cluster_selection_method is not None
+                       else GROUPING_CLUSTER_SELECTION_METHOD)
+    grouping_epsilon = (args.grouping_cluster_selection_epsilon
+                        if args.grouping_cluster_selection_epsilon is not None
+                        else GROUPING_CLUSTER_SELECTION_EPSILON)
     if args.clean_split and args.no_auto_split:
         raise SystemExit("--clean-split and --no-auto-split cannot be used together")
 
@@ -399,6 +447,10 @@ def main():
             "--batch", str(grouping_batch),
             "--workers", str(grouping_workers),
             "--reps-per-cluster", str(grouping_reps),
+            "--min-cluster-size", str(grouping_min_cluster_size),
+            "--min-samples", str(grouping_min_samples),
+            "--cluster-selection-method", grouping_method,
+            "--cluster-selection-epsilon", str(grouping_epsilon),
         ]
         print(f"[prod pred dirs] {args.prod_pred_dirs}")
         t0 = time.time()
