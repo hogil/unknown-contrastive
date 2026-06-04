@@ -167,6 +167,11 @@ def _reference_palette(source_palette: list[int] | None) -> list[int]:
     if len(palette) < 768:
         palette.extend([0] * (768 - len(palette)))
 
+    # Slightly lighten composite background while keeping source palette semantics.
+    bg = np.asarray(palette[8 * 3:8 * 3 + 3], dtype=np.float32)
+    bg = bg + (255.0 - bg) * 0.35
+    palette[8 * 3:8 * 3 + 3] = np.clip(np.rint(bg), 0, 255).astype(np.uint8).tolist()
+
     # mapviewer style composite gradient, slightly darker than pure white->red
     # so low/mid weighted-square signals remain visible without over-tinting.
     start, end, count = 24, 255, 255 - 24 + 1
