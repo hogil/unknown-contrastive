@@ -5,7 +5,7 @@ No CUDA_VISIBLE_DEVICES is set here. Set it outside this script if needed.
 
 Typical:
   python -u scripts/run_pipeline_sweep_10.py \
-    --cnn-run-dir runs/<CNN_RUN> \
+    --backbone runs/<CNN_RUN>/cnn/best_model.pth \
     --prod-train-dirs data/images/prod_train_A,data/images/prod_train_B \
     --prod-pred-dirs data/images/prod_pred_A,data/images/prod_pred_B
 """
@@ -86,6 +86,8 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--cnn-run-dir", type=str, default=None,
                    help="Existing CNN run dir. If omitted, latest *_cnn_ddp is used.")
+    p.add_argument("--backbone", type=str, default=None,
+                   help="Existing CNN best_model.pth path. Same as train_pipeline_ddp.py --backbone.")
     p.add_argument("--prod-train-dirs", type=str, default=DEFAULT_PROD_TRAIN_DIRS,
                    help="Comma-separated production train folders.")
     p.add_argument("--prod-pred-dirs", type=str, default=DEFAULT_PROD_PRED_DIRS,
@@ -163,7 +165,18 @@ def main():
     if not selected:
         raise SystemExit("No conditions selected.")
 
-    cnn_run = Path(args.cnn_run_dir) if args.cnn_run_dir else _latest_cnn_run(repo)
+    if args.backbone and args.cnn_run_dir:
+        raise SystemExit("--backbone and --cnn-run-dir cannot be used together.")
+
+    backbone = Path(args.backbone) if args.backbone else None
+    if backbone is not None and not backbone.is_absolute():
+        backbone = (repo / backbone).resolve()
+    if backbone is not None and not backbone.exists():
+        raise SystemExit(f"backbone best_model.pth not found: {backbone}")
+
+    cnn_run = None if backbone is not None else (
+        Path(args.cnn_run_dir) if args.cnn_run_dir else _latest_cnn_run(repo)
+    )
     if cnn_run is not None and not cnn_run.is_absolute():
         cnn_run = (repo / cnn_run).resolve()
     if cnn_run is not None and not (cnn_run / "cnn" / "best_model.pth").exists():
@@ -180,6 +193,7 @@ def main():
 
     print(f"[sweep] {sweep_dir.resolve()}")
     print(f"[conditions] {len(selected)}")
+    print(f"[backbone] {backbone if backbone is not None else '(not set)'}")
     print(f"[cnn_run] {cnn_run if cnn_run is not None else 'FULL CNN EACH CONDITION'}")
     print(f"[prod_train_dirs] {args.prod_train_dirs}")
     print(f"[prod_pred_dirs] {args.prod_pred_dirs}")
@@ -206,7 +220,9 @@ def main():
             "--grouping-cluster-selection-method", cond["method"],
             "--grouping-cluster-selection-epsilon", str(cond["epsilon"]),
         ]
-        if cnn_run is not None:
+        if backbone is not None:
+            cmd += ["--backbone", str(backbone)]
+        elif cnn_run is not None:
             cmd += ["--cnn-run-dir", str(cnn_run)]
 
         print("\n" + "=" * 80)
