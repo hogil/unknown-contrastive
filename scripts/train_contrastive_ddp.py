@@ -28,7 +28,7 @@ IMG_SIZE              = 512
 PROJ_DIM              = 128
 BATCH_PER_GPU         = 8
 NUM_WORKERS_PER_GPU   = None         # None = auto: os.cpu_count() // world_size (환경 코어 전부 활용)
-EPOCHS                = 5
+EPOCHS                = 20
 WARMUP_EPOCHS         = 1
 TRAIN_SAMPLING_RATIO  = 0.25
 LR_HEAD               = 1e-3
@@ -49,8 +49,8 @@ USE_AMP               = False
 
 MIN_CLUSTER_SIZE      = 12
 MIN_SAMPLES           = 15
-CLUSTER_SELECTION_METHOD = "eom"
-CLUSTER_SELECTION_EPSILON = 0.0
+CLUSTER_SELECTION_METHOD = "leaf"
+CLUSTER_SELECTION_EPSILON = 0.06
 
 PER_CLASS_CAP         = 500
 NORMAL_CAP            = 2000

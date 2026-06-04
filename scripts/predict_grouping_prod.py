@@ -60,8 +60,8 @@ PROGRESS_EVERY      = 20          # embedding loop 진행률 출력 batch 간격
 # HDBSCAN
 MIN_CLUSTER_SIZE    = 12
 MIN_SAMPLES         = 15
-CLUSTER_SELECTION_METHOD = "eom"
-CLUSTER_SELECTION_EPSILON = 0.0
+CLUSTER_SELECTION_METHOD = "leaf"
+CLUSTER_SELECTION_EPSILON = 0.06
 
 # Backbone (같은 architecture 가정)
 BACKBONE            = "convnextv2_base.fcmae_ft_in22k_in1k_384"

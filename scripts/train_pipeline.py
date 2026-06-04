@@ -53,7 +53,7 @@ CL_PROJ_DIM           = 128
 CL_IMG_SIZE           = 512
 CL_BATCH              = 8
 CL_NUM_WORKERS        = 4
-CL_EPOCHS             = 5
+CL_EPOCHS             = 20
 CL_WARMUP_EPOCHS      = 1
 CL_TRAIN_SAMPLING_RATIO = 0.25
 CL_LR_HEAD            = 1e-3
@@ -76,8 +76,8 @@ CL_NORMAL_CAP         = 2000
 # HDBSCAN eval
 MIN_CLUSTER_SIZE      = 12
 MIN_SAMPLES           = 15
-CLUSTER_SELECTION_METHOD = "eom"
-CLUSTER_SELECTION_EPSILON = 0.0
+CLUSTER_SELECTION_METHOD = "leaf"
+CLUSTER_SELECTION_EPSILON = 0.06
 
 SEED                  = 42
 # ===================================================================

@@ -37,7 +37,7 @@ IMG_SIZE              = 512
 PROJ_DIM              = 128
 BATCH                 = 8
 NUM_WORKERS           = 4
-EPOCHS                = 5
+EPOCHS                = 20
 WARMUP_EPOCHS         = 1
 TRAIN_SAMPLING_RATIO  = 0.25       # 매 epoch 25% 무작위
 LR_HEAD               = 1e-3
@@ -62,8 +62,8 @@ USE_MIXUP             = False
 # HDBSCAN eval
 MIN_CLUSTER_SIZE      = 12
 MIN_SAMPLES           = 15
-CLUSTER_SELECTION_METHOD = "eom"
-CLUSTER_SELECTION_EPSILON = 0.0
+CLUSTER_SELECTION_METHOD = "leaf"
+CLUSTER_SELECTION_EPSILON = 0.06
 
 # Data caps (eval set)
 PER_CLASS_CAP         = 500
