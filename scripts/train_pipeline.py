@@ -66,6 +66,7 @@ CL_QUEUE_SIZE         = 4096
 CL_IGNORE_NEG_SIM     = 0.72
 CL_USE_LOCAL          = False
 CL_NECO_WEIGHT        = 0.2
+CL_NECO_TAU           = 0.1
 CL_USE_EMA            = False
 CL_USE_AMP            = False
 CL_PER_CLASS_CAP      = 500
@@ -215,6 +216,7 @@ def main():
     tcl.IGNORE_NEG_SIM        = CL_IGNORE_NEG_SIM
     tcl.USE_LOCAL             = CL_USE_LOCAL
     tcl.NECO_WEIGHT           = CL_NECO_WEIGHT
+    tcl.NECO_TAU              = CL_NECO_TAU
     tcl.USE_EMA               = CL_USE_EMA
     tcl.USE_AMP               = CL_USE_AMP
     tcl.MIN_CLUSTER_SIZE      = MIN_CLUSTER_SIZE

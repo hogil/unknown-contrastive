@@ -26,6 +26,9 @@ CL_BATCH_PER_GPU      = 64             # frozen backbone → 가벼움, contrast
 GROUPING_BATCH        = 128
 GROUPING_WORKERS      = 16
 GROUPING_REPS_PER_CLUSTER = 30
+CL_IGNORE_NEG_SIM     = 0.72
+CL_NECO_WEIGHT        = 0.2
+CL_NECO_TAU           = 0.1
 
 # 두 stage 의 hyperparam 은 각 _ddp.py 의 CONFIG block 을 직접 수정
 #   scripts/train_cnn_ddp.py        ← CNN
@@ -342,6 +345,9 @@ def main():
     print("=" * 60)
     # CNN backbone + tag 를 env 로 주입 (mp.spawn 자식이 module-level 에서 읽음)
     env["CL_BACKBONE_CKPT"] = str(cnn_best)
+    env["CL_IGNORE_NEG_SIM"] = str(CL_IGNORE_NEG_SIM)
+    env["CL_NECO_WEIGHT"] = str(CL_NECO_WEIGHT)
+    env["CL_NECO_TAU"] = str(CL_NECO_TAU)
     if args.prod_train_dirs:
         env["CL_TAG"] = "contrastive_prod_ddp_pipe"
         env["CL_TRAIN_DIRS"] = args.prod_train_dirs

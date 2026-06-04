@@ -52,6 +52,7 @@ QUEUE_SIZE            = 4096
 IGNORE_NEG_SIM        = 0.72       # NV-Retriever NEG filter
 USE_LOCAL             = False      # ★ Local DenseCL OFF (4-tool 최종)
 NECO_WEIGHT           = 0.2
+NECO_TAU              = 0.1
 
 # Anti-overfit
 USE_EMA               = False
@@ -254,10 +255,45 @@ class ContrastiveModel(nn.Module):
                 p.requires_grad = False
             print("[backbone] FROZEN — projection head only")
 
-    def forward(self, x):
-        f = self.backbone(x)
-        z = self.proj(f)
-        return F.normalize(z, dim=1)
+    def _forward_features(self, x):
+        if hasattr(self.backbone, "forward_features"):
+            fm = self.backbone.forward_features(x)
+        else:
+            fm = self.backbone(x)
+        if fm.ndim == 2:
+            fm = fm[:, :, None, None]
+        return fm
+
+    def _feature_map_nchw(self, fm):
+        if fm.ndim != 4:
+            return fm[:, :, None, None]
+        feat_dim = self.backbone.num_features
+        if fm.shape[1] == feat_dim:
+            return fm
+        if fm.shape[-1] == feat_dim:
+            return fm.permute(0, 3, 1, 2).contiguous()
+        return fm
+
+    def _pool_features(self, fm):
+        if hasattr(self.backbone, "forward_head"):
+            return self.backbone.forward_head(fm, pre_logits=True)
+        fm = self._feature_map_nchw(fm)
+        return fm.mean(dim=(2, 3))
+
+    def _project_patches(self, fm):
+        fm = self._feature_map_nchw(fm)
+        b, c, h, w = fm.shape
+        patches = fm.permute(0, 2, 3, 1).reshape(b * h * w, c)
+        z = F.normalize(self.proj(patches), dim=1)
+        return z.view(b, h * w, -1)
+
+    def forward(self, x, return_neco=False):
+        fm = self._forward_features(x)
+        f = self._pool_features(fm)
+        z = F.normalize(self.proj(f), dim=1)
+        if return_neco:
+            return z, self._project_patches(fm)
+        return z
 
 
 class QueueBank:
@@ -297,9 +333,49 @@ def info_nce_loss(z1: torch.Tensor, z2: torch.Tensor, queue: QueueBank | None,
                 if i < neg_bank.size(0):
                     mask[i, i] = False
         sim = sim.masked_fill(mask, -1e9)
+    diag = torch.arange(b, device=z1.device)
+    if b <= neg_bank.size(0):
+        sim[diag, diag] = -1e9
     logits = torch.cat([logits_pos, sim], dim=1)            # (b, 1 + b+Q)
-    labels = torch.zeros(b, dtype=torch.long, device=z1.device)
-    return F.cross_entropy(logits, labels, label_smoothing=LABEL_SMOOTHING)
+    return masked_pos_cross_entropy(logits, LABEL_SMOOTHING)
+
+
+def masked_pos_cross_entropy(logits: torch.Tensor, label_smoothing: float):
+    """Positive is column 0. Label smoothing is assigned only to unmasked negatives."""
+    labels = torch.zeros(logits.size(0), dtype=torch.long, device=logits.device)
+    if label_smoothing <= 0:
+        return F.cross_entropy(logits, labels)
+    valid = logits > -1e8
+    neg_valid = valid.clone()
+    neg_valid[:, 0] = False
+    neg_count = neg_valid.sum(dim=1)
+    eps = torch.where(neg_count > 0,
+                      torch.full_like(neg_count, float(label_smoothing), dtype=logits.dtype),
+                      torch.zeros_like(neg_count, dtype=logits.dtype))
+    logp = F.log_softmax(logits, dim=1)
+    pos_loss = -(1.0 - eps) * logp[:, 0]
+    neg_logp = logp.masked_fill(~neg_valid, 0.0).sum(dim=1)
+    neg_loss = -eps * neg_logp / neg_count.clamp_min(1).to(logits.dtype)
+    return (pos_loss + neg_loss).mean()
+
+
+def neco_loss(p1: torch.Tensor, p2: torch.Tensor, tau: float):
+    """B6 NeCo: patch-neighbor order consistency over shared projection patches."""
+    if p1.ndim != 3 or p2.ndim != 3:
+        raise ValueError("neco_loss expects [B, N, D] patch embeddings")
+    n = p1.size(1)
+    s1 = torch.bmm(p1, p1.transpose(1, 2))
+    s2 = torch.bmm(p2, p2.transpose(1, 2))
+    eye = torch.eye(n, device=p1.device, dtype=torch.bool).unsqueeze(0)
+    s1 = s1.masked_fill(eye, -1e4)
+    s2 = s2.masked_fill(eye, -1e4)
+    log_p1 = F.log_softmax(s1 / tau, dim=-1)
+    log_p2 = F.log_softmax(s2 / tau, dim=-1)
+    p1_soft = log_p1.exp()
+    p2_soft = log_p2.exp()
+    kl_12 = (p1_soft * (log_p1 - log_p2)).sum(dim=-1).mean()
+    kl_21 = (p2_soft * (log_p2 - log_p1)).sum(dim=-1).mean()
+    return 0.5 * (kl_12 + kl_21)
 
 
 # ---------- HDBSCAN eval ----------
@@ -523,7 +599,10 @@ def main():
         "proj_dim": PROJ_DIM,
         "queue_size": QUEUE_SIZE if USE_QUEUE else 0,
         "ignore_neg_sim": IGNORE_NEG_SIM,
+        "use_local": USE_LOCAL,
         "neco_weight": NECO_WEIGHT,
+        "neco_tau": NECO_TAU,
+        "recipe": "B6: Global InfoNCE + MoCo Queue + NEG + NeCo, no Local",
         "n_train": len(train_ds),
         "n_eval": len(eval_base),
         "n_classes_eval": len(classes),
@@ -549,27 +628,46 @@ def main():
                         num_workers=NUM_WORKERS, pin_memory=True, drop_last=True)
 
         model.train()
-        run_loss = 0.0; n = 0
+        run_loss = 0.0; run_nce = 0.0; run_neco = 0.0; n = 0
         t0 = time.time()
         for it, batch in enumerate(ld, 1):
             x1, x2, _ = batch
             x1 = x1.to(device, non_blocking=True)
             x2 = x2.to(device, non_blocking=True)
             opt.zero_grad()
-            z1 = model(x1); z2 = model(x2)
-            loss = info_nce_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM)
+            bs = x1.size(0)
+            if NECO_WEIGHT > 0:
+                z_cat, p_cat = model(torch.cat([x1, x2], dim=0), return_neco=True)
+                p1, p2 = p_cat[:bs], p_cat[bs:]
+                loss_neco = neco_loss(p1, p2, NECO_TAU)
+            else:
+                z_cat = model(torch.cat([x1, x2], dim=0))
+                loss_neco = z_cat.new_zeros(())
+            z1, z2 = z_cat[:bs], z_cat[bs:]
+            loss_nce = info_nce_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM)
+            loss = loss_nce + (NECO_WEIGHT * loss_neco)
             loss.backward()
             if GRAD_CLIP > 0:
                 torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], GRAD_CLIP)
             opt.step()
             if queue is not None:
                 queue.enqueue(z2)
-            run_loss += loss.item() * x1.size(0); n += x1.size(0)
+            run_loss += loss.item() * x1.size(0)
+            run_nce += loss_nce.item() * x1.size(0)
+            run_neco += loss_neco.item() * x1.size(0)
+            n += x1.size(0)
             if it % max(1, len(ld) // 10) == 0:
-                print(f"  Ep {ep}/{EPOCHS} {it/len(ld)*100:>5.1f}% | loss={run_loss/n:.4f} lr={lr:.2e}", flush=True)
+                print(f"  Ep {ep}/{EPOCHS} {it/len(ld)*100:>5.1f}% | "
+                      f"loss={run_loss/n:.4f} nce={run_nce/n:.4f} "
+                      f"neco={run_neco/n:.4f} lr={lr:.2e}", flush=True)
         ep_loss = run_loss / max(1, n)
-        print(f"  Ep {ep}/{EPOCHS} DONE loss={ep_loss:.4f} time={time.time()-t0:.0f}s", flush=True)
-        history.append({"epoch": ep, "loss": ep_loss, "lr": lr})
+        ep_nce = run_nce / max(1, n)
+        ep_neco = run_neco / max(1, n)
+        print(f"  Ep {ep}/{EPOCHS} DONE loss={ep_loss:.4f} "
+              f"nce={ep_nce:.4f} neco={ep_neco:.4f} "
+              f"time={time.time()-t0:.0f}s", flush=True)
+        history.append({"epoch": ep, "loss": ep_loss, "nce": ep_nce,
+                        "neco": ep_neco, "lr": lr})
 
     # save
     torch.save({

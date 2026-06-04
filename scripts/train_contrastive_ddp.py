@@ -42,6 +42,7 @@ QUEUE_SIZE            = 4096
 IGNORE_NEG_SIM        = 0.72
 USE_LOCAL             = False
 NECO_WEIGHT           = 0.2
+NECO_TAU              = 0.1
 
 USE_EMA               = False
 USE_AMP               = False
@@ -107,6 +108,12 @@ if os.environ.get("CL_EPOCHS"):
     EPOCHS = int(os.environ["CL_EPOCHS"])
 if os.environ.get("CL_BATCH_PER_GPU"):
     BATCH_PER_GPU = int(os.environ["CL_BATCH_PER_GPU"])
+if os.environ.get("CL_IGNORE_NEG_SIM"):
+    IGNORE_NEG_SIM = float(os.environ["CL_IGNORE_NEG_SIM"])
+if os.environ.get("CL_NECO_WEIGHT"):
+    NECO_WEIGHT = float(os.environ["CL_NECO_WEIGHT"])
+if os.environ.get("CL_NECO_TAU"):
+    NECO_TAU = float(os.environ["CL_NECO_TAU"])
 TRAIN_DATA_DIR = os.environ.get("CL_TRAIN_DIRS") or TRAIN_DATA_DIR   # 콤마구분 다중 가능
 EVAL_DATA_DIR  = os.environ.get("CL_EVAL_DIRS") or EVAL_DATA_DIR
 NO_EVAL = NO_EVAL or os.environ.get("CL_NO_EVAL", "").strip().lower() in {"1", "true", "yes", "y"}
@@ -526,10 +533,45 @@ class ContrastiveModel(nn.Module):
             for p in self.backbone.parameters():
                 p.requires_grad = False
 
-    def forward(self, x):
-        f = self.backbone(x)
-        z = self.proj(f)
-        return F.normalize(z, dim=1)
+    def _forward_features(self, x):
+        if hasattr(self.backbone, "forward_features"):
+            fm = self.backbone.forward_features(x)
+        else:
+            fm = self.backbone(x)
+        if fm.ndim == 2:
+            fm = fm[:, :, None, None]
+        return fm
+
+    def _feature_map_nchw(self, fm):
+        if fm.ndim != 4:
+            return fm[:, :, None, None]
+        feat_dim = self.backbone.num_features
+        if fm.shape[1] == feat_dim:
+            return fm
+        if fm.shape[-1] == feat_dim:
+            return fm.permute(0, 3, 1, 2).contiguous()
+        return fm
+
+    def _pool_features(self, fm):
+        if hasattr(self.backbone, "forward_head"):
+            return self.backbone.forward_head(fm, pre_logits=True)
+        fm = self._feature_map_nchw(fm)
+        return fm.mean(dim=(2, 3))
+
+    def _project_patches(self, fm):
+        fm = self._feature_map_nchw(fm)
+        b, c, h, w = fm.shape
+        patches = fm.permute(0, 2, 3, 1).reshape(b * h * w, c)
+        z = F.normalize(self.proj(patches), dim=1)
+        return z.view(b, h * w, -1)
+
+    def forward(self, x, return_neco=False):
+        fm = self._forward_features(x)
+        f = self._pool_features(fm)
+        z = F.normalize(self.proj(f), dim=1)
+        if return_neco:
+            return z, self._project_patches(fm)
+        return z
 
 
 class QueueBank:
@@ -562,9 +604,49 @@ def info_nce_loss(z1, z2, queue, temp, ignore_neg_sim, label_smoothing):
             for i in range(b):
                 if i < neg_bank.size(0): mask[i, i] = False
         sim = sim.masked_fill(mask, -1e9)
+    diag = torch.arange(b, device=z1.device)
+    if b <= neg_bank.size(0):
+        sim[diag, diag] = -1e9
     logits = torch.cat([logits_pos, sim], dim=1)
-    labels = torch.zeros(b, dtype=torch.long, device=z1.device)
-    return F.cross_entropy(logits, labels, label_smoothing=label_smoothing)
+    return masked_pos_cross_entropy(logits, label_smoothing)
+
+
+def masked_pos_cross_entropy(logits, label_smoothing):
+    """Positive is column 0. Label smoothing is assigned only to unmasked negatives."""
+    labels = torch.zeros(logits.size(0), dtype=torch.long, device=logits.device)
+    if label_smoothing <= 0:
+        return F.cross_entropy(logits, labels)
+    valid = logits > -1e8
+    neg_valid = valid.clone()
+    neg_valid[:, 0] = False
+    neg_count = neg_valid.sum(dim=1)
+    eps = torch.where(neg_count > 0,
+                      torch.full_like(neg_count, float(label_smoothing), dtype=logits.dtype),
+                      torch.zeros_like(neg_count, dtype=logits.dtype))
+    logp = F.log_softmax(logits, dim=1)
+    pos_loss = -(1.0 - eps) * logp[:, 0]
+    neg_logp = logp.masked_fill(~neg_valid, 0.0).sum(dim=1)
+    neg_loss = -eps * neg_logp / neg_count.clamp_min(1).to(logits.dtype)
+    return (pos_loss + neg_loss).mean()
+
+
+def neco_loss(p1, p2, tau):
+    """B6 NeCo: patch-neighbor order consistency over shared projection patches."""
+    if p1.ndim != 3 or p2.ndim != 3:
+        raise ValueError("neco_loss expects [B, N, D] patch embeddings")
+    n = p1.size(1)
+    s1 = torch.bmm(p1, p1.transpose(1, 2))
+    s2 = torch.bmm(p2, p2.transpose(1, 2))
+    eye = torch.eye(n, device=p1.device, dtype=torch.bool).unsqueeze(0)
+    s1 = s1.masked_fill(eye, -1e4)
+    s2 = s2.masked_fill(eye, -1e4)
+    log_p1 = F.log_softmax(s1 / tau, dim=-1)
+    log_p2 = F.log_softmax(s2 / tau, dim=-1)
+    p1_soft = log_p1.exp()
+    p2_soft = log_p2.exp()
+    kl_12 = (p1_soft * (log_p1 - log_p2)).sum(dim=-1).mean()
+    kl_21 = (p2_soft * (log_p2 - log_p1)).sum(dim=-1).mean()
+    return 0.5 * (kl_12 + kl_21)
 
 
 def train_worker(rank, world_size):
@@ -670,6 +752,10 @@ def train_worker(rank, world_size):
             "batch_per_gpu": BATCH_PER_GPU, "total_batch": BATCH_PER_GPU * world_size,
             "queue_size": QUEUE_SIZE if USE_QUEUE else 0,
             "ignore_neg_sim": IGNORE_NEG_SIM,
+            "use_local": USE_LOCAL,
+            "neco_weight": NECO_WEIGHT,
+            "neco_tau": NECO_TAU,
+            "recipe": "B6: Global InfoNCE + MoCo Queue + NEG + NeCo, no Local",
             "n_train": len(train_ds), "n_eval": 0 if no_eval else len(eval_base),
             "n_classes_eval": len(classes), "no_eval": no_eval,
         }, notes=f"DDP {world_size} GPUs — train flat (class hidden)"
@@ -694,7 +780,7 @@ def train_worker(rank, world_size):
         for g in opt.param_groups: g["lr"] = lr
 
         model.train()
-        run_loss = 0.0; n = 0
+        run_loss = 0.0; run_nce = 0.0; run_neco = 0.0; n = 0
         t0 = time.time()
         for it, (x1, x2) in enumerate(ld, 1):
             x1 = x1.to(device, non_blocking=True)
@@ -704,9 +790,16 @@ def train_worker(rank, world_size):
             #   backward 1회 전에 forward 2회 하면 DDP reducer 가 "param ready 한 번만"
             #   기대를 깨서 RuntimeError → process exit 1 (single-GPU 는 정상, multi-GPU 만 crash).
             bs = x1.size(0)
-            z_cat = model(torch.cat([x1, x2], dim=0))
+            if NECO_WEIGHT > 0:
+                z_cat, p_cat = model(torch.cat([x1, x2], dim=0), return_neco=True)
+                p1, p2 = p_cat[:bs], p_cat[bs:]
+                loss_neco = neco_loss(p1, p2, NECO_TAU)
+            else:
+                z_cat = model(torch.cat([x1, x2], dim=0))
+                loss_neco = z_cat.new_zeros(())
             z1, z2 = z_cat[:bs], z_cat[bs:]
-            loss = info_nce_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM, LABEL_SMOOTHING)
+            loss_nce = info_nce_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM, LABEL_SMOOTHING)
+            loss = loss_nce + (NECO_WEIGHT * loss_neco)
             loss.backward()
             if GRAD_CLIP > 0:
                 torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], GRAD_CLIP)
@@ -715,14 +808,24 @@ def train_worker(rank, world_size):
                 # 각 rank 의 z2 gather 후 enqueue (queue 가 모든 rank 동일하게)
                 z2_all = all_gather_concat(z2.detach(), device)
                 queue.enqueue(z2_all)
-            run_loss += loss.item() * x1.size(0); n += x1.size(0)
+            run_loss += loss.item() * x1.size(0)
+            run_nce += loss_nce.item() * x1.size(0)
+            run_neco += loss_neco.item() * x1.size(0)
+            n += x1.size(0)
             if is_main(rank) and it % max(1, len(ld) // 10) == 0:
-                print(f"  Ep {ep}/{EPOCHS} {it/len(ld)*100:>5.1f}% loss={run_loss/n:.4f} lr={lr:.2e}", flush=True)
+                print(f"  Ep {ep}/{EPOCHS} {it/len(ld)*100:>5.1f}% "
+                      f"loss={run_loss/n:.4f} nce={run_nce/n:.4f} "
+                      f"neco={run_neco/n:.4f} lr={lr:.2e}", flush=True)
         ep_loss = run_loss / max(1, n)
-        avg = all_reduce_avg({"loss": ep_loss}, device)
+        ep_nce = run_nce / max(1, n)
+        ep_neco = run_neco / max(1, n)
+        avg = all_reduce_avg({"loss": ep_loss, "nce": ep_nce, "neco": ep_neco}, device)
         if is_main(rank):
-            print(f"  Ep {ep}/{EPOCHS} DONE loss={avg['loss']:.4f} time={time.time()-t0:.0f}s", flush=True)
-            history.append({"epoch": ep, "loss": avg["loss"], "lr": lr})
+            print(f"  Ep {ep}/{EPOCHS} DONE loss={avg['loss']:.4f} "
+                  f"nce={avg['nce']:.4f} neco={avg['neco']:.4f} "
+                  f"time={time.time()-t0:.0f}s", flush=True)
+            history.append({"epoch": ep, "loss": avg["loss"], "nce": avg["nce"],
+                            "neco": avg["neco"], "lr": lr})
 
     # save (rank 0)
     if is_main(rank):
@@ -923,6 +1026,12 @@ if __name__ == "__main__":
     _ap.add_argument("--no-eval", action="store_true",
                      help="현업 classless train only. eval/HDBSCAN metric 생략.")
     _ap.add_argument("--batch", type=int, default=None, help="BATCH_PER_GPU override.")
+    _ap.add_argument("--ignore-neg-sim", type=float, default=None,
+                     help="NEG filter threshold. 예: 0.72 또는 0.85")
+    _ap.add_argument("--neco-weight", type=float, default=None,
+                     help="B6 NeCo weight. 기본 0.2, 0이면 NeCo OFF.")
+    _ap.add_argument("--neco-tau", type=float, default=None,
+                     help="NeCo patch-neighbor softmax temperature. 기본 0.1")
     _a = _ap.parse_args()
     # env 로 세팅 → mp.spawn 자식이 module re-import 시 위 module-level block 에서 읽음
     if _a.backbone:           os.environ["CL_BACKBONE_CKPT"] = _a.backbone
@@ -933,6 +1042,9 @@ if __name__ == "__main__":
     if _a.eval_dirs:          os.environ["CL_EVAL_DIRS"] = _a.eval_dirs
     if _a.no_eval:            os.environ["CL_NO_EVAL"] = "1"
     if _a.batch is not None:  os.environ["CL_BATCH_PER_GPU"] = str(_a.batch)
+    if _a.ignore_neg_sim is not None: os.environ["CL_IGNORE_NEG_SIM"] = str(_a.ignore_neg_sim)
+    if _a.neco_weight is not None:    os.environ["CL_NECO_WEIGHT"] = str(_a.neco_weight)
+    if _a.neco_tau is not None:       os.environ["CL_NECO_TAU"] = str(_a.neco_tau)
     # 부모 프로세스의 현재 module global 도 즉시 반영 (world_size<=1 직접 호출 경로)
     if _a.backbone:           BACKBONE_CKPT = _a.backbone
     if _a.cnn_run_dir:        CNN_RUN_DIR = _a.cnn_run_dir
@@ -942,4 +1054,7 @@ if __name__ == "__main__":
     if _a.eval_dirs:          EVAL_DATA_DIR = _a.eval_dirs
     if _a.no_eval:            NO_EVAL = True
     if _a.batch is not None:  BATCH_PER_GPU = _a.batch
+    if _a.ignore_neg_sim is not None: IGNORE_NEG_SIM = _a.ignore_neg_sim
+    if _a.neco_weight is not None:    NECO_WEIGHT = _a.neco_weight
+    if _a.neco_tau is not None:       NECO_TAU = _a.neco_tau
     launch_ddp(train_worker)
