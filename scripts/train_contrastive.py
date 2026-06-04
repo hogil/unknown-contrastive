@@ -49,7 +49,7 @@ LABEL_SMOOTHING       = 0.02
 # 4-tool recipe (Step 2b SOTA)
 USE_QUEUE             = True
 QUEUE_SIZE            = 4096
-IGNORE_NEG_SIM        = 0.72       # NV-Retriever NEG filter
+IGNORE_NEG_SIM        = 0.90       # NV-Retriever NEG filter
 USE_LOCAL             = False      # ★ Local DenseCL OFF (4-tool 최종)
 NECO_WEIGHT           = 0.2
 NECO_TAU              = 0.1
@@ -61,7 +61,7 @@ USE_MIXUP             = False
 
 # HDBSCAN eval
 MIN_CLUSTER_SIZE      = 12
-MIN_SAMPLES           = 3
+MIN_SAMPLES           = 15
 CLUSTER_SELECTION_METHOD = "eom"
 CLUSTER_SELECTION_EPSILON = 0.0
 

@@ -39,7 +39,7 @@ LABEL_SMOOTHING       = 0.02
 
 USE_QUEUE             = True
 QUEUE_SIZE            = 4096
-IGNORE_NEG_SIM        = 0.72
+IGNORE_NEG_SIM        = 0.90
 USE_LOCAL             = False
 NECO_WEIGHT           = 0.2
 NECO_TAU              = 0.1
@@ -48,7 +48,7 @@ USE_EMA               = False
 USE_AMP               = False
 
 MIN_CLUSTER_SIZE      = 12
-MIN_SAMPLES           = 3
+MIN_SAMPLES           = 15
 CLUSTER_SELECTION_METHOD = "eom"
 CLUSTER_SELECTION_EPSILON = 0.0
 

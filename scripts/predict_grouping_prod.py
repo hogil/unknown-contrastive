@@ -59,7 +59,7 @@ PROGRESS_EVERY      = 20          # embedding loop 진행률 출력 batch 간격
 
 # HDBSCAN
 MIN_CLUSTER_SIZE    = 12
-MIN_SAMPLES         = 3
+MIN_SAMPLES         = 15
 CLUSTER_SELECTION_METHOD = "eom"
 CLUSTER_SELECTION_EPSILON = 0.0
 

@@ -26,7 +26,7 @@ CL_BATCH_PER_GPU      = 64             # frozen backbone → 가벼움, contrast
 GROUPING_BATCH        = 128
 GROUPING_WORKERS      = 64
 GROUPING_REPS_PER_CLUSTER = 30
-CL_IGNORE_NEG_SIM     = 0.72
+CL_IGNORE_NEG_SIM     = 0.90
 CL_NECO_WEIGHT        = 0.2
 CL_NECO_TAU           = 0.1
 
