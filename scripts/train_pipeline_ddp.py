@@ -24,7 +24,7 @@ AUTO_SPLIT            = True                                # split 폴더 없�
 CNN_BATCH_PER_GPU     = 32             # convnextv2_base 384 full-ft + AMP → H100 80GB 32 안전
 CL_BATCH_PER_GPU      = 64             # frozen backbone → 가벼움, contrastive 는 batch 클수록 negative↑ 유리
 GROUPING_BATCH        = 128
-GROUPING_WORKERS      = 16
+GROUPING_WORKERS      = 64
 GROUPING_REPS_PER_CLUSTER = 30
 CL_IGNORE_NEG_SIM     = 0.72
 CL_NECO_WEIGHT        = 0.2
@@ -385,10 +385,10 @@ def main():
         if cl_run is None:
             raise SystemExit("grouping requested but no contrastive run found")
         print("\n" + "=" * 60)
-        print("STAGE 3 — Production Grouping")
+        print("STAGE 3 — Production Grouping DDP")
         print("=" * 60)
         group_cmd = [
-            sys.executable, "-u", str(repo / "scripts" / "predict_grouping_prod.py"),
+            sys.executable, "-u", str(repo / "scripts" / "predict_grouping_prod_ddp.py"),
             "--model", str(cl_run / "contrastive" / "best_model.pt"),
             "--image-roots", args.prod_pred_dirs,
             "--batch", str(grouping_batch),
