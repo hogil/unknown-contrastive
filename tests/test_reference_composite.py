@@ -60,7 +60,7 @@ class ReferenceCompositeTest(unittest.TestCase):
 
             out = np.asarray(Image.open(rows[0]["path"]))
             self.assertEqual(out[0, 0], 8)       # positions 밖은 background
-            self.assertEqual(out[1, 1], 10)      # chip border
+            self.assertNotIn(10, set(np.unique(out).tolist()))  # composite에는 chip border 없음
             self.assertGreaterEqual(out[2, 2], 24)  # chip 내부 defect는 composite gradient
 
     def test_grouping_representatives_writes_composite_folder(self):

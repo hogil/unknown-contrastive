@@ -87,6 +87,7 @@ from _common import (
     ensure_backbone_weights,
     log_stage_metric,
     make_run_dir,
+    mask_palette_non_grade_to_white,
     resolve_path,
     snapshot_config,
     system_info,
@@ -162,7 +163,9 @@ class SafeImageFolder(ImageFolder):
     def __getitem__(self, index):
         path, target = self.samples[index]
         try:
-            sample = self.loader(path)
+            from PIL import Image
+            with Image.open(path) as im:
+                sample = mask_palette_non_grade_to_white(im).convert("RGB")
         except Exception:
             from PIL import Image as _PILImage
             sample = _PILImage.new("RGB", (IMG_SIZE, IMG_SIZE), color=(0, 0, 0))
@@ -218,7 +221,9 @@ class MultiRootImageFolder(Dataset):
     def __getitem__(self, index):
         path, target = self.samples[index]
         try:
-            sample = self.loader(path)
+            from PIL import Image
+            with Image.open(path) as im:
+                sample = mask_palette_non_grade_to_white(im).convert("RGB")
         except Exception:
             from PIL import Image as _PILImage
             sample = _PILImage.new("RGB", (IMG_SIZE, IMG_SIZE), color=(0, 0, 0))
@@ -243,7 +248,8 @@ class FlatPairDataset(Dataset):
     def __getitem__(self, i):
         try:
             from PIL import Image
-            img = Image.open(self.paths[i]).convert("RGB")
+            with Image.open(self.paths[i]) as im:
+                img = mask_palette_non_grade_to_white(im).convert("RGB")
         except Exception:
             from PIL import Image as _PILImage
             img = _PILImage.new("RGB", (IMG_SIZE, IMG_SIZE), color=(0, 0, 0))

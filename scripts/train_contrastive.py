@@ -102,6 +102,7 @@ from _common import (
     ensure_backbone_weights,
     log_stage_metric,
     make_run_dir,
+    mask_palette_non_grade_to_white,
     resolve_path,
     snapshot_config,
     system_info,
@@ -150,7 +151,9 @@ class SafeImageFolder(ImageFolder):
     def __getitem__(self, index):
         path, target = self.samples[index]
         try:
-            sample = self.loader(path)
+            from PIL import Image
+            with Image.open(path) as im:
+                sample = mask_palette_non_grade_to_white(im).convert("RGB")
         except Exception as e:
             from PIL import Image as _PILImage
             print(f"[CORRUPT-SKIP] {path}: {type(e).__name__}", flush=True)
@@ -177,7 +180,8 @@ class FlatImageDataset(Dataset):
         p = self.paths[i]
         try:
             from PIL import Image
-            img = Image.open(p).convert("RGB")
+            with Image.open(p) as im:
+                img = mask_palette_non_grade_to_white(im).convert("RGB")
         except Exception:
             from PIL import Image as _PILImage
             img = _PILImage.new("RGB", (IMG_SIZE, IMG_SIZE), color=(0, 0, 0))
@@ -197,7 +201,8 @@ class PairDataset(Dataset):
         path = item[0] if isinstance(item, tuple) else item
         try:
             from PIL import Image
-            img = Image.open(path).convert("RGB")
+            with Image.open(path) as im:
+                img = mask_palette_non_grade_to_white(im).convert("RGB")
         except Exception:
             from PIL import Image as _PILImage
             img = _PILImage.new("RGB", (IMG_SIZE, IMG_SIZE), color=(0, 0, 0))

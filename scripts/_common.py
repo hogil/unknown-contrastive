@@ -52,6 +52,27 @@ def resolve_path(p) -> Path:
     return p if p.is_absolute() else (PROJECT_ROOT / p)
 
 
+def mask_palette_non_grade_to_white(img, enabled: bool = True):
+    """Palette PNG 입력에서 grade 0~7만 색을 유지하고 나머지 index는 흰색 처리.
+
+    원본 파일은 건드리지 않고, Image.open(...) 뒤 convert("RGB") 직전에만 in-memory palette를
+    바꾼다. wafer border/background/invalid 계열 색이 학습 shortcut이 되는 것을 막기 위함.
+    """
+    if not enabled or getattr(img, "mode", None) != "P":
+        return img
+    palette = img.getpalette()
+    if not palette:
+        return img
+    out = img.copy()
+    pal = list(palette)
+    if len(pal) < 768:
+        pal.extend([0] * (768 - len(pal)))
+    for idx in range(8, 256):
+        pal[idx * 3:idx * 3 + 3] = [255, 255, 255]
+    out.putpalette(pal[:768])
+    return out
+
+
 # ===================== Run directory =====================
 def make_run_dir(output_root, tag: str) -> Path:
     """runs/<YYMMDD_HHMMSS>_<tag>/ 폴더 생성. output_root 가 상대면 PROJECT_ROOT 기준."""

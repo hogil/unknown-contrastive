@@ -89,6 +89,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _common import (
     log_stage_metric,
     make_run_dir,
+    mask_palette_non_grade_to_white,
     resolve_path,
     snapshot_config,
     system_info,
@@ -115,7 +116,8 @@ class FolderImageDataset(Dataset):
     def __getitem__(self, i):
         p = self.paths[i]
         try:
-            img = Image.open(p).convert("RGB")
+            with Image.open(p) as im:
+                img = mask_palette_non_grade_to_white(im).convert("RGB")
             if self.transform is not None:
                 img = self.transform(img)
         except Exception as e:
@@ -169,10 +171,9 @@ def _reference_palette(source_palette: list[int] | None) -> list[int]:
     if len(palette) < 768:
         palette.extend([0] * (768 - len(palette)))
 
-    # Slightly lighten composite background while keeping source palette semantics.
-    bg = np.asarray(palette[8 * 3:8 * 3 + 3], dtype=np.float32)
-    bg = bg + (255.0 - bg) * 0.35
-    palette[8 * 3:8 * 3 + 3] = np.clip(np.rint(bg), 0, 255).astype(np.uint8).tolist()
+    # Composite map에는 chip/background/border 색이 필요 없다. defect gradient만 남긴다.
+    for idx in range(8, 24):
+        palette[idx * 3:idx * 3 + 3] = [255, 255, 255]
 
     # mapviewer style composite gradient, slightly darker than pure white->red
     # so low/mid weighted signals remain visible without over-tinting.
@@ -245,10 +246,6 @@ def _build_reference_base_indices(src: Path, target_size: tuple[int, int],
         if sx1 <= sx0 or sy1 <= sy0:
             continue
         base[sy0:sy1, sx0:sx1] = 0
-        base[sy0, sx0:sx1] = 10
-        base[sy1 - 1, sx0:sx1] = 10
-        base[sy0:sy1, sx0] = 10
-        base[sy0:sy1, sx1 - 1] = 10
     return base
 
 

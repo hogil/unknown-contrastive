@@ -64,6 +64,7 @@ from _common import (
     ensure_backbone_weights,
     log_stage_metric,
     make_run_dir,
+    mask_palette_non_grade_to_white,
     resolve_path,
     snapshot_config,
     system_info,
@@ -98,7 +99,9 @@ class SafeImageFolder(ImageFolder):
     def __getitem__(self, index):
         path, target = self.samples[index]
         try:
-            sample = self.loader(path)
+            from PIL import Image
+            with Image.open(path) as im:
+                sample = mask_palette_non_grade_to_white(im).convert("RGB")
         except Exception as e:
             from PIL import Image as _PILImage
             print(f"[CORRUPT-SKIP] {path}: {type(e).__name__}", flush=True)
