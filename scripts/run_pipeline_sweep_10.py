@@ -107,14 +107,29 @@ def parse_args():
     return p.parse_args()
 
 
-def _latest_cnn_run(repo: Path) -> Path | None:
-    runs = [
-        p for p in (repo / "runs").glob("*_cnn_ddp")
-        if (p / "cnn" / "best_model.pth").exists()
-    ]
-    if not runs:
+def _resolve_cnn_best(repo: Path, raw: str) -> Path:
+    p = Path(raw)
+    if not p.is_absolute():
+        p = (repo / p).resolve()
+    candidates = [p]
+    if p.is_dir():
+        candidates = [p / "cnn" / "best_model.pth", p / "best_model.pth"]
+    for c in candidates:
+        if c.exists() and c.is_file():
+            return c
+    raise SystemExit(
+        f"CNN best_model.pth not found from: {p}\n"
+        f"  accepted forms:\n"
+        f"  --backbone runs/<RUN>/cnn/best_model.pth\n"
+        f"  --backbone runs/<RUN>\n"
+        f"  --cnn-run-dir runs/<RUN>")
+
+
+def _latest_cnn_best(repo: Path) -> Path | None:
+    bests = list((repo / "runs").glob("*/cnn/best_model.pth"))
+    if not bests:
         return None
-    return sorted(runs, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+    return sorted(bests, key=lambda p: p.stat().st_mtime, reverse=True)[0]
 
 
 def _select_conditions(only: str | None, start_at: int):
@@ -168,22 +183,23 @@ def main():
     if args.backbone and args.cnn_run_dir:
         raise SystemExit("--backbone and --cnn-run-dir cannot be used together.")
 
-    backbone = Path(args.backbone) if args.backbone else None
-    if backbone is not None and not backbone.is_absolute():
-        backbone = (repo / backbone).resolve()
-    if backbone is not None and not backbone.exists():
-        raise SystemExit(f"backbone best_model.pth not found: {backbone}")
+    backbone = None
+    if args.backbone:
+        backbone = _resolve_cnn_best(repo, args.backbone)
+    elif args.cnn_run_dir:
+        backbone = _resolve_cnn_best(repo, args.cnn_run_dir)
+    elif not args.allow_train_cnn_each_run:
+        backbone = _latest_cnn_best(repo)
 
-    cnn_run = None if backbone is not None else (
-        Path(args.cnn_run_dir) if args.cnn_run_dir else _latest_cnn_run(repo)
-    )
-    if cnn_run is not None and not cnn_run.is_absolute():
-        cnn_run = (repo / cnn_run).resolve()
-    if cnn_run is not None and not (cnn_run / "cnn" / "best_model.pth").exists():
-        raise SystemExit(f"cnn best_model.pth not found: {cnn_run / 'cnn' / 'best_model.pth'}")
-    if cnn_run is None and not args.allow_train_cnn_each_run:
+    cnn_run = None
+    if backbone is not None:
+        cnn_run = backbone.parent.parent if backbone.parent.name == "cnn" else backbone.parent
+
+    if backbone is None and not args.allow_train_cnn_each_run:
         raise SystemExit(
-            "No CNN run found. Pass --cnn-run-dir runs/<CNN_RUN> "
+            "No CNN best_model.pth found under runs/*/cnn/.\n"
+            "Pass --backbone runs/<CNN_RUN>/cnn/best_model.pth "
+            "or --cnn-run-dir runs/<CNN_RUN>, "
             "or use --allow-train-cnn-each-run.")
 
     sweep_dir = repo / "runs" / f"{datetime.now().strftime('%y%m%d_%H%M%S')}_pipeline_sweep_10"
@@ -222,8 +238,6 @@ def main():
         ]
         if backbone is not None:
             cmd += ["--backbone", str(backbone)]
-        elif cnn_run is not None:
-            cmd += ["--cnn-run-dir", str(cnn_run)]
 
         print("\n" + "=" * 80)
         print(f"[condition] {cond['id']}")

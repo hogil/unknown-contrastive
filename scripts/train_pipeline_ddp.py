@@ -167,6 +167,22 @@ def _generate_source(repo: Path, resolve_path, source_root: str, workers: int | 
     return out
 
 
+def _resolve_cnn_best_arg(resolve_path, raw: str) -> Path:
+    p = resolve_path(raw)
+    candidates = [p]
+    if p.is_dir():
+        candidates = [p / "cnn" / "best_model.pth", p / "best_model.pth"]
+    for c in candidates:
+        if c.exists() and c.is_file():
+            return c
+    raise SystemExit(
+        f"CNN best_model.pth not found from: {p}\n"
+        f"  accepted forms:\n"
+        f"  --backbone runs/<RUN>/cnn/best_model.pth\n"
+        f"  --backbone runs/<RUN>\n"
+        f"  --cnn-run-dir runs/<RUN>")
+
+
 def main():
     global CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR, CNN_BATCH_PER_GPU, CL_BATCH_PER_GPU, SOURCE_ROOT
     global CL_IMG_SIZE, CL_IGNORE_NEG_SIM, CL_NCE_TEMP, CL_NECO_WEIGHT, CL_NECO_TAU
@@ -359,11 +375,11 @@ def main():
         print("STAGE 1 — CNN DDP SKIPPED (existing CNN)")
         print("=" * 60)
         if args.backbone:
-            cnn_best = resolve_path(args.backbone)
-            cnn_run = cnn_best.parent.parent if cnn_best.name == "best_model.pth" else cnn_best.parent
+            cnn_best = _resolve_cnn_best_arg(resolve_path, args.backbone)
+            cnn_run = cnn_best.parent.parent if cnn_best.parent.name == "cnn" else cnn_best.parent
         else:
-            cnn_run = resolve_path(args.cnn_run_dir)
-            cnn_best = cnn_run / "cnn" / "best_model.pth"
+            cnn_best = _resolve_cnn_best_arg(resolve_path, args.cnn_run_dir)
+            cnn_run = cnn_best.parent.parent if cnn_best.parent.name == "cnn" else cnn_best.parent
         print(f"[stage1 existing] cnn_run={cnn_run} best={cnn_best}")
     else:
         print("\n" + "=" * 60)
@@ -378,13 +394,13 @@ def main():
         if rc != 0:
             raise SystemExit(f"CNN DDP failed rc={rc}")
 
-        # latest CNN run dir from runs/
-        cnn_runs = sorted((repo / "runs").glob("*_cnn_ddp"),
-                          key=lambda p: p.stat().st_mtime, reverse=True)
-        if not cnn_runs:
-            raise SystemExit("no *_cnn_ddp run dir found after CNN stage")
-        cnn_run = cnn_runs[0]
-        cnn_best = cnn_run / "cnn" / "best_model.pth"
+        # latest CNN best from runs/*/cnn/ (cnn_ddp, pipeline_ddp 모두 허용)
+        cnn_bests = sorted((repo / "runs").glob("*/cnn/best_model.pth"),
+                           key=lambda p: p.stat().st_mtime, reverse=True)
+        if not cnn_bests:
+            raise SystemExit("no runs/*/cnn/best_model.pth found after CNN stage")
+        cnn_best = cnn_bests[0]
+        cnn_run = cnn_best.parent.parent
         print(f"[stage1 result] {cnn_run}  best={cnn_best.exists()}")
     if not cnn_best.exists():
         raise SystemExit(f"no best_model.pth: {cnn_best}")
