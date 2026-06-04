@@ -23,6 +23,7 @@ AUTO_SPLIT            = True                                # split 폴더 없�
 #   total batch = BATCH_PER_GPU × GPU 수. CNN 은 full fine-tune(무거움), CL 은 frozen(가벼움).
 CNN_BATCH_PER_GPU     = 32             # convnextv2_base 384 full-ft + AMP → H100 80GB 32 안전
 CL_BATCH_PER_GPU      = 64             # frozen backbone → 가벼움, contrastive 는 batch 클수록 negative↑ 유리
+CL_IMG_SIZE           = 512
 GROUPING_BATCH        = 128
 GROUPING_WORKERS      = 64
 GROUPING_REPS_PER_CLUSTER = 30
@@ -346,6 +347,7 @@ def main():
     print("=" * 60)
     # CNN backbone + tag 를 env 로 주입 (mp.spawn 자식이 module-level 에서 읽음)
     env["CL_BACKBONE_CKPT"] = str(cnn_best)
+    env["CL_IMG_SIZE"] = str(CL_IMG_SIZE)
     env["CL_IGNORE_NEG_SIM"] = str(CL_IGNORE_NEG_SIM)
     env["CL_NCE_TEMP"] = str(CL_NCE_TEMP)
     env["CL_NECO_WEIGHT"] = str(CL_NECO_WEIGHT)
@@ -393,6 +395,7 @@ def main():
             sys.executable, "-u", str(repo / "scripts" / "predict_grouping_prod_ddp.py"),
             "--model", str(cl_run / "contrastive" / "best_model.pt"),
             "--image-roots", args.prod_pred_dirs,
+            "--img-size", str(CL_IMG_SIZE),
             "--batch", str(grouping_batch),
             "--workers", str(grouping_workers),
             "--reps-per-cluster", str(grouping_reps),

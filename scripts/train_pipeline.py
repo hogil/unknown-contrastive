@@ -50,6 +50,7 @@ CNN_SPLIT_RATIOS      = (0.8, 0.1, 0.1)
 
 # ===== Contrastive stage =====
 CL_PROJ_DIM           = 128
+CL_IMG_SIZE           = 512
 CL_BATCH              = 8
 CL_NUM_WORKERS        = 4
 CL_EPOCHS             = 5
@@ -199,7 +200,7 @@ def main():
     tcl.FREEZE_BACKBONE       = CL_FREEZE_BACKBONE
     tcl.OUTPUT_ROOT           = str(run_dir.parent)
     tcl.TAG                   = f"{run_dir.name}_contrastive"
-    tcl.IMG_SIZE              = IMG_SIZE
+    tcl.IMG_SIZE              = CL_IMG_SIZE
     tcl.PROJ_DIM              = CL_PROJ_DIM
     tcl.BATCH                 = CL_BATCH
     tcl.NUM_WORKERS           = CL_NUM_WORKERS

@@ -51,7 +51,7 @@ REFERENCE_COMPOSITE_MIN_SUPPORT_RATIO = 0.10
 REPRESENTATIVES_ONLY = None        # 기존 grouping 결과 폴더에 representatives 만 후처리
 
 # Inference
-IMG_SIZE            = 384
+IMG_SIZE            = 512
 BATCH               = 128         # H100 inference 기본. OOM 나면 --batch 64/32 로 낮춤.
 NUM_WORKERS         = 16          # 6400 PNG decode 병목 완화. RAM 부족하면 --workers 8.
 PREFETCH_FACTOR     = 2
@@ -730,7 +730,8 @@ def _apply_args():
     global OUTPUT_DIR, COPY_PNG_TO_GROUPS, SAVE_REPRESENTATIVES, REPS_PER_CLUSTER
     global SAVE_REFERENCE_COMPOSITES, REFERENCE_COMPOSITE_MAX_PX
     global REPRESENTATIVES_ONLY, MIN_CLUSTER_SIZE, MIN_SAMPLES
-    global BATCH, NUM_WORKERS, PREFETCH_FACTOR, PROGRESS_EVERY
+    global CLUSTER_SELECTION_METHOD, CLUSTER_SELECTION_EPSILON
+    global IMG_SIZE, BATCH, NUM_WORKERS, PREFETCH_FACTOR, PROGRESS_EVERY
     global PRODUCT_FILTER, LINE_FILTER, DATE_FILTER
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", type=str, default=None, help="contrastive best_model.pt 경로")
@@ -753,11 +754,15 @@ def _apply_args():
     ap.add_argument("--representatives-only", type=str, default=None,
                     help="기존 result_grouping run 폴더에 representatives/ 만 후처리 생성")
     ap.add_argument("--batch", type=int, default=None, help="inference batch size")
+    ap.add_argument("--img-size", type=int, default=None, help="inference input size. 기본 512")
     ap.add_argument("--workers", type=int, default=None, help="DataLoader num_workers")
     ap.add_argument("--prefetch-factor", type=int, default=None, help="DataLoader prefetch_factor (workers>0)")
     ap.add_argument("--progress-every", type=int, default=None, help="embedding progress 출력 batch 간격")
     ap.add_argument("--min-cluster-size", type=int, default=None)
     ap.add_argument("--min-samples", type=int, default=None)
+    ap.add_argument("--cluster-selection-method", type=str, default=None,
+                    choices=["eom", "leaf"])
+    ap.add_argument("--cluster-selection-epsilon", type=float, default=None)
     a = ap.parse_args()
     if a.model:            MODEL_PATH = a.model
     if a.image_roots:      IMAGE_ROOTS = [x.strip() for x in a.image_roots.split(",") if x.strip()]
@@ -774,11 +779,16 @@ def _apply_args():
         REFERENCE_COMPOSITE_MAX_PX = max(0, a.reference_composite_size)
     if a.representatives_only: REPRESENTATIVES_ONLY = a.representatives_only
     if a.batch is not None: BATCH = a.batch
+    if a.img_size is not None: IMG_SIZE = a.img_size
     if a.workers is not None: NUM_WORKERS = a.workers
     if a.prefetch_factor is not None: PREFETCH_FACTOR = max(1, a.prefetch_factor)
     if a.progress_every is not None: PROGRESS_EVERY = max(1, a.progress_every)
     if a.min_cluster_size is not None: MIN_CLUSTER_SIZE = a.min_cluster_size
     if a.min_samples is not None:      MIN_SAMPLES = a.min_samples
+    if a.cluster_selection_method is not None:
+        CLUSTER_SELECTION_METHOD = a.cluster_selection_method
+    if a.cluster_selection_epsilon is not None:
+        CLUSTER_SELECTION_EPSILON = a.cluster_selection_epsilon
 
 
 def _pipeline_summary_model(run_dir: Path) -> Path | None:

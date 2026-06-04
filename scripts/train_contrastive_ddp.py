@@ -24,7 +24,7 @@ FREEZE_BACKBONE       = True
 OUTPUT_ROOT           = "runs"
 TAG                   = "contrastive_ddp"
 
-IMG_SIZE              = 384
+IMG_SIZE              = 512
 PROJ_DIM              = 128
 BATCH_PER_GPU         = 8
 NUM_WORKERS_PER_GPU   = None         # None = auto: os.cpu_count() // world_size (환경 코어 전부 활용)
@@ -108,6 +108,8 @@ if os.environ.get("CL_EPOCHS"):
     EPOCHS = int(os.environ["CL_EPOCHS"])
 if os.environ.get("CL_BATCH_PER_GPU"):
     BATCH_PER_GPU = int(os.environ["CL_BATCH_PER_GPU"])
+if os.environ.get("CL_IMG_SIZE"):
+    IMG_SIZE = int(os.environ["CL_IMG_SIZE"])
 if os.environ.get("CL_IGNORE_NEG_SIM"):
     IGNORE_NEG_SIM = float(os.environ["CL_IGNORE_NEG_SIM"])
 if os.environ.get("CL_NCE_TEMP"):
@@ -1028,6 +1030,7 @@ if __name__ == "__main__":
     _ap.add_argument("--no-eval", action="store_true",
                      help="현업 classless train only. eval/HDBSCAN metric 생략.")
     _ap.add_argument("--batch", type=int, default=None, help="BATCH_PER_GPU override.")
+    _ap.add_argument("--img-size", type=int, default=None, help="contrastive input size. 기본 512")
     _ap.add_argument("--ignore-neg-sim", type=float, default=None,
                      help="NEG filter threshold. 예: 0.90 또는 0.95")
     _ap.add_argument("--nce-temp", type=float, default=None,
@@ -1046,6 +1049,7 @@ if __name__ == "__main__":
     if _a.eval_dirs:          os.environ["CL_EVAL_DIRS"] = _a.eval_dirs
     if _a.no_eval:            os.environ["CL_NO_EVAL"] = "1"
     if _a.batch is not None:  os.environ["CL_BATCH_PER_GPU"] = str(_a.batch)
+    if _a.img_size is not None: os.environ["CL_IMG_SIZE"] = str(_a.img_size)
     if _a.ignore_neg_sim is not None: os.environ["CL_IGNORE_NEG_SIM"] = str(_a.ignore_neg_sim)
     if _a.nce_temp is not None:       os.environ["CL_NCE_TEMP"] = str(_a.nce_temp)
     if _a.neco_weight is not None:    os.environ["CL_NECO_WEIGHT"] = str(_a.neco_weight)
@@ -1059,6 +1063,7 @@ if __name__ == "__main__":
     if _a.eval_dirs:          EVAL_DATA_DIR = _a.eval_dirs
     if _a.no_eval:            NO_EVAL = True
     if _a.batch is not None:  BATCH_PER_GPU = _a.batch
+    if _a.img_size is not None: IMG_SIZE = _a.img_size
     if _a.ignore_neg_sim is not None: IGNORE_NEG_SIM = _a.ignore_neg_sim
     if _a.nce_temp is not None:       NCE_TEMP = _a.nce_temp
     if _a.neco_weight is not None:    NECO_WEIGHT = _a.neco_weight

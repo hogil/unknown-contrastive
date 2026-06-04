@@ -33,7 +33,7 @@ FREEZE_BACKBONE       = True       # ★ projection head 만 학습
 OUTPUT_ROOT           = "runs"
 TAG                   = "contrastive"
 
-IMG_SIZE              = 384
+IMG_SIZE              = 512
 PROJ_DIM              = 128
 BATCH                 = 8
 NUM_WORKERS           = 4
