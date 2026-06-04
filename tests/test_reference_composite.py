@@ -44,7 +44,7 @@ class ReferenceCompositeTest(unittest.TestCase):
         (pos_dir / f"{name}.json").write_text(json.dumps(positions), encoding="utf-8")
         return img_path
 
-    def test_square_weighted_average_uses_positions_and_masks(self):
+    def test_linear2_weighted_average_uses_positions_and_masks(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             ref_dir = root / "out"
@@ -53,7 +53,8 @@ class ReferenceCompositeTest(unittest.TestCase):
             pg.REFERENCE_COMPOSITE_MAX_PX = 0
             rows = pg.save_reference_composites(ref_dir, "cluster_000", 1, [img_path])
             self.assertEqual(len(rows), 1)
-            self.assertTrue(rows[0]["filename"].endswith("_square_weighted_average.png"))
+            self.assertTrue(rows[0]["filename"].endswith("_linear2_weighted_average.png"))
+            self.assertEqual(rows[0]["type"], "weighted_linear2_mean")
 
             out = np.asarray(Image.open(rows[0]["path"]))
             self.assertEqual(out[0, 0], 8)       # positions 밖은 background
@@ -80,7 +81,7 @@ class ReferenceCompositeTest(unittest.TestCase):
             self.assertEqual(saved, 2)
             self.assertTrue(composite_dir.is_dir())
             self.assertTrue((composite_dir / "composite_maps.csv").exists())
-            self.assertEqual(len(list(composite_dir.glob("*square_weighted_average.png"))), 1)
+            self.assertEqual(len(list(composite_dir.glob("*linear2_weighted_average.png"))), 1)
             self.assertFalse((out_dir / "representatives" / "reference").exists())
 
 

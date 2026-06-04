@@ -44,7 +44,7 @@ OUTPUT_DIR          = "result_grouping"
 COPY_PNG_TO_GROUPS  = False        # True 면 group 폴더에 PNG 복사 (디스크 증가)
 SAVE_REPRESENTATIVES = True        # cluster별 중심에 가까운 대표 이미지만 저장
 REPS_PER_CLUSTER    = 30
-SAVE_REFERENCE_COMPOSITES = True   # representatives/composite/ 에 cluster별 square_weighted_average 저장
+SAVE_REFERENCE_COMPOSITES = True   # representatives/composite/ 에 cluster별 linear2_weighted_average 저장
 REFERENCE_COMPOSITE_MAX_PX = 1536  # composite map 최대 한 변 크기. 0 이면 원본 크기 유지
 REPRESENTATIVES_ONLY = None        # 기존 grouping 결과 폴더에 representatives 만 후처리
 
@@ -173,7 +173,7 @@ def _reference_palette(source_palette: list[int] | None) -> list[int]:
     palette[8 * 3:8 * 3 + 3] = np.clip(np.rint(bg), 0, 255).astype(np.uint8).tolist()
 
     # mapviewer style composite gradient, slightly darker than pure white->red
-    # so low/mid weighted-square signals remain visible without over-tinting.
+    # so low/mid weighted signals remain visible without over-tinting.
     start, end, count = 24, 255, 255 - 24 + 1
     for i in range(count):
         ratio = i / max(count - 1, 1)
@@ -286,7 +286,7 @@ def _render_reference_sum_map(base_indices: np.ndarray, value_map: np.ndarray,
 
 def save_reference_composites(reference_dir: Path, label: str, cluster_size: int,
                               image_paths: list[Path]) -> list[dict]:
-    """대표 이미지들로 mapviewer식 square_weighted_average 저장."""
+    """대표 이미지들로 mapviewer식 linear2_weighted_average 저장."""
     valid = [Path(p) for p in image_paths if Path(p).exists()]
     if not valid:
         return []
@@ -332,18 +332,21 @@ def save_reference_composites(reference_dir: Path, label: str, cluster_size: int
     chip_inner_mask = base_indices == 0
 
     grade_counts_float = grade_counts.astype(np.float32, copy=False)
-    square_weights = (np.arange(8, dtype=np.float32) ** 2).reshape(8, 1, 1)
-    square_sums = np.sum(grade_counts_float * square_weights, axis=0, dtype=np.float32)
+    # 기존 square(g^2)는 고 grade가 과하게 강해질 수 있어, grade 2 이상은 g*2로 완화.
+    # g: 0 1 2 3 4 5 6 7  →  w: 0 1 4 6 8 10 12 14
+    linear2_weights = np.asarray([0, 1, 4, 6, 8, 10, 12, 14],
+                                 dtype=np.float32).reshape(8, 1, 1)
+    linear2_sums = np.sum(grade_counts_float * linear2_weights, axis=0, dtype=np.float32)
     weight_factors = np.asarray([1, 1, 2, 3, 4, 5, 6, 7], dtype=np.float32).reshape(8, 1, 1)
     weight_sum = np.sum(grade_counts_float * weight_factors, axis=0, dtype=np.float32)
     weighted_mask = chip_inner_mask & ~idx_8_13_only & ~invalid_mask & (weight_sum > 0)
-    square_weighted_average = np.zeros_like(square_sums, dtype=np.float32)
-    square_weighted_average[weighted_mask] = square_sums[weighted_mask] / weight_sum[weighted_mask]
+    linear2_weighted_average = np.zeros_like(linear2_sums, dtype=np.float32)
+    linear2_weighted_average[weighted_mask] = linear2_sums[weighted_mask] / weight_sum[weighted_mask]
 
     rows = []
     safe = _safe_name(label)
     variants = [
-        ("square_weighted_average", "weighted_square_mean", square_weighted_average, weighted_mask),
+        ("linear2_weighted_average", "weighted_linear2_mean", linear2_weighted_average, weighted_mask),
     ]
     for suffix, variant_type, value_map, mask in variants:
         out = reference_dir / f"{safe}_n-{cluster_size}_reps-{used}_{suffix}.png"
