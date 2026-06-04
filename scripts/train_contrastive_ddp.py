@@ -33,13 +33,13 @@ WARMUP_EPOCHS         = 1
 TRAIN_SAMPLING_RATIO  = 0.25
 LR_HEAD               = 1e-3
 WEIGHT_DECAY          = 1e-6
-NCE_TEMP              = 0.07
+NCE_TEMP              = 0.05
 GRAD_CLIP             = 1.0
 LABEL_SMOOTHING       = 0.02
 
 USE_QUEUE             = True
 QUEUE_SIZE            = 4096
-IGNORE_NEG_SIM        = 0.90
+IGNORE_NEG_SIM        = 0.95
 USE_LOCAL             = False
 NECO_WEIGHT           = 0.2
 NECO_TAU              = 0.1
@@ -110,6 +110,8 @@ if os.environ.get("CL_BATCH_PER_GPU"):
     BATCH_PER_GPU = int(os.environ["CL_BATCH_PER_GPU"])
 if os.environ.get("CL_IGNORE_NEG_SIM"):
     IGNORE_NEG_SIM = float(os.environ["CL_IGNORE_NEG_SIM"])
+if os.environ.get("CL_NCE_TEMP"):
+    NCE_TEMP = float(os.environ["CL_NCE_TEMP"])
 if os.environ.get("CL_NECO_WEIGHT"):
     NECO_WEIGHT = float(os.environ["CL_NECO_WEIGHT"])
 if os.environ.get("CL_NECO_TAU"):
@@ -1027,7 +1029,9 @@ if __name__ == "__main__":
                      help="현업 classless train only. eval/HDBSCAN metric 생략.")
     _ap.add_argument("--batch", type=int, default=None, help="BATCH_PER_GPU override.")
     _ap.add_argument("--ignore-neg-sim", type=float, default=None,
-                     help="NEG filter threshold. 예: 0.72 또는 0.85")
+                     help="NEG filter threshold. 예: 0.90 또는 0.95")
+    _ap.add_argument("--nce-temp", type=float, default=None,
+                     help="InfoNCE temperature. 낮을수록 similarity 차이에 민감. 예: 0.05")
     _ap.add_argument("--neco-weight", type=float, default=None,
                      help="B6 NeCo weight. 기본 0.2, 0이면 NeCo OFF.")
     _ap.add_argument("--neco-tau", type=float, default=None,
@@ -1043,6 +1047,7 @@ if __name__ == "__main__":
     if _a.no_eval:            os.environ["CL_NO_EVAL"] = "1"
     if _a.batch is not None:  os.environ["CL_BATCH_PER_GPU"] = str(_a.batch)
     if _a.ignore_neg_sim is not None: os.environ["CL_IGNORE_NEG_SIM"] = str(_a.ignore_neg_sim)
+    if _a.nce_temp is not None:       os.environ["CL_NCE_TEMP"] = str(_a.nce_temp)
     if _a.neco_weight is not None:    os.environ["CL_NECO_WEIGHT"] = str(_a.neco_weight)
     if _a.neco_tau is not None:       os.environ["CL_NECO_TAU"] = str(_a.neco_tau)
     # 부모 프로세스의 현재 module global 도 즉시 반영 (world_size<=1 직접 호출 경로)
@@ -1055,6 +1060,7 @@ if __name__ == "__main__":
     if _a.no_eval:            NO_EVAL = True
     if _a.batch is not None:  BATCH_PER_GPU = _a.batch
     if _a.ignore_neg_sim is not None: IGNORE_NEG_SIM = _a.ignore_neg_sim
+    if _a.nce_temp is not None:       NCE_TEMP = _a.nce_temp
     if _a.neco_weight is not None:    NECO_WEIGHT = _a.neco_weight
     if _a.neco_tau is not None:       NECO_TAU = _a.neco_tau
     launch_ddp(train_worker)

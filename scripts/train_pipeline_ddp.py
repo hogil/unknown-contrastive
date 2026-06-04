@@ -26,7 +26,8 @@ CL_BATCH_PER_GPU      = 64             # frozen backbone → 가벼움, contrast
 GROUPING_BATCH        = 128
 GROUPING_WORKERS      = 64
 GROUPING_REPS_PER_CLUSTER = 30
-CL_IGNORE_NEG_SIM     = 0.90
+CL_IGNORE_NEG_SIM     = 0.95
+CL_NCE_TEMP           = 0.05
 CL_NECO_WEIGHT        = 0.2
 CL_NECO_TAU           = 0.1
 
@@ -346,6 +347,7 @@ def main():
     # CNN backbone + tag 를 env 로 주입 (mp.spawn 자식이 module-level 에서 읽음)
     env["CL_BACKBONE_CKPT"] = str(cnn_best)
     env["CL_IGNORE_NEG_SIM"] = str(CL_IGNORE_NEG_SIM)
+    env["CL_NCE_TEMP"] = str(CL_NCE_TEMP)
     env["CL_NECO_WEIGHT"] = str(CL_NECO_WEIGHT)
     env["CL_NECO_TAU"] = str(CL_NECO_TAU)
     if args.prod_train_dirs:

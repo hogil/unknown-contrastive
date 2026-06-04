@@ -42,14 +42,14 @@ WARMUP_EPOCHS         = 1
 TRAIN_SAMPLING_RATIO  = 0.25       # 매 epoch 25% 무작위
 LR_HEAD               = 1e-3
 WEIGHT_DECAY          = 1e-6
-NCE_TEMP              = 0.07
+NCE_TEMP              = 0.05
 GRAD_CLIP             = 1.0
 LABEL_SMOOTHING       = 0.02
 
 # 4-tool recipe (Step 2b SOTA)
 USE_QUEUE             = True
 QUEUE_SIZE            = 4096
-IGNORE_NEG_SIM        = 0.90       # NV-Retriever NEG filter
+IGNORE_NEG_SIM        = 0.95       # NV-Retriever NEG filter
 USE_LOCAL             = False      # ★ Local DenseCL OFF (4-tool 최종)
 NECO_WEIGHT           = 0.2
 NECO_TAU              = 0.1
