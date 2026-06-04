@@ -48,13 +48,15 @@ class ReferenceCompositeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             ref_dir = root / "out"
-            img_path = self._make_positioned_image(root, "wafer")
+            img_path = self._make_positioned_image(root, "wafer_a")
+            img_path_2 = self._make_positioned_image(root, "wafer_b")
 
             pg.REFERENCE_COMPOSITE_MAX_PX = 0
-            rows = pg.save_reference_composites(ref_dir, "cluster_000", 1, [img_path])
+            rows = pg.save_reference_composites(ref_dir, "cluster_000", 2, [img_path, img_path_2])
             self.assertEqual(len(rows), 1)
             self.assertTrue(rows[0]["filename"].endswith("_linear2_weighted_average.png"))
             self.assertEqual(rows[0]["type"], "weighted_linear2_mean")
+            self.assertEqual(rows[0]["min_support"], 2)
 
             out = np.asarray(Image.open(rows[0]["path"]))
             self.assertEqual(out[0, 0], 8)       # positions 밖은 background

@@ -46,6 +46,8 @@ SAVE_REPRESENTATIVES = True        # cluster별 중심에 가까운 대표 이�
 REPS_PER_CLUSTER    = 30
 SAVE_REFERENCE_COMPOSITES = True   # representatives/composite/ 에 cluster별 linear2_weighted_average 저장
 REFERENCE_COMPOSITE_MAX_PX = 1536  # composite map 최대 한 변 크기. 0 이면 원본 크기 유지
+REFERENCE_COMPOSITE_MIN_SUPPORT = 2
+REFERENCE_COMPOSITE_MIN_SUPPORT_RATIO = 0.10
 REPRESENTATIVES_ONLY = None        # 기존 grouping 결과 폴더에 representatives 만 후처리
 
 # Inference
@@ -305,6 +307,7 @@ def save_reference_composites(reference_dir: Path, label: str, cluster_size: int
     has_0_7 = np.zeros((height, width), dtype=bool)
     has_8_13 = np.zeros((height, width), dtype=bool)
     all_invalid = np.ones((height, width), dtype=bool)
+    defect_support = np.zeros((height, width), dtype=np.uint16)
     used = 0
     for src in valid:
         arr = _load_palette_index_array(src, target_size)
@@ -318,6 +321,7 @@ def save_reference_composites(reference_dir: Path, label: str, cluster_size: int
         has_0_7 |= (~ge8) | ge14
         has_8_13 |= mid
         all_invalid &= ge14
+        defect_support += ((arr >= 1) & (arr <= 7))
         grade_counts[0] += ge14
         for grade in range(8):
             grade_counts[grade] += (arr == grade)
@@ -339,7 +343,14 @@ def save_reference_composites(reference_dir: Path, label: str, cluster_size: int
     linear2_sums = np.sum(grade_counts_float * linear2_weights, axis=0, dtype=np.float32)
     weight_factors = np.asarray([1, 1, 2, 3, 4, 5, 6, 7], dtype=np.float32).reshape(8, 1, 1)
     weight_sum = np.sum(grade_counts_float * weight_factors, axis=0, dtype=np.float32)
-    weighted_mask = chip_inner_mask & ~idx_8_13_only & ~invalid_mask & (weight_sum > 0)
+    min_support = max(
+        REFERENCE_COMPOSITE_MIN_SUPPORT,
+        int(np.ceil(float(used) * REFERENCE_COMPOSITE_MIN_SUPPORT_RATIO)),
+    )
+    weighted_mask = (
+        chip_inner_mask & ~idx_8_13_only & ~invalid_mask &
+        (weight_sum > 0) & (defect_support >= min_support)
+    )
     linear2_weighted_average = np.zeros_like(linear2_sums, dtype=np.float32)
     linear2_weighted_average[weighted_mask] = linear2_sums[weighted_mask] / weight_sum[weighted_mask]
 
@@ -361,6 +372,8 @@ def save_reference_composites(reference_dir: Path, label: str, cluster_size: int
             "filename": out.name,
             "cluster_size": cluster_size,
             "representatives_used": used,
+            "min_support": min_support,
+            "support_rule": "defect_support>=max(2,ceil(reps*0.10))",
             "path": str(out),
             "width": target_size[0],
             "height": target_size[1],
@@ -433,7 +446,8 @@ def save_grouping_representatives(output_subdir: Path, embeddings: np.ndarray,
         with (composite_dir / "composite_maps.csv").open("w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=[
                 "cluster_id", "label", "type", "filename", "cluster_size",
-                "representatives_used", "width", "height", "path",
+                "representatives_used", "min_support", "support_rule",
+                "width", "height", "path",
             ])
             w.writeheader()
             w.writerows(composite_rows)
