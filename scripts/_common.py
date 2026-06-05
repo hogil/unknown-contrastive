@@ -63,14 +63,13 @@ def mask_palette_non_grade_to_white(img, enabled: bool = True):
     palette = img.getpalette()
     if not palette:
         return img
-    out = img.copy()
     pal = list(palette)
     if len(pal) < 768:
         pal.extend([0] * (768 - len(pal)))
     for idx in range(8, 256):
         pal[idx * 3:idx * 3 + 3] = [255, 255, 255]
-    out.putpalette(pal[:768])
-    return out
+    img.putpalette(pal[:768])
+    return img
 
 
 # ===================== Run directory =====================
