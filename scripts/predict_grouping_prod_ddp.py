@@ -56,7 +56,17 @@ def _cluster_and_save(embeddings: np.ndarray, all_path: list[str], corrupt: list
     pred = clusterer.fit_predict(embeddings)
     n_clusters = len(set(p for p in pred if p >= 0))
     n_noise = int((pred == -1).sum())
-    print(f"[cluster] {n_clusters} groups + {n_noise} noise ({n_noise/len(pred)*100:.1f}%)", flush=True)
+    cnts = Counter(pred.tolist())
+    non_noise_sizes = [c for g, c in cnts.items() if int(g) != -1]
+    largest_group = max(non_noise_sizes) if non_noise_sizes else 0
+    largest_group_pct = largest_group / max(1, len(pred)) * 100.0
+    top_groups = sorted(
+        ((int(g), int(c), int(c) / max(1, len(pred)) * 100.0) for g, c in cnts.items()),
+        key=lambda x: x[1], reverse=True,
+    )[:5]
+    top_groups_text = ", ".join(f"{g}:{c}({pct:.1f}%)" for g, c, pct in top_groups)
+    print(f"[cluster] {n_clusters} groups + {n_noise} noise ({n_noise/len(pred)*100:.1f}%) "
+          f"| largest={largest_group_pct:.1f}% | top={top_groups_text}", flush=True)
 
     output_subdir.mkdir(parents=True, exist_ok=True)
     print(f"[save] writing outputs -> {output_subdir}", flush=True)
@@ -91,11 +101,17 @@ def _cluster_and_save(embeddings: np.ndarray, all_path: list[str], corrupt: list
         "n_clusters": n_clusters,
         "n_noise": n_noise,
         "noise_pct": round(n_noise / len(pred) * 100, 2),
+        "largest_group_size": int(largest_group),
+        "largest_group_pct": round(largest_group_pct, 2),
+        "top_groups": [
+            {"group_id": int(g), "size": int(c), "pct": round(float(pct), 2)}
+            for g, c, pct in top_groups
+        ],
         "embed_dim": int(embeddings.shape[1]),
         "groups": {},
         "ddp_world_size": dist.get_world_size() if dist.is_initialized() else 1,
     }
-    for g, c in sorted(Counter(pred.tolist()).items()):
+    for g, c in sorted(cnts.items()):
         summary["groups"][str(int(g))] = c
 
     n_representatives = 0
@@ -299,9 +315,11 @@ def worker(rank: int, world_size: int):
                 all_summaries.append(s)
                 pg.log_stage_metric(run_dir, f"grouping_{product}_{line}_{date}" if product else "grouping",
                                     {"n_images": s["n_images"], "n_clusters": s["n_clusters"],
-                                     "n_noise": s["n_noise"], "noise_pct": s["noise_pct"]})
+                                     "n_noise": s["n_noise"], "noise_pct": s["noise_pct"],
+                                     "largest_group_pct": s["largest_group_pct"]})
                 print(f"[target {ti}/{len(targets)}] done clusters={s['n_clusters']} "
-                      f"noise={s['n_noise']} ({s['noise_pct']}%)", flush=True)
+                      f"noise={s['n_noise']} ({s['noise_pct']}%) "
+                      f"largest={s['largest_group_pct']}%", flush=True)
         dist.barrier()
 
     if is_main(rank):

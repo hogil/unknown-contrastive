@@ -29,55 +29,57 @@ DEFAULT_REPS_PER_CLUSTER = 30
 
 
 CONDITIONS = [
+    # 넓게 합쳐지는 현상 확인용 strict sweep.
+    # epsilon > 0 은 가까운 cluster 를 다시 붙이는 쪽이라 기본 sweep 에서 제거한다.
     {
-        "id": "01_current_leaf06",
+        "id": "01_paper_eom_m12_s3_eps0",
         "epochs": 20, "img": 512, "ignore": 0.95, "temp": 0.05, "neco": 0.2,
-        "mcs": 12, "ms": 15, "method": "leaf", "epsilon": 0.06,
+        "mcs": 12, "ms": 3, "method": "eom", "epsilon": 0.0,
     },
     {
-        "id": "02_leaf03_mcs20_ms10",
+        "id": "02_leaf_m12_s3_eps0",
         "epochs": 20, "img": 512, "ignore": 0.95, "temp": 0.05, "neco": 0.2,
-        "mcs": 20, "ms": 10, "method": "leaf", "epsilon": 0.03,
+        "mcs": 12, "ms": 3, "method": "leaf", "epsilon": 0.0,
     },
     {
-        "id": "03_leaf06_mcs20_ms10",
+        "id": "03_leaf_m8_s2_eps0",
         "epochs": 20, "img": 512, "ignore": 0.95, "temp": 0.05, "neco": 0.2,
-        "mcs": 20, "ms": 10, "method": "leaf", "epsilon": 0.06,
+        "mcs": 8, "ms": 2, "method": "leaf", "epsilon": 0.0,
     },
     {
-        "id": "04_leaf10_mcs20_ms10",
+        "id": "04_leaf_m6_s2_eps0",
         "epochs": 20, "img": 512, "ignore": 0.95, "temp": 0.05, "neco": 0.2,
-        "mcs": 20, "ms": 10, "method": "leaf", "epsilon": 0.10,
+        "mcs": 6, "ms": 2, "method": "leaf", "epsilon": 0.0,
     },
     {
-        "id": "05_temp004_leaf06",
+        "id": "05_eom_m8_s2_eps0",
+        "epochs": 20, "img": 512, "ignore": 0.95, "temp": 0.05, "neco": 0.2,
+        "mcs": 8, "ms": 2, "method": "eom", "epsilon": 0.0,
+    },
+    {
+        "id": "06_eom_m12_s1_eps0",
+        "epochs": 20, "img": 512, "ignore": 0.95, "temp": 0.05, "neco": 0.2,
+        "mcs": 12, "ms": 1, "method": "eom", "epsilon": 0.0,
+    },
+    {
+        "id": "07_no_neg_ignore_eom",
+        "epochs": 20, "img": 512, "ignore": 1.01, "temp": 0.05, "neco": 0.2,
+        "mcs": 12, "ms": 3, "method": "eom", "epsilon": 0.0,
+    },
+    {
+        "id": "08_temp004_eom",
         "epochs": 20, "img": 512, "ignore": 0.95, "temp": 0.04, "neco": 0.2,
-        "mcs": 20, "ms": 10, "method": "leaf", "epsilon": 0.06,
+        "mcs": 12, "ms": 3, "method": "eom", "epsilon": 0.0,
     },
     {
-        "id": "06_neg097_leaf06",
-        "epochs": 20, "img": 512, "ignore": 0.97, "temp": 0.05, "neco": 0.2,
-        "mcs": 20, "ms": 10, "method": "leaf", "epsilon": 0.06,
-    },
-    {
-        "id": "07_neco04_leaf06",
+        "id": "09_neco04_eom",
         "epochs": 20, "img": 512, "ignore": 0.95, "temp": 0.05, "neco": 0.4,
-        "mcs": 20, "ms": 10, "method": "leaf", "epsilon": 0.06,
+        "mcs": 12, "ms": 3, "method": "eom", "epsilon": 0.0,
     },
     {
-        "id": "08_neco01_leaf06",
-        "epochs": 20, "img": 512, "ignore": 0.95, "temp": 0.05, "neco": 0.1,
-        "mcs": 20, "ms": 10, "method": "leaf", "epsilon": 0.06,
-    },
-    {
-        "id": "09_epoch30_leaf06",
+        "id": "10_epoch30_eom",
         "epochs": 30, "img": 512, "ignore": 0.95, "temp": 0.05, "neco": 0.2,
-        "mcs": 20, "ms": 10, "method": "leaf", "epsilon": 0.06,
-    },
-    {
-        "id": "10_leaf06_mcs20_ms15",
-        "epochs": 20, "img": 512, "ignore": 0.95, "temp": 0.05, "neco": 0.2,
-        "mcs": 20, "ms": 15, "method": "leaf", "epsilon": 0.06,
+        "mcs": 12, "ms": 3, "method": "eom", "epsilon": 0.0,
     },
 ]
 
@@ -173,6 +175,27 @@ def _newest_after(root: Path, pattern: str, started: float) -> str | None:
     return str(sorted(hits, key=lambda p: p.stat().st_mtime, reverse=True)[0])
 
 
+def _load_grouping_stats(grouping_run: str | None) -> dict | None:
+    if not grouping_run:
+        return None
+    p = Path(grouping_run) / "all_summaries.json"
+    if not p.exists():
+        return None
+    try:
+        rows = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not rows:
+        return None
+    return {
+        "targets": len(rows),
+        "n_clusters": [r.get("n_clusters") for r in rows],
+        "noise_pct": [r.get("noise_pct") for r in rows],
+        "largest_group_pct": [r.get("largest_group_pct") for r in rows],
+        "top_groups": [r.get("top_groups") for r in rows],
+    }
+
+
 def main():
     args = parse_args()
     repo = Path(__file__).resolve().parents[1]
@@ -250,6 +273,7 @@ def main():
             rc = _run_and_tee(cmd, repo, log_path)
 
         elapsed_min = round((time.time() - started) / 60, 2)
+        grouping_run = _newest_after(repo / "result_grouping", "*_grouping_ddp", started)
         row = {
             "condition": cond,
             "returncode": rc,
@@ -257,7 +281,8 @@ def main():
             "log": str(log_path),
             "pipeline_run": _newest_after(repo / "runs", "*_pipeline_ddp", started),
             "contrastive_run": _newest_after(repo / "runs", "*_contrastive_prod_ddp_pipe", started),
-            "grouping_run": _newest_after(repo / "result_grouping", "*_grouping_ddp", started),
+            "grouping_run": grouping_run,
+            "grouping_stats": _load_grouping_stats(grouping_run),
             "command": cmd,
         }
         summary.append(row)
