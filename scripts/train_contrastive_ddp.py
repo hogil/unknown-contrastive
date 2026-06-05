@@ -115,6 +115,8 @@ if os.environ.get("CL_IGNORE_NEG_SIM"):
     IGNORE_NEG_SIM = float(os.environ["CL_IGNORE_NEG_SIM"])
 if os.environ.get("CL_NCE_TEMP"):
     NCE_TEMP = float(os.environ["CL_NCE_TEMP"])
+if os.environ.get("CL_LR_HEAD"):
+    LR_HEAD = float(os.environ["CL_LR_HEAD"])
 if os.environ.get("CL_NECO_WEIGHT"):
     NECO_WEIGHT = float(os.environ["CL_NECO_WEIGHT"])
 if os.environ.get("CL_NECO_TAU"):
@@ -1041,6 +1043,8 @@ if __name__ == "__main__":
                      help="NEG filter threshold. 예: 0.90 또는 0.95")
     _ap.add_argument("--nce-temp", type=float, default=None,
                      help="InfoNCE temperature. 낮을수록 similarity 차이에 민감. 예: 0.05")
+    _ap.add_argument("--lr-head", type=float, default=None,
+                     help="projection head learning rate. 예: 5e-4")
     _ap.add_argument("--neco-weight", type=float, default=None,
                      help="B6 NeCo weight. 기본 0.2, 0이면 NeCo OFF.")
     _ap.add_argument("--neco-tau", type=float, default=None,
@@ -1058,6 +1062,7 @@ if __name__ == "__main__":
     if _a.img_size is not None: os.environ["CL_IMG_SIZE"] = str(_a.img_size)
     if _a.ignore_neg_sim is not None: os.environ["CL_IGNORE_NEG_SIM"] = str(_a.ignore_neg_sim)
     if _a.nce_temp is not None:       os.environ["CL_NCE_TEMP"] = str(_a.nce_temp)
+    if _a.lr_head is not None:        os.environ["CL_LR_HEAD"] = str(_a.lr_head)
     if _a.neco_weight is not None:    os.environ["CL_NECO_WEIGHT"] = str(_a.neco_weight)
     if _a.neco_tau is not None:       os.environ["CL_NECO_TAU"] = str(_a.neco_tau)
     # 부모 프로세스의 현재 module global 도 즉시 반영 (world_size<=1 직접 호출 경로)
@@ -1072,6 +1077,7 @@ if __name__ == "__main__":
     if _a.img_size is not None: IMG_SIZE = _a.img_size
     if _a.ignore_neg_sim is not None: IGNORE_NEG_SIM = _a.ignore_neg_sim
     if _a.nce_temp is not None:       NCE_TEMP = _a.nce_temp
+    if _a.lr_head is not None:        LR_HEAD = _a.lr_head
     if _a.neco_weight is not None:    NECO_WEIGHT = _a.neco_weight
     if _a.neco_tau is not None:       NECO_TAU = _a.neco_tau
     launch_ddp(train_worker)

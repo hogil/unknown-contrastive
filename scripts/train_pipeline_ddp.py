@@ -33,6 +33,7 @@ GROUPING_CLUSTER_SELECTION_METHOD = "leaf"
 GROUPING_CLUSTER_SELECTION_EPSILON = 0.06
 CL_IGNORE_NEG_SIM     = 0.95
 CL_NCE_TEMP           = 0.05
+CL_LR_HEAD            = 1e-3
 CL_NECO_WEIGHT        = 0.2
 CL_NECO_TAU           = 0.1
 
@@ -72,6 +73,8 @@ def parse_args():
                    help="Contrastive IGNORE_NEG_SIM override.")
     p.add_argument("--nce-temp", type=float, default=None,
                    help="Contrastive NCE_TEMP override.")
+    p.add_argument("--cl-lr-head", type=float, default=None,
+                   help="Contrastive projection head LR override.")
     p.add_argument("--neco-weight", type=float, default=None,
                    help="Contrastive NeCo weight override.")
     p.add_argument("--neco-tau", type=float, default=None,
@@ -185,7 +188,7 @@ def _resolve_cnn_best_arg(resolve_path, raw: str) -> Path:
 
 def main():
     global CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR, CNN_BATCH_PER_GPU, CL_BATCH_PER_GPU, SOURCE_ROOT
-    global CL_IMG_SIZE, CL_IGNORE_NEG_SIM, CL_NCE_TEMP, CL_NECO_WEIGHT, CL_NECO_TAU
+    global CL_IMG_SIZE, CL_IGNORE_NEG_SIM, CL_NCE_TEMP, CL_LR_HEAD, CL_NECO_WEIGHT, CL_NECO_TAU
     global GROUPING_MIN_CLUSTER_SIZE, GROUPING_MIN_SAMPLES
     global GROUPING_CLUSTER_SELECTION_METHOD, GROUPING_CLUSTER_SELECTION_EPSILON
     args = parse_args()
@@ -205,6 +208,8 @@ def main():
         CL_IGNORE_NEG_SIM = args.ignore_neg_sim
     if args.nce_temp is not None:
         CL_NCE_TEMP = args.nce_temp
+    if args.cl_lr_head is not None:
+        CL_LR_HEAD = args.cl_lr_head
     if args.neco_weight is not None:
         CL_NECO_WEIGHT = args.neco_weight
     if args.neco_tau is not None:
@@ -414,6 +419,7 @@ def main():
     env["CL_IMG_SIZE"] = str(CL_IMG_SIZE)
     env["CL_IGNORE_NEG_SIM"] = str(CL_IGNORE_NEG_SIM)
     env["CL_NCE_TEMP"] = str(CL_NCE_TEMP)
+    env["CL_LR_HEAD"] = str(CL_LR_HEAD)
     env["CL_NECO_WEIGHT"] = str(CL_NECO_WEIGHT)
     env["CL_NECO_TAU"] = str(CL_NECO_TAU)
     if args.prod_train_dirs:
@@ -499,6 +505,10 @@ def main():
         "resolved_cnn_data_dir": str(resolved_dirs["CNN_DATA_DIR"]),
         "resolved_cl_train_dir": str(resolved_dirs["CL_TRAIN_DIR"]),
         "resolved_cl_eval_dir": str(resolved_dirs["CL_EVAL_DIR"]),
+        "cl_lr_head": CL_LR_HEAD,
+        "cl_ignore_neg_sim": CL_IGNORE_NEG_SIM,
+        "cl_nce_temp": CL_NCE_TEMP,
+        "cl_neco_weight": CL_NECO_WEIGHT,
         "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", "(unset)"),
         "finished_at": datetime.now().isoformat(),
     }

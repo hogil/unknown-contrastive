@@ -71,6 +71,7 @@ def main():
         "--prod-epochs", "20",
         "--ignore-neg-sim", "1.01",
         "--nce-temp", "0.05",
+        "--cl-lr-head", "5e-4",
         "--neco-weight", "0.2",
         "--grouping-cluster-selection-method", "eom",
         "--grouping-cluster-selection-epsilon", "0.0",
