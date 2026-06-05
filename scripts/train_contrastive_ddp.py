@@ -32,6 +32,7 @@ EPOCHS                = 20
 WARMUP_EPOCHS         = 1
 TRAIN_SAMPLING_RATIO  = 0.25
 LR_HEAD               = 1e-3
+LR_MIN                = 1e-6
 WEIGHT_DECAY          = 1e-6
 NCE_TEMP              = 0.05
 GRAD_CLIP             = 1.0
@@ -63,6 +64,7 @@ REPRESENTATIVES_PER_CLUSTER = 5
 # ===================================================================
 
 import json
+import math
 import os
 import random
 import shutil
@@ -129,6 +131,15 @@ NO_EVAL = NO_EVAL or os.environ.get("CL_NO_EVAL", "").strip().lower() in {"1", "
 def seed_all(s=42):
     random.seed(s); np.random.seed(s)
     torch.manual_seed(s); torch.cuda.manual_seed_all(s)
+
+
+def contrastive_lr_for_epoch(ep: int) -> float:
+    """Warmup 후 cosine decay. CNN/anomaly stage 와 같은 LR shape."""
+    if WARMUP_EPOCHS > 0 and ep <= WARMUP_EPOCHS:
+        return LR_HEAD * ep / max(1, WARMUP_EPOCHS)
+    decay_epochs = max(1, EPOCHS - WARMUP_EPOCHS)
+    t = min(1.0, max(0.0, (ep - WARMUP_EPOCHS) / decay_epochs))
+    return LR_MIN + 0.5 * (LR_HEAD - LR_MIN) * (1.0 + math.cos(math.pi * t))
 
 
 # ---------- Dataset ----------
@@ -762,6 +773,7 @@ def train_worker(rank, world_size):
             "world_size": world_size,
             "backbone_source": str(bp), "freeze_backbone": FREEZE_BACKBONE,
             "batch_per_gpu": BATCH_PER_GPU, "total_batch": BATCH_PER_GPU * world_size,
+            "lr_head": LR_HEAD, "lr_min": LR_MIN, "lr_schedule": "warmup_cosine_epoch",
             "queue_size": QUEUE_SIZE if USE_QUEUE else 0,
             "ignore_neg_sim": IGNORE_NEG_SIM,
             "use_local": USE_LOCAL,
@@ -787,8 +799,7 @@ def train_worker(rank, world_size):
         sampler = DistributedSampler(sub, num_replicas=world_size, rank=rank, shuffle=True, seed=SEED + ep)
         ld = DataLoader(sub, batch_size=BATCH_PER_GPU, sampler=sampler,
                         num_workers=nw, pin_memory=True, drop_last=True)
-        # warmup
-        lr = LR_HEAD * min(1.0, ep / max(1, WARMUP_EPOCHS))
+        lr = contrastive_lr_for_epoch(ep)
         for g in opt.param_groups: g["lr"] = lr
 
         model.train()
