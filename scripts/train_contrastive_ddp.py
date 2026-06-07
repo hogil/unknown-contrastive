@@ -45,6 +45,7 @@ USE_LOCAL             = False
 LOCAL_WEIGHT          = 0.0
 LOCAL_TAU             = 0.1
 LOCAL_GRID            = 6
+LOCAL_WINDOW          = 1
 NECO_WEIGHT           = 0.2
 NECO_TAU              = 0.1
 NECO_GRID             = 0
@@ -135,6 +136,8 @@ if os.environ.get("CL_LOCAL_TAU"):
     LOCAL_TAU = float(os.environ["CL_LOCAL_TAU"])
 if os.environ.get("CL_LOCAL_GRID"):
     LOCAL_GRID = int(os.environ["CL_LOCAL_GRID"])
+if os.environ.get("CL_LOCAL_WINDOW"):
+    LOCAL_WINDOW = int(os.environ["CL_LOCAL_WINDOW"])
 if os.environ.get("CL_USE_QUEUE"):
     USE_QUEUE = os.environ["CL_USE_QUEUE"].strip().lower() in {"1", "true", "yes", "y"}
 if os.environ.get("CL_QUEUE_SIZE"):
@@ -670,33 +673,60 @@ def masked_pos_cross_entropy(logits, label_smoothing):
 
 
 def grid_anchor_indices(n: int, grid_size: int, device):
+    idx, _ = grid_anchor_index_and_coords(n, grid_size, device)
+    return idx
+
+
+def grid_anchor_index_and_coords(n: int, grid_size: int, device):
     if grid_size is None or grid_size <= 0 or grid_size * grid_size >= n:
-        return None
+        side = int(round(math.sqrt(n)))
+        if side * side == n:
+            yy, xx = torch.meshgrid(torch.arange(side, device=device),
+                                    torch.arange(side, device=device),
+                                    indexing="ij")
+            return None, torch.stack([yy.reshape(-1), xx.reshape(-1)], dim=1)
+        return None, torch.arange(n, device=device).view(-1, 1)
     side = int(round(math.sqrt(n)))
     if side * side != n:
-        return torch.linspace(0, n - 1, steps=min(n, grid_size * grid_size),
-                              device=device).round().long().unique()
+        idx = torch.linspace(0, n - 1, steps=min(n, grid_size * grid_size),
+                             device=device).round().long().unique()
+        return idx, torch.arange(idx.numel(), device=device).view(-1, 1)
     g = min(grid_size, side)
     ys = torch.linspace(0, side - 1, steps=g, device=device).round().long().unique()
     xs = torch.linspace(0, side - 1, steps=g, device=device).round().long().unique()
     yy, xx = torch.meshgrid(ys, xs, indexing="ij")
-    return (yy.reshape(-1) * side + xx.reshape(-1)).long()
+    gy, gx = torch.meshgrid(torch.arange(ys.numel(), device=device),
+                            torch.arange(xs.numel(), device=device),
+                            indexing="ij")
+    return (yy.reshape(-1) * side + xx.reshape(-1)).long(), torch.stack(
+        [gy.reshape(-1), gx.reshape(-1)], dim=1)
 
 
-def local_grid_loss(p1, p2, tau, grid_size):
-    """Patch-level InfoNCE over matching grid locations only."""
+def local_grid_loss(p1, p2, tau, grid_size, window):
+    """Patch-level InfoNCE over matching/nearby grid locations."""
     if p1.ndim != 3 or p2.ndim != 3:
         raise ValueError("local_grid_loss expects [B, N, D] patch embeddings")
-    idx = grid_anchor_indices(p1.size(1), grid_size, p1.device)
+    idx, coords = grid_anchor_index_and_coords(p1.size(1), grid_size, p1.device)
     if idx is not None:
         p1 = p1.index_select(1, idx)
         p2 = p2.index_select(1, idx)
     a = p1.size(1)
-    labels = torch.arange(a, device=p1.device).repeat(p1.size(0))
-    logits_12 = torch.bmm(p1, p2.transpose(1, 2)).reshape(-1, a) / tau
-    logits_21 = torch.bmm(p2, p1.transpose(1, 2)).reshape(-1, a) / tau
-    return 0.5 * (F.cross_entropy(logits_12, labels) +
-                  F.cross_entropy(logits_21, labels))
+    logits_12 = torch.bmm(p1, p2.transpose(1, 2)) / tau
+    logits_21 = torch.bmm(p2, p1.transpose(1, 2)) / tau
+    if window is None or window <= 0 or coords.size(1) < 2:
+        labels = torch.arange(a, device=p1.device).repeat(p1.size(0))
+        return 0.5 * (F.cross_entropy(logits_12.reshape(-1, a), labels) +
+                      F.cross_entropy(logits_21.reshape(-1, a), labels))
+    delta = (coords[:, None, :] - coords[None, :, :]).abs()
+    pos_mask = delta.max(dim=-1).values <= int(window)
+
+    def _multi_pos_ce(logits):
+        flat = logits.reshape(-1, a)
+        pm = pos_mask.unsqueeze(0).expand(logits.size(0), -1, -1).reshape(-1, a)
+        masked = flat.masked_fill(~pm, -1e9)
+        return -(torch.logsumexp(masked, dim=1) - torch.logsumexp(flat, dim=1)).mean()
+
+    return 0.5 * (_multi_pos_ce(logits_12) + _multi_pos_ce(logits_21))
 
 
 def neco_loss(p1, p2, tau, grid_size=0):
@@ -868,7 +898,7 @@ def train_worker(rank, world_size):
                 z_cat, p_cat = model(torch.cat([x1, x2], dim=0), return_neco=True)
                 p1, p2 = p_cat[:bs], p_cat[bs:]
                 loss_neco = neco_loss(p1, p2, NECO_TAU, NECO_GRID) if NECO_WEIGHT > 0 else z_cat.new_zeros(())
-                loss_local = local_grid_loss(p1, p2, LOCAL_TAU, LOCAL_GRID) if LOCAL_WEIGHT > 0 else z_cat.new_zeros(())
+                loss_local = local_grid_loss(p1, p2, LOCAL_TAU, LOCAL_GRID, LOCAL_WINDOW) if LOCAL_WEIGHT > 0 else z_cat.new_zeros(())
             else:
                 z_cat = model(torch.cat([x1, x2], dim=0))
                 loss_neco = z_cat.new_zeros(())
@@ -1124,6 +1154,8 @@ if __name__ == "__main__":
                      help="Local grid InfoNCE temperature. 기본 0.1")
     _ap.add_argument("--local-grid", type=int, default=None,
                      help="Local grid anchor size. 예: 6이면 6x6 grid.")
+    _ap.add_argument("--local-window", type=int, default=None,
+                     help="Local grid positive window. 0=same cell, 1=3x3 neighbor.")
     _ap.add_argument("--no-queue", action="store_true",
                      help="MoCo-style queue OFF (ablation).")
     _ap.add_argument("--queue-size", type=int, default=None,
@@ -1148,6 +1180,7 @@ if __name__ == "__main__":
     if _a.local_weight is not None:   os.environ["CL_LOCAL_WEIGHT"] = str(_a.local_weight)
     if _a.local_tau is not None:      os.environ["CL_LOCAL_TAU"] = str(_a.local_tau)
     if _a.local_grid is not None:     os.environ["CL_LOCAL_GRID"] = str(_a.local_grid)
+    if _a.local_window is not None:   os.environ["CL_LOCAL_WINDOW"] = str(_a.local_window)
     if _a.no_queue:                   os.environ["CL_USE_QUEUE"] = "0"
     if _a.queue_size is not None:     os.environ["CL_QUEUE_SIZE"] = str(_a.queue_size)
     # 부모 프로세스의 현재 module global 도 즉시 반영 (world_size<=1 직접 호출 경로)
@@ -1169,6 +1202,7 @@ if __name__ == "__main__":
     if _a.local_weight is not None:   LOCAL_WEIGHT = _a.local_weight
     if _a.local_tau is not None:      LOCAL_TAU = _a.local_tau
     if _a.local_grid is not None:     LOCAL_GRID = _a.local_grid
+    if _a.local_window is not None:   LOCAL_WINDOW = _a.local_window
     if _a.no_queue:                   USE_QUEUE = False
     if _a.queue_size is not None:     QUEUE_SIZE = _a.queue_size
     launch_ddp(train_worker)
