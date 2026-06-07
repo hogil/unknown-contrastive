@@ -74,6 +74,8 @@ def parse_args():
                    help="render waferMap value 1 as light gray instead of white")
     p.add_argument("--copy-mode", choices=["copy", "link"], default="copy",
                    help="copy/link all->train/eval files")
+    p.add_argument("--exclude-manifest", type=str, default=None,
+                   help="manifest.csv whose row_index values are excluded")
     return p.parse_args()
 
 
@@ -144,6 +146,22 @@ def _load_dataframe(pkl: Path):
     return pd.read_pickle(pkl)
 
 
+def _load_excluded_rows(manifest: str | None) -> set[int]:
+    if not manifest:
+        return set()
+    p = resolve_path(manifest)
+    if not p.exists():
+        raise SystemExit(f"--exclude-manifest not found: {p}")
+    out: set[int] = set()
+    with p.open("r", newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            try:
+                out.add(int(row["row_index"]))
+            except Exception:
+                continue
+    return out
+
+
 def _palette() -> list[int]:
     pal = [[255, 255, 255] for _ in range(256)]
     pal[1] = [210, 210, 210]
@@ -208,6 +226,10 @@ def main():
     wanted = [x.strip() for x in args.classes.split(",") if x.strip()]
     wanted_set = set(wanted)
     rng = random.Random(args.seed)
+    excluded_rows = _load_excluded_rows(args.exclude_manifest)
+    if excluded_rows:
+        print(f"[exclude] {len(excluded_rows)} row_index values from {resolve_path(args.exclude_manifest)}",
+              flush=True)
 
     print(f"[load] {pkl}", flush=True)
     df = _load_dataframe(pkl)
@@ -218,6 +240,8 @@ def main():
     if args.normal > 0:
         buckets["Normal"] = []
     for i, row in df.iterrows():
+        if int(i) in excluded_rows:
+            continue
         raw_label = _label_value(row["failureType"])
         label = "Normal" if raw_label.lower() == "none" else raw_label
         if label in wanted_set or (label == "Normal" and args.normal > 0):

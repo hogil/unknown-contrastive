@@ -123,6 +123,10 @@ if os.environ.get("CL_NECO_WEIGHT"):
     NECO_WEIGHT = float(os.environ["CL_NECO_WEIGHT"])
 if os.environ.get("CL_NECO_TAU"):
     NECO_TAU = float(os.environ["CL_NECO_TAU"])
+if os.environ.get("CL_USE_QUEUE"):
+    USE_QUEUE = os.environ["CL_USE_QUEUE"].strip().lower() in {"1", "true", "yes", "y"}
+if os.environ.get("CL_QUEUE_SIZE"):
+    QUEUE_SIZE = int(os.environ["CL_QUEUE_SIZE"])
 TRAIN_DATA_DIR = os.environ.get("CL_TRAIN_DIRS") or TRAIN_DATA_DIR   # 콤마구분 다중 가능
 EVAL_DATA_DIR  = os.environ.get("CL_EVAL_DIRS") or EVAL_DATA_DIR
 NO_EVAL = NO_EVAL or os.environ.get("CL_NO_EVAL", "").strip().lower() in {"1", "true", "yes", "y"}
@@ -1060,6 +1064,10 @@ if __name__ == "__main__":
                      help="B6 NeCo weight. 기본 0.2, 0이면 NeCo OFF.")
     _ap.add_argument("--neco-tau", type=float, default=None,
                      help="NeCo patch-neighbor softmax temperature. 기본 0.1")
+    _ap.add_argument("--no-queue", action="store_true",
+                     help="MoCo-style queue OFF (ablation).")
+    _ap.add_argument("--queue-size", type=int, default=None,
+                     help="MoCo-style queue size override.")
     _a = _ap.parse_args()
     # env 로 세팅 → mp.spawn 자식이 module re-import 시 위 module-level block 에서 읽음
     if _a.backbone:           os.environ["CL_BACKBONE_CKPT"] = _a.backbone
@@ -1076,6 +1084,8 @@ if __name__ == "__main__":
     if _a.lr_head is not None:        os.environ["CL_LR_HEAD"] = str(_a.lr_head)
     if _a.neco_weight is not None:    os.environ["CL_NECO_WEIGHT"] = str(_a.neco_weight)
     if _a.neco_tau is not None:       os.environ["CL_NECO_TAU"] = str(_a.neco_tau)
+    if _a.no_queue:                   os.environ["CL_USE_QUEUE"] = "0"
+    if _a.queue_size is not None:     os.environ["CL_QUEUE_SIZE"] = str(_a.queue_size)
     # 부모 프로세스의 현재 module global 도 즉시 반영 (world_size<=1 직접 호출 경로)
     if _a.backbone:           BACKBONE_CKPT = _a.backbone
     if _a.cnn_run_dir:        CNN_RUN_DIR = _a.cnn_run_dir
@@ -1091,4 +1101,6 @@ if __name__ == "__main__":
     if _a.lr_head is not None:        LR_HEAD = _a.lr_head
     if _a.neco_weight is not None:    NECO_WEIGHT = _a.neco_weight
     if _a.neco_tau is not None:       NECO_TAU = _a.neco_tau
+    if _a.no_queue:                   USE_QUEUE = False
+    if _a.queue_size is not None:     QUEUE_SIZE = _a.queue_size
     launch_ddp(train_worker)
