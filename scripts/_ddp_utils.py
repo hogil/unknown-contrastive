@@ -57,6 +57,8 @@ def setup_ddp(rank: int, world_size: int, port: int | None = None,
     # Windows nccl 미지원 → gloo fallback
     if os.name == "nt" and backend == "nccl":
         backend = "gloo"
+    if os.name == "nt":
+        os.environ.setdefault("USE_LIBUV", "0")
     if torch.cuda.is_available():
         n_dev = torch.cuda.device_count()
         if rank >= n_dev:
