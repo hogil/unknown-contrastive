@@ -12,10 +12,12 @@
     result_grouping/<run>/<folder>/               (grouping 결과 폴더)
     result_grouping/<run>/                        (하위 첫 embeddings.npy)
 
-출력:
-    1) embedding 퍼짐 통계 → collapse(모델 이상) 여부
-    2) HDBSCAN 파라미터 조합별 그룹수/noise% 표
-    3) 평이한 결론 ("embedding 이상" or "파라미터만 바꾸면 됨")
+출력 (벡터간 거리 분석 중심, HDBSCAN 안 함):
+    [A] 벡터 크기(L2 norm) 통계
+    [B] 쌍거리 분포 (cosine/euclid 분위수 + 텍스트 히스토그램)
+    [C] 최근접 이웃 거리 (얼마나 빽빽한가 — epsilon 에 다 들어가는지)
+    [D] 차원 활용도 / PCA 분산 (소수 차원 집중 = collapse)
+    [판정] embedding 이 collapse 인지 정상인지
 """
 from __future__ import annotations
 import sys
@@ -44,90 +46,102 @@ def main():
     print(f"[embeddings] {npy}")
     print(f"  N={n} 개,  dim={dim}")
 
-    # ---------- 1) embedding 퍼짐 (collapse 진단) ----------
-    # L2 정규화 (cosine 기준)
-    norm = emb / (np.linalg.norm(emb, axis=1, keepdims=True) + 1e-9)
     rng = np.random.default_rng(0)
-    m = min(2000, n)                                   # 표본 (쌍거리는 N^2 라 표본)
+
+    # raw norm 통계 (정규화 전 — 벡터 크기 자체가 다 같은지)
+    raw_norms = np.linalg.norm(emb, axis=1)
+    print("\n[A] 벡터 크기(L2 norm, 정규화 전)")
+    print(f"  mean={raw_norms.mean():.4f}  std={raw_norms.std():.4f}  "
+          f"min={raw_norms.min():.4f}  max={raw_norms.max():.4f}")
+
+    # L2 정규화 (cosine/거리 기준 통일)
+    norm = emb / (raw_norms[:, None] + 1e-9)
+
+    # ---------- [B] 쌍거리 분포 (표본) ----------
+    m = min(3000, n)
     idx = rng.choice(n, size=m, replace=False)
     sub = norm[idx]
-    sims = sub @ sub.T                                 # cosine 유사도 행렬
+    sims = sub @ sub.T
     iu = np.triu_indices(m, k=1)
-    pair_sim = sims[iu]
-    mean_sim = float(pair_sim.mean())
-    # 최근접 이웃 유사도 (자기 자신 제외 max)
+    pair_sim = sims[iu]                                   # cosine 유사도
+    pair_cos_dist = 1.0 - pair_sim                        # cosine 거리 (0=동일, 2=정반대)
+    # 유클리드 거리 (정규화 벡터에선 sqrt(2-2cos))
+    pair_eu = np.sqrt(np.clip(2.0 - 2.0 * pair_sim, 0, None))
+
+    qs = [0, 1, 5, 25, 50, 75, 95, 99, 100]
+    cos_q = np.percentile(pair_cos_dist, qs)
+    eu_q = np.percentile(pair_eu, qs)
+    print(f"\n[B] 쌍거리 분포 (표본 {m}개, {len(pair_sim):,} 쌍)")
+    print(f"  cosine 유사도  mean={pair_sim.mean():.3f}  (1=동일, 0=직교)")
+    print(f"  {'분위수':>6} | " + " ".join(f"{q:>5}%" for q in qs))
+    print(f"  {'cos거리':>6} | " + " ".join(f"{v:>6.3f}" for v in cos_q))
+    print(f"  {'eu거리 ':>6} | " + " ".join(f"{v:>6.3f}" for v in eu_q))
+    # 텍스트 히스토그램 (cosine 거리)
+    print("  cos거리 히스토그램:")
+    hist, edges = np.histogram(pair_cos_dist, bins=12, range=(0, max(0.001, pair_cos_dist.max())))
+    hmax = max(1, hist.max())
+    for h, e0, e1 in zip(hist, edges[:-1], edges[1:]):
+        bar = "#" * int(40 * h / hmax)
+        print(f"    {e0:5.3f}~{e1:5.3f} | {bar} {h}")
+
+    # ---------- [C] 최근접 이웃 거리 (얼마나 빽빽한가) ----------
     np.fill_diagonal(sims, -1.0)
     nn_sim = sims.max(axis=1)
-    per_dim_std = float(norm.std(axis=0).mean())
+    nn_cos_dist = 1.0 - nn_sim
+    print(f"\n[C] 최근접 이웃 cosine 거리 (작을수록 빽빽 = epsilon 에 다 들어감)")
+    nnq = np.percentile(nn_cos_dist, [0, 25, 50, 75, 95, 100])
+    print(f"  min={nnq[0]:.4f}  q25={nnq[1]:.4f}  median={nnq[2]:.4f}  "
+          f"q75={nnq[3]:.4f}  q95={nnq[4]:.4f}  max={nnq[5]:.4f}")
+    frac_lt_eps = float((nn_cos_dist < 0.06).mean() * 100)
+    print(f"  최근접거리 < 0.06(현 epsilon) 비율: {frac_lt_eps:.1f}%   "
+          f"(높으면 epsilon 이 다 합침)")
 
-    print("\n[1] embedding 퍼짐 (collapse 여부)")
-    print(f"  쌍 cosine 유사도 평균 : {mean_sim:.3f}   (1.0=전부 동일, 0=직교)")
-    print(f"  최근접 이웃 유사도 평균: {float(nn_sim.mean()):.3f}")
-    print(f"  차원별 std 평균        : {per_dim_std:.4f}")
-
-    if mean_sim > 0.90:
-        verdict_emb = "COLLAPSE 의심 (embedding 이 다 비슷 → 모델이 실데이터 변별 못 함)"
-        collapsed = True
-    elif mean_sim > 0.70:
-        verdict_emb = "부분 collapse (퍼짐 약함 — 파라미터로 일부 가능하나 모델 개선 권장)"
-        collapsed = False
-    else:
-        verdict_emb = "정상 (충분히 퍼짐 → 파라미터만 맞추면 그룹 갈라짐)"
-        collapsed = False
-    print(f"  → {verdict_emb}")
-
-    # ---------- 2) HDBSCAN 파라미터 sweep ----------
-    print("\n[2] HDBSCAN 파라미터별 그룹수 / noise%  (embedding 재사용, 빠름)")
+    # ---------- [D] 차원 활용도 / PCA 분산 ----------
+    per_dim_std = norm.std(axis=0)
+    eff_dims = float((per_dim_std > 0.01).sum())
+    # PCA — 상위 분산 비중
     try:
-        import hdbscan
+        c = norm - norm.mean(0, keepdims=True)
+        cov = (c.T @ c) / max(1, len(c) - 1)
+        evals = np.linalg.eigvalsh(cov)[::-1]
+        evals = np.clip(evals, 0, None)
+        tot = evals.sum() + 1e-12
+        pc1 = float(evals[0] / tot * 100)
+        pc10 = float(evals[:10].sum() / tot * 100)
+        # 분산 90% 설명에 필요한 차원 수
+        cum = np.cumsum(evals) / tot
+        d90 = int(np.searchsorted(cum, 0.90) + 1)
     except Exception:
-        raise SystemExit("hdbscan 미설치: pip install hdbscan")
+        pc1 = pc10 = d90 = -1
+    print(f"\n[D] 차원 활용도 (collapse 면 소수 차원에 분산 몰림)")
+    print(f"  std>0.01 인 차원 수 : {eff_dims:.0f} / {dim}")
+    print(f"  PC1 분산 비중       : {pc1:.1f}%   (한 축에 몰리면 collapse)")
+    print(f"  상위 10 PC 분산 비중: {pc10:.1f}%")
+    print(f"  분산 90% 설명 차원수: {d90}  (작을수록 collapse)")
 
-    combos = []
-    for method in ("eom", "leaf"):
-        for mcs in (10, 25, 50):
-            for ms in (3, 5, 10):
-                for eps in (0.0, 0.02, 0.05):
-                    combos.append((method, mcs, ms, eps))
+    # ---------- 종합 판정 ----------
+    mean_sim = float(pair_sim.mean())
+    print("\n[판정] embedding 상태")
+    reasons = []
+    score_collapse = 0
+    if mean_sim > 0.90: score_collapse += 2; reasons.append(f"쌍 cosine 유사도 {mean_sim:.2f} 매우 높음")
+    elif mean_sim > 0.70: score_collapse += 1; reasons.append(f"쌍 cosine 유사도 {mean_sim:.2f} 높음")
+    if frac_lt_eps > 80: score_collapse += 2; reasons.append(f"최근접거리<0.06 이 {frac_lt_eps:.0f}%")
+    elif frac_lt_eps > 50: score_collapse += 1
+    if pc1 > 50: score_collapse += 2; reasons.append(f"PC1 분산 {pc1:.0f}% 한 축 집중")
+    elif pc1 > 30: score_collapse += 1
+    if eff_dims < dim * 0.1: score_collapse += 1; reasons.append(f"활성 차원 {eff_dims:.0f}/{dim}")
 
-    print(f"  {'method':>5} {'min_clu':>7} {'min_smp':>7} {'eps':>5} | {'groups':>6} {'noise%':>7}")
-    best = None
-    for method, mcs, ms, eps in combos:
-        try:
-            cl = hdbscan.HDBSCAN(min_cluster_size=mcs, min_samples=ms,
-                                 cluster_selection_method=method,
-                                 cluster_selection_epsilon=eps, metric="euclidean")
-            pred = cl.fit_predict(emb)
-        except Exception as e:
-            continue
-        ng = len(set(int(p) for p in pred if p >= 0))
-        noise = float((pred == -1).mean() * 100)
-        flag = ""
-        # "좋은" 후보: 그룹 2개 초과 + noise 80% 미만
-        if ng >= 3 and noise < 80:
-            score = ng - (noise / 20.0)
-            if best is None or score > best[0]:
-                best = (score, method, mcs, ms, eps, ng, noise)
-            flag = " ←"
-        print(f"  {method:>5} {mcs:>7} {ms:>7} {eps:>5} | {ng:>6} {noise:>6.1f}%{flag}")
-
-    # ---------- 3) 결론 ----------
-    print("\n[3] 결론")
-    if collapsed:
-        print("  ✗ embedding 이 collapse 됐다 (모델 문제).")
-        print("    → 파라미터 바꿔도 제대로 안 갈라진다.")
-        print("    → 해결: 실데이터(또는 실데이터 섞어) contrastive 재학습 필요.")
-    elif best is not None:
-        _, method, mcs, ms, eps, ng, noise = best
-        print(f"  ✓ embedding 은 정상. HDBSCAN 파라미터만 바꾸면 갈라진다.")
-        print(f"    추천: method={method}, min_cluster_size={mcs}, min_samples={ms}, epsilon={eps}")
-        print(f"          → 그룹 {ng}개, noise {noise:.1f}%")
-        print(f"    grouping 재실행 (재임베딩 없이 이 파라미터로):")
-        print(f"      --min-cluster-size {mcs} --min-samples {ms}")
-        print(f"      (CLUSTER_SELECTION_METHOD/EPSILON 은 predict_grouping_prod.py CONFIG 에서 {method}/{eps})")
+    if score_collapse >= 4:
+        print("  ✗✗ 심한 COLLAPSE — embedding 이 거의 한 점. 모델이 변별 못 함.")
+    elif score_collapse >= 2:
+        print("  ✗ COLLAPSE 의심 — embedding 이 좁게 뭉침.")
     else:
-        print("  △ 적정 그룹(3개 이상, noise<80%) 조합을 못 찾음.")
-        print("    embedding 이 약하게 뭉쳐있을 가능성 → 모델 개선 권장.")
+        print("  ✓ 정상 — embedding 충분히 퍼짐 (그룹 못 갈라지면 HDBSCAN 파라미터 문제).")
+    if reasons:
+        print("  근거: " + ", ".join(reasons))
+    print(f"\n  (collapse 면 모델 재학습, 정상이면 다음 단계로 HDBSCAN 파라미터 — "
+          f"python scripts/_diagnose_embeddings.py {npy} 의 [A~D] 수치로 판단)")
 
 
 if __name__ == "__main__":
