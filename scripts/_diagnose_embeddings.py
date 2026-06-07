@@ -122,22 +122,25 @@ def main():
     # ---------- 종합 판정 ----------
     mean_sim = float(pair_sim.mean())
     print("\n[판정] embedding 상태")
+    print("  (핵심: 전체 쌍거리 = global 퍼짐. 최근접거리 작은 건 cluster tight 라 오히려 좋음 — collapse 근거 아님)")
     reasons = []
     score_collapse = 0
-    if mean_sim > 0.90: score_collapse += 2; reasons.append(f"쌍 cosine 유사도 {mean_sim:.2f} 매우 높음")
-    elif mean_sim > 0.70: score_collapse += 1; reasons.append(f"쌍 cosine 유사도 {mean_sim:.2f} 높음")
-    if frac_lt_eps > 80: score_collapse += 2; reasons.append(f"최근접거리<0.06 이 {frac_lt_eps:.0f}%")
-    elif frac_lt_eps > 50: score_collapse += 1
-    if pc1 > 50: score_collapse += 2; reasons.append(f"PC1 분산 {pc1:.0f}% 한 축 집중")
-    elif pc1 > 30: score_collapse += 1
-    if eff_dims < dim * 0.1: score_collapse += 1; reasons.append(f"활성 차원 {eff_dims:.0f}/{dim}")
+    # ★ collapse 핵심 = 전체 쌍 유사도(global)가 높음 = 다 비슷한 방향
+    if mean_sim > 0.90:   score_collapse += 3; reasons.append(f"쌍 cosine 유사도 {mean_sim:.2f} 매우 높음(거의 동일)")
+    elif mean_sim > 0.70: score_collapse += 2; reasons.append(f"쌍 cosine 유사도 {mean_sim:.2f} 높음")
+    elif mean_sim > 0.50: score_collapse += 1; reasons.append(f"쌍 cosine 유사도 {mean_sim:.2f} 다소 높음")
+    # 소수 차원/축에 분산 집중
+    if pc1 > 50:   score_collapse += 2; reasons.append(f"PC1 분산 {pc1:.0f}% 한 축 집중")
+    elif pc1 > 30: score_collapse += 1; reasons.append(f"PC1 분산 {pc1:.0f}%")
+    if eff_dims < dim * 0.1: score_collapse += 1; reasons.append(f"활성 차원 {eff_dims:.0f}/{dim} 극소")
+    if 0 < d90 <= 3:         score_collapse += 1; reasons.append(f"분산 90% 가 {d90} 차원에 집중")
 
     if score_collapse >= 4:
-        print("  ✗✗ 심한 COLLAPSE — embedding 이 거의 한 점. 모델이 변별 못 함.")
+        print("  [XX] 심한 COLLAPSE — embedding 이 거의 한 점. 모델이 변별 못 함.")
     elif score_collapse >= 2:
-        print("  ✗ COLLAPSE 의심 — embedding 이 좁게 뭉침.")
+        print("  [X]  COLLAPSE 의심 — embedding 이 좁게 뭉침.")
     else:
-        print("  ✓ 정상 — embedding 충분히 퍼짐 (그룹 못 갈라지면 HDBSCAN 파라미터 문제).")
+        print("  [OK] 정상 — embedding 충분히 퍼짐 (그룹 못 갈라지면 HDBSCAN 파라미터 문제).")
     if reasons:
         print("  근거: " + ", ".join(reasons))
     print(f"\n  (collapse 면 모델 재학습, 정상이면 다음 단계로 HDBSCAN 파라미터 — "
