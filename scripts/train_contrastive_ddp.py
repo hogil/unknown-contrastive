@@ -42,8 +42,12 @@ USE_QUEUE             = True
 QUEUE_SIZE            = 4096
 IGNORE_NEG_SIM        = 0.95
 USE_LOCAL             = False
+LOCAL_WEIGHT          = 0.0
+LOCAL_TAU             = 0.1
+LOCAL_GRID            = 6
 NECO_WEIGHT           = 0.2
 NECO_TAU              = 0.1
+NECO_GRID             = 0
 
 USE_EMA               = False
 USE_AMP               = False
@@ -123,6 +127,14 @@ if os.environ.get("CL_NECO_WEIGHT"):
     NECO_WEIGHT = float(os.environ["CL_NECO_WEIGHT"])
 if os.environ.get("CL_NECO_TAU"):
     NECO_TAU = float(os.environ["CL_NECO_TAU"])
+if os.environ.get("CL_NECO_GRID"):
+    NECO_GRID = int(os.environ["CL_NECO_GRID"])
+if os.environ.get("CL_LOCAL_WEIGHT"):
+    LOCAL_WEIGHT = float(os.environ["CL_LOCAL_WEIGHT"])
+if os.environ.get("CL_LOCAL_TAU"):
+    LOCAL_TAU = float(os.environ["CL_LOCAL_TAU"])
+if os.environ.get("CL_LOCAL_GRID"):
+    LOCAL_GRID = int(os.environ["CL_LOCAL_GRID"])
 if os.environ.get("CL_USE_QUEUE"):
     USE_QUEUE = os.environ["CL_USE_QUEUE"].strip().lower() in {"1", "true", "yes", "y"}
 if os.environ.get("CL_QUEUE_SIZE"):
@@ -657,10 +669,44 @@ def masked_pos_cross_entropy(logits, label_smoothing):
     return (pos_loss + neg_loss).mean()
 
 
-def neco_loss(p1, p2, tau):
+def grid_anchor_indices(n: int, grid_size: int, device):
+    if grid_size is None or grid_size <= 0 or grid_size * grid_size >= n:
+        return None
+    side = int(round(math.sqrt(n)))
+    if side * side != n:
+        return torch.linspace(0, n - 1, steps=min(n, grid_size * grid_size),
+                              device=device).round().long().unique()
+    g = min(grid_size, side)
+    ys = torch.linspace(0, side - 1, steps=g, device=device).round().long().unique()
+    xs = torch.linspace(0, side - 1, steps=g, device=device).round().long().unique()
+    yy, xx = torch.meshgrid(ys, xs, indexing="ij")
+    return (yy.reshape(-1) * side + xx.reshape(-1)).long()
+
+
+def local_grid_loss(p1, p2, tau, grid_size):
+    """Patch-level InfoNCE over matching grid locations only."""
+    if p1.ndim != 3 or p2.ndim != 3:
+        raise ValueError("local_grid_loss expects [B, N, D] patch embeddings")
+    idx = grid_anchor_indices(p1.size(1), grid_size, p1.device)
+    if idx is not None:
+        p1 = p1.index_select(1, idx)
+        p2 = p2.index_select(1, idx)
+    a = p1.size(1)
+    labels = torch.arange(a, device=p1.device).repeat(p1.size(0))
+    logits_12 = torch.bmm(p1, p2.transpose(1, 2)).reshape(-1, a) / tau
+    logits_21 = torch.bmm(p2, p1.transpose(1, 2)).reshape(-1, a) / tau
+    return 0.5 * (F.cross_entropy(logits_12, labels) +
+                  F.cross_entropy(logits_21, labels))
+
+
+def neco_loss(p1, p2, tau, grid_size=0):
     """B6 NeCo: patch-neighbor order consistency over shared projection patches."""
     if p1.ndim != 3 or p2.ndim != 3:
         raise ValueError("neco_loss expects [B, N, D] patch embeddings")
+    idx = grid_anchor_indices(p1.size(1), grid_size, p1.device)
+    if idx is not None:
+        p1 = p1.index_select(1, idx)
+        p2 = p2.index_select(1, idx)
     n = p1.size(1)
     s1 = torch.bmm(p1, p1.transpose(1, 2))
     s2 = torch.bmm(p2, p2.transpose(1, 2))
@@ -807,7 +853,7 @@ def train_worker(rank, world_size):
         for g in opt.param_groups: g["lr"] = lr
 
         model.train()
-        run_loss = 0.0; run_nce = 0.0; run_neco = 0.0; n = 0
+        run_loss = 0.0; run_nce = 0.0; run_neco = 0.0; run_local = 0.0; n = 0
         t0 = time.time()
         for it, (x1, x2) in enumerate(ld, 1):
             x1 = x1.to(device, non_blocking=True)
@@ -817,16 +863,19 @@ def train_worker(rank, world_size):
             #   backward 1회 전에 forward 2회 하면 DDP reducer 가 "param ready 한 번만"
             #   기대를 깨서 RuntimeError → process exit 1 (single-GPU 는 정상, multi-GPU 만 crash).
             bs = x1.size(0)
-            if NECO_WEIGHT > 0:
+            need_patches = NECO_WEIGHT > 0 or LOCAL_WEIGHT > 0
+            if need_patches:
                 z_cat, p_cat = model(torch.cat([x1, x2], dim=0), return_neco=True)
                 p1, p2 = p_cat[:bs], p_cat[bs:]
-                loss_neco = neco_loss(p1, p2, NECO_TAU)
+                loss_neco = neco_loss(p1, p2, NECO_TAU, NECO_GRID) if NECO_WEIGHT > 0 else z_cat.new_zeros(())
+                loss_local = local_grid_loss(p1, p2, LOCAL_TAU, LOCAL_GRID) if LOCAL_WEIGHT > 0 else z_cat.new_zeros(())
             else:
                 z_cat = model(torch.cat([x1, x2], dim=0))
                 loss_neco = z_cat.new_zeros(())
+                loss_local = z_cat.new_zeros(())
             z1, z2 = z_cat[:bs], z_cat[bs:]
             loss_nce = info_nce_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM, LABEL_SMOOTHING)
-            loss = loss_nce + (NECO_WEIGHT * loss_neco)
+            loss = loss_nce + (NECO_WEIGHT * loss_neco) + (LOCAL_WEIGHT * loss_local)
             loss.backward()
             if GRAD_CLIP > 0:
                 torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], GRAD_CLIP)
@@ -838,21 +887,24 @@ def train_worker(rank, world_size):
             run_loss += loss.item() * x1.size(0)
             run_nce += loss_nce.item() * x1.size(0)
             run_neco += loss_neco.item() * x1.size(0)
+            run_local += loss_local.item() * x1.size(0)
             n += x1.size(0)
             if is_main(rank) and it % max(1, len(ld) // 10) == 0:
                 print(f"  Ep {ep}/{EPOCHS} {it/len(ld)*100:>5.1f}% "
                       f"loss={run_loss/n:.4f} nce={run_nce/n:.4f} "
-                      f"neco={run_neco/n:.4f} lr={lr:.2e}", flush=True)
+                      f"neco={run_neco/n:.4f} local={run_local/n:.4f} lr={lr:.2e}", flush=True)
         ep_loss = run_loss / max(1, n)
         ep_nce = run_nce / max(1, n)
         ep_neco = run_neco / max(1, n)
-        avg = all_reduce_avg({"loss": ep_loss, "nce": ep_nce, "neco": ep_neco}, device)
+        ep_local = run_local / max(1, n)
+        avg = all_reduce_avg({"loss": ep_loss, "nce": ep_nce, "neco": ep_neco,
+                              "local": ep_local}, device)
         if is_main(rank):
             print(f"  Ep {ep}/{EPOCHS} DONE loss={avg['loss']:.4f} "
-                  f"nce={avg['nce']:.4f} neco={avg['neco']:.4f} "
+                  f"nce={avg['nce']:.4f} neco={avg['neco']:.4f} local={avg['local']:.4f} "
                   f"time={time.time()-t0:.0f}s", flush=True)
             history.append({"epoch": ep, "loss": avg["loss"], "nce": avg["nce"],
-                            "neco": avg["neco"], "lr": lr})
+                            "neco": avg["neco"], "local": avg["local"], "lr": lr})
 
     # save (rank 0)
     if is_main(rank):
@@ -1064,6 +1116,14 @@ if __name__ == "__main__":
                      help="B6 NeCo weight. 기본 0.2, 0이면 NeCo OFF.")
     _ap.add_argument("--neco-tau", type=float, default=None,
                      help="NeCo patch-neighbor softmax temperature. 기본 0.1")
+    _ap.add_argument("--neco-grid", type=int, default=None,
+                     help="NeCo patch grid anchor size. 0=all patches, 6=6x6 grid.")
+    _ap.add_argument("--local-weight", type=float, default=None,
+                     help="Local grid InfoNCE weight. 0이면 OFF.")
+    _ap.add_argument("--local-tau", type=float, default=None,
+                     help="Local grid InfoNCE temperature. 기본 0.1")
+    _ap.add_argument("--local-grid", type=int, default=None,
+                     help="Local grid anchor size. 예: 6이면 6x6 grid.")
     _ap.add_argument("--no-queue", action="store_true",
                      help="MoCo-style queue OFF (ablation).")
     _ap.add_argument("--queue-size", type=int, default=None,
@@ -1084,6 +1144,10 @@ if __name__ == "__main__":
     if _a.lr_head is not None:        os.environ["CL_LR_HEAD"] = str(_a.lr_head)
     if _a.neco_weight is not None:    os.environ["CL_NECO_WEIGHT"] = str(_a.neco_weight)
     if _a.neco_tau is not None:       os.environ["CL_NECO_TAU"] = str(_a.neco_tau)
+    if _a.neco_grid is not None:      os.environ["CL_NECO_GRID"] = str(_a.neco_grid)
+    if _a.local_weight is not None:   os.environ["CL_LOCAL_WEIGHT"] = str(_a.local_weight)
+    if _a.local_tau is not None:      os.environ["CL_LOCAL_TAU"] = str(_a.local_tau)
+    if _a.local_grid is not None:     os.environ["CL_LOCAL_GRID"] = str(_a.local_grid)
     if _a.no_queue:                   os.environ["CL_USE_QUEUE"] = "0"
     if _a.queue_size is not None:     os.environ["CL_QUEUE_SIZE"] = str(_a.queue_size)
     # 부모 프로세스의 현재 module global 도 즉시 반영 (world_size<=1 직접 호출 경로)
@@ -1101,6 +1165,10 @@ if __name__ == "__main__":
     if _a.lr_head is not None:        LR_HEAD = _a.lr_head
     if _a.neco_weight is not None:    NECO_WEIGHT = _a.neco_weight
     if _a.neco_tau is not None:       NECO_TAU = _a.neco_tau
+    if _a.neco_grid is not None:      NECO_GRID = _a.neco_grid
+    if _a.local_weight is not None:   LOCAL_WEIGHT = _a.local_weight
+    if _a.local_tau is not None:      LOCAL_TAU = _a.local_tau
+    if _a.local_grid is not None:     LOCAL_GRID = _a.local_grid
     if _a.no_queue:                   USE_QUEUE = False
     if _a.queue_size is not None:     QUEUE_SIZE = _a.queue_size
     launch_ddp(train_worker)
