@@ -25,6 +25,12 @@ from pathlib import Path
 
 import numpy as np
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 
 def find_npy(path: Path) -> Path:
     if path.is_file() and path.suffix == ".npy":
@@ -122,7 +128,7 @@ def main():
     # ---------- 종합 판정 ----------
     mean_sim = float(pair_sim.mean())
     print("\n[판정] embedding 상태")
-    print("  (핵심: 전체 쌍거리 = global 퍼짐. 최근접거리 작은 건 cluster tight 라 오히려 좋음 — collapse 근거 아님)")
+    print("  (핵심: 전체 쌍거리 = global 퍼짐. 최근접거리 작은 건 cluster tight 라 오히려 좋음 - collapse 근거 아님)")
     reasons = []
     score_collapse = 0
     # ★ collapse 핵심 = 전체 쌍 유사도(global)가 높음 = 다 비슷한 방향

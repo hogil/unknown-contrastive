@@ -23,6 +23,7 @@ AUTO_SPLIT            = True                                # split 폴더 없�
 #   total batch = BATCH_PER_GPU × GPU 수. CNN 은 full fine-tune(무거움), CL 은 frozen(가벼움).
 CNN_BATCH_PER_GPU     = 32             # convnextv2_base 384 full-ft + AMP → H100 80GB 32 안전
 CL_BATCH_PER_GPU      = 16             # backbone fine-tune 기본. head-only ablation이면 더 키워도 됨.
+CL_NUM_WORKERS        = None           # None = train_contrastive_ddp.py auto. 로컬 stall이면 --cl-num-workers 4 권장.
 CL_IMG_SIZE           = 512
 CL_PROJ_DIM           = 1024
 CL_FREEZE_BACKBONE    = False
@@ -80,6 +81,8 @@ def parse_args():
                    help="CNN batch per GPU override.")
     p.add_argument("--cl-batch", type=int, default=None,
                    help="Contrastive batch per GPU override.")
+    p.add_argument("--cl-num-workers", type=int, default=None,
+                   help="Contrastive DataLoader workers per GPU override. 로컬은 4부터 권장.")
     p.add_argument("--cl-img-size", type=int, default=None,
                    help="Contrastive/grouping input image size override.")
     p.add_argument("--cl-proj-dim", type=int, default=None,
@@ -228,7 +231,7 @@ def _resolve_cnn_best_arg(resolve_path, raw: str) -> Path:
 
 
 def main():
-    global CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR, CNN_BATCH_PER_GPU, CL_BATCH_PER_GPU, SOURCE_ROOT
+    global CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR, CNN_BATCH_PER_GPU, CL_BATCH_PER_GPU, CL_NUM_WORKERS, SOURCE_ROOT
     global CL_IMG_SIZE, CL_PROJ_DIM, CL_FREEZE_BACKBONE, CL_TRAIN_SAMPLING_RATIO
     global CL_IGNORE_NEG_SIM, CL_NCE_TEMP, CL_LR_HEAD, CL_LR_BACKBONE, CL_NECO_WEIGHT, CL_NECO_TAU
     global CL_PSEUDO_POS_WEIGHT, CL_PSEUDO_NEG_REMOVE, CL_PSEUDO_POS_MIN_SIM, CL_PSEUDO_POS_TOPK, CL_PSEUDO_POS_START_EPOCH
@@ -246,6 +249,8 @@ def main():
         CNN_BATCH_PER_GPU = args.cnn_batch
     if args.cl_batch is not None:
         CL_BATCH_PER_GPU = args.cl_batch
+    if args.cl_num_workers is not None:
+        CL_NUM_WORKERS = args.cl_num_workers
     if args.cl_img_size is not None:
         CL_IMG_SIZE = args.cl_img_size
     if args.cl_proj_dim is not None:
@@ -452,6 +457,8 @@ def main():
         env["CNN_BATCH_PER_GPU"] = str(CNN_BATCH_PER_GPU)
     if CL_BATCH_PER_GPU:
         env["CL_BATCH_PER_GPU"] = str(CL_BATCH_PER_GPU)
+    if CL_NUM_WORKERS is not None:
+        env["CL_NUM_WORKERS_PER_GPU"] = str(CL_NUM_WORKERS)
 
     # ============ Stage 1: CNN DDP ============
     if args.backbone or args.cnn_run_dir:
@@ -603,6 +610,7 @@ def main():
         "cl_proj_dim": CL_PROJ_DIM,
         "cl_freeze_backbone": CL_FREEZE_BACKBONE,
         "cl_train_sampling_ratio": CL_TRAIN_SAMPLING_RATIO,
+        "cl_num_workers": CL_NUM_WORKERS,
         "cl_lr_head": CL_LR_HEAD,
         "cl_lr_backbone": CL_LR_BACKBONE,
         "cl_ignore_neg_sim": CL_IGNORE_NEG_SIM,

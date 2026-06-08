@@ -188,6 +188,8 @@ if os.environ.get("CL_USE_QUEUE"):
     USE_QUEUE = os.environ["CL_USE_QUEUE"].strip().lower() in {"1", "true", "yes", "y"}
 if os.environ.get("CL_QUEUE_SIZE"):
     QUEUE_SIZE = int(os.environ["CL_QUEUE_SIZE"])
+if os.environ.get("CL_NUM_WORKERS_PER_GPU"):
+    NUM_WORKERS_PER_GPU = int(os.environ["CL_NUM_WORKERS_PER_GPU"])
 TRAIN_DATA_DIR = os.environ.get("CL_TRAIN_DIRS") or TRAIN_DATA_DIR   # 콤마구분 다중 가능
 EVAL_DATA_DIR  = os.environ.get("CL_EVAL_DIRS") or EVAL_DATA_DIR
 NO_EVAL = NO_EVAL or os.environ.get("CL_NO_EVAL", "").strip().lower() in {"1", "true", "yes", "y"}
@@ -1034,7 +1036,11 @@ def train_worker(rank, world_size):
             "infer_embed_mode": INFER_EMBED_MODE,
             "infer_backbone_weight": INFER_BACKBONE_WEIGHT,
             "infer_proj_weight": INFER_PROJ_WEIGHT,
-            "use_local": USE_LOCAL,
+            "use_local": LOCAL_WEIGHT > 0,
+            "local_weight": LOCAL_WEIGHT,
+            "local_tau": LOCAL_TAU,
+            "local_grid": LOCAL_GRID,
+            "local_window": LOCAL_WINDOW,
             "neco_weight": NECO_WEIGHT,
             "neco_tau": NECO_TAU,
             "recipe": "Classless pseudo-positive: Global InfoNCE + Queue/NEG + pseudo-kNN + NeCo",
@@ -1443,6 +1449,8 @@ if __name__ == "__main__":
                      help="MoCo-style queue OFF (ablation).")
     _ap.add_argument("--queue-size", type=int, default=None,
                      help="MoCo-style queue size override.")
+    _ap.add_argument("--num-workers", type=int, default=None,
+                     help="DataLoader workers per GPU. 기본 None=auto(os.cpu_count//world_size).")
     _a = _ap.parse_args()
     # env 로 세팅 → mp.spawn 자식이 module re-import 시 위 module-level block 에서 읽음
     if _a.backbone:           os.environ["CL_BACKBONE_CKPT"] = _a.backbone
@@ -1482,6 +1490,7 @@ if __name__ == "__main__":
     if _a.local_window is not None:   os.environ["CL_LOCAL_WINDOW"] = str(_a.local_window)
     if _a.no_queue:                   os.environ["CL_USE_QUEUE"] = "0"
     if _a.queue_size is not None:     os.environ["CL_QUEUE_SIZE"] = str(_a.queue_size)
+    if _a.num_workers is not None:    os.environ["CL_NUM_WORKERS_PER_GPU"] = str(_a.num_workers)
     # 부모 프로세스의 현재 module global 도 즉시 반영 (world_size<=1 직접 호출 경로)
     if _a.backbone:           BACKBONE_CKPT = _a.backbone
     if _a.cnn_run_dir:        CNN_RUN_DIR = _a.cnn_run_dir
@@ -1520,4 +1529,5 @@ if __name__ == "__main__":
     if _a.local_window is not None:   LOCAL_WINDOW = _a.local_window
     if _a.no_queue:                   USE_QUEUE = False
     if _a.queue_size is not None:     QUEUE_SIZE = _a.queue_size
+    if _a.num_workers is not None:    NUM_WORKERS_PER_GPU = _a.num_workers
     launch_ddp(train_worker)

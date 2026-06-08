@@ -81,3 +81,67 @@ n500 기준 baseline -> final:
 2. 최근 서버/신규 조건에서는 같은 효과가 재현되지 않았다.
 3. 현업 over-merge 문제는 기존 metric만으로 부족하므로 `largest_group_pct`, cluster purity, representative/composite 육안 검증을 함께 봐야 한다.
 
+## 2026-06-08 Local Rerun: Current-Best 21
+
+목적: 로컬 `wm811k_50`에서 기존 current-best family 조건을 현재 코드로 다시 실행해, CNN baseline 대비 embedding 이웃 품질이 유지되는지 확인했다.
+
+실행:
+
+- train: `data/images/wm811k_50/train` (320 images)
+- eval: `data/images/wm811k_50/eval` (80 images, 8 classes)
+- backbone: `runs/260608_073602_cnn_ddp/cnn/best_model.pth`
+- condition: `21_fn085_pseudo005_local075_epochscan`
+- 핵심 옵션: `queue_size=16384`, `ignore_neg_sim=0.85`, `pseudo_pos_weight=0.05`, `local_weight=0.75`, `local_window=4`, frozen backbone, `img_size=384`, `proj_dim=128`
+- local runtime fix: `--num-workers 4`
+
+산출:
+
+- sweep: `runs/260608_195446_local_currentbest21_nw4_260608_195446`
+- model: `runs/260608_195449_local_currentbest21_nw4_260608_195446_21_fn085_pseudo005_local075_epochscan/contrastive/best_model.pt`
+- t-SNE/kNN: `result_grouping/260608_200054_local_currentbest21_nw4_260608_195446_summary`
+
+Embedding kNN same-class rate:
+
+| model | dim | top1 | k3 | k5 | k7 | k9 | 해석 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| CNN baseline | 1024 | 0.7375 | 0.7167 | 0.6975 | 0.6607 | 0.6347 | 가장 가까운 1개는 강함 |
+| Current-best 21 rerun | 128 | 0.7000 | 0.7042 | 0.7075 | 0.6982 | 0.6444 | k5/k7/k9 이웃 안정성은 개선 |
+
+Delta vs CNN:
+
+| metric | delta |
+|---|---:|
+| top1 | -0.0375 |
+| k5 | +0.0100 |
+| k7 | +0.0375 |
+| k9 | +0.0097 |
+
+HDBSCAN tier1:
+
+| n_total | n_clusters | noise_pct | capture | completeness | homogeneity | AMI | ARI |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 80 | 0 | 100.00% | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+
+해석:
+
+- 로컬 current-best 21은 CNN보다 `top1`은 낮지만, `k5/k7/k9`는 오른다. 즉 단일 최근접보다 주변 이웃 묶음이 더 안정적이다.
+- HDBSCAN 기본 tier1 조건은 아직 맞지 않는다. 이번 run의 embedding 진단에서 최근접 cosine 거리 `<0.06` 비율이 `96.2%`였으므로, 고정 epsilon/leaf 조건만으로는 noise 또는 merge 실패가 쉽게 난다.
+- 다음 실험의 1차 목표는 HDBSCAN 값 조정이 아니라 embedding kNN 지표 개선이다. HDBSCAN sweep은 같은 embedding에서 후처리가 너무 강한지/느슨한지 확인하는 진단 도구로만 본다.
+
+같은 embedding으로 HDBSCAN parameter만 sweep:
+
+- output: `runs/260608_195449_local_currentbest21_nw4_260608_195446_21_fn085_pseudo005_local075_epochscan/contrastive/hdbscan_param_sweep.csv`
+
+| method | eps | min_cluster_size | min_samples | clusters | noise_pct | largest_group_pct | capture | purity | completeness | homogeneity | AMI | ARI | 해석 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| leaf | 0.10 | 2 | 1 | 17 | 12.5% | 15.0% | 0.750 | 0.857 | 0.602 | 0.763 | 0.522 | 0.472 | 세분화 강함, purity 우선 |
+| eom | 0.10 | 2 | 1 | 15 | 11.2% | 15.0% | 0.738 | 0.831 | 0.618 | 0.755 | 0.546 | 0.497 | 세분화 + 약간 응집 |
+| eom | 0.00 | 5 | 2 | 6 | 7.5% | 17.5% | 0.688 | 0.743 | 0.756 | 0.697 | 0.673 | 0.579 | AMI/ARI 균형 best |
+| eom | 0.00 | 10 | 2 | 6 | 7.5% | 17.5% | 0.688 | 0.743 | 0.756 | 0.697 | 0.673 | 0.579 | mcs 5~10 동일 결과 |
+
+판단:
+
+- 기본 `min_samples=15`가 이 작은 eval set에서는 너무 강해서 전부 noise로 보냈다.
+- `min_samples=2`로 낮추면 같은 embedding에서 cluster가 살아난다.
+- `leaf + mcs=2, ms=1`은 많이 쪼개고 purity를 올리는 조건이다.
+- `eom + mcs=5~10, ms=2, eps=0`은 cluster 수는 적지만 AMI/ARI 균형이 가장 낫다.

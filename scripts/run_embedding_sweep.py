@@ -255,6 +255,8 @@ def parse_args():
                    help="ImageFolder eval dir. Labels are used only for metric/t-SNE.")
     p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--batch", type=int, default=8)
+    p.add_argument("--num-workers", type=int, default=None,
+                   help="DataLoader workers per GPU passed to train_contrastive_ddp.py.")
     p.add_argument("--img-size", type=int, default=512)
     p.add_argument("--proj-dim", type=int, default=1024)
     p.add_argument("--train-sampling-ratio", type=float, default=1.0)
@@ -442,6 +444,8 @@ def main():
             "--local-grid", str(cond["local_grid"]),
             "--local-window", str(cond["local_window"]),
         ]
+        if args.num_workers is not None:
+            cmd += ["--num-workers", str(args.num_workers)]
         if cond["freeze"]:
             cmd.append("--freeze-backbone")
         if not cond["queue"]:
