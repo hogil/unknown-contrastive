@@ -151,15 +151,16 @@ def main():
         sub_dir = out / cls
         sub_dir.mkdir(exist_ok=True)
         n_target = n_normal if cls == "Normal" else n_per_class
-        existing = len(list(sub_dir.glob("*.png")))
-        if existing >= n_target:
+        target_paths = [sub_dir / f"wafer_{i:04d}.png" for i in range(n_target)]
+        existing = sum(1 for p in target_paths if p.exists())
+        missing = [(i, p) for i, p in enumerate(target_paths) if not p.exists()]
+        if not missing:
             print(f"[skip] {cls}: {existing} >= {n_target}")
             skipped += existing
             continue
-        print(f"[gen ] {cls}: {existing} -> {n_target}", flush=True)
-        for i in range(existing, n_target):
+        print(f"[gen ] {cls}: {existing} -> {n_target} (missing={len(missing)})", flush=True)
+        for i, dst in missing:
             seed = seed_base + abs(hash(cls)) % 10000 + i
-            dst = sub_dir / f"wafer_{i:04d}.png"
             tasks.append((cls, seed, str(dst)))
 
     # 2) ProcessPoolExecutor — --workers 지정 시 그 값만 사용, 미지정 시 CPU 코어 수 사용
