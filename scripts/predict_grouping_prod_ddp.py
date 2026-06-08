@@ -168,8 +168,9 @@ def _embed_target_ddp(folder_path, model, device, rank: int, world_size: int):
         print(f"[{disp}] {len(ds)} images", flush=True)
         print(f"[loader-ddp] world_size={world_size} batch/rank={pg.BATCH} "
               f"workers_total={pg.NUM_WORKERS}", flush=True)
+    embed_dim = int(getattr(model, "embed_dim", pg.PROJ_DIM))
     if len(ds) == 0:
-        return disp, len(ds), np.zeros((0, pg.PROJ_DIM), dtype=np.float32), [], []
+        return disp, len(ds), np.zeros((0, embed_dim), dtype=np.float32), [], []
 
     local_indices = list(range(rank, len(ds), world_size))
     local_ds = Subset(ds, local_indices)
@@ -209,7 +210,7 @@ def _embed_target_ddp(folder_path, model, device, rank: int, world_size: int):
     if local_z:
         z_local = torch.cat(local_z, dim=0)
     else:
-        z_local = torch.zeros((0, pg.PROJ_DIM), dtype=torch.float32, device=device)
+        z_local = torch.zeros((0, embed_dim), dtype=torch.float32, device=device)
     z_all = all_gather_concat(z_local, device).cpu().numpy()
 
     objs = [None for _ in range(world_size)]
@@ -223,7 +224,7 @@ def _embed_target_ddp(folder_path, model, device, rank: int, world_size: int):
         print(f"[embed-ddp] done good={len(all_paths)} skipped_corrupt={len(all_bad)} "
               f"total={len(ds)} in {time.time()-t0:.0f}s", flush=True)
         return disp, len(ds), z_all, all_paths, all_bad
-    return disp, len(ds), np.zeros((0, pg.PROJ_DIM), dtype=np.float32), [], []
+    return disp, len(ds), np.zeros((0, embed_dim), dtype=np.float32), [], []
 
 
 def worker(rank: int, world_size: int):

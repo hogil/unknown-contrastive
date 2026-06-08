@@ -26,6 +26,9 @@ from _common import mask_palette_non_grade_to_white, resolve_path
 
 BACKBONE = "convnextv2_base.fcmae_ft_in22k_in1k_384"
 PROJ_DIM = 128
+INFER_EMBED_MODE = "weighted_concat"
+INFER_BACKBONE_WEIGHT = 1.0
+INFER_PROJ_WEIGHT = 0.2
 
 
 class ContrastiveInferModel(nn.Module):
@@ -39,11 +42,23 @@ class ContrastiveInferModel(nn.Module):
             nn.Linear(feat_dim, feat_dim), nn.GELU(),
             nn.Linear(feat_dim, proj_dim),
         )
+        self.feat_dim = feat_dim
 
     def forward(self, x):
         f = self.backbone(x)
-        z = self.proj(f)
-        return F.normalize(z, dim=1)
+        z = F.normalize(self.proj(f), dim=1)
+        f = F.normalize(f, dim=1)
+        mode = str(INFER_EMBED_MODE).lower()
+        if mode == "projection":
+            return z
+        if mode == "backbone":
+            return f
+        if mode == "weighted_concat":
+            return F.normalize(torch.cat([
+                f * float(INFER_BACKBONE_WEIGHT),
+                z * float(INFER_PROJ_WEIGHT),
+            ], dim=1), dim=1)
+        raise ValueError(f"unknown INFER_EMBED_MODE: {INFER_EMBED_MODE}")
 
 
 def parse_args():
@@ -58,6 +73,10 @@ def parse_args():
     p.add_argument("--tag", default="tsne_stages")
     p.add_argument("--img-size", type=int, default=384)
     p.add_argument("--batch", type=int, default=16)
+    p.add_argument("--contrastive-embed-mode", type=str, default="weighted_concat",
+                   choices=["projection", "backbone", "weighted_concat"])
+    p.add_argument("--infer-backbone-weight", type=float, default=1.0)
+    p.add_argument("--infer-proj-weight", type=float, default=0.2)
     p.add_argument("--perplexity", type=int, default=None)
     p.add_argument("--seed", type=int, default=42)
     return p.parse_args()
@@ -256,7 +275,11 @@ def draw_summary(diagnostics: dict, out: Path):
 
 
 def main():
+    global INFER_EMBED_MODE, INFER_BACKBONE_WEIGHT, INFER_PROJ_WEIGHT
     args = parse_args()
+    INFER_EMBED_MODE = args.contrastive_embed_mode
+    INFER_BACKBONE_WEIGHT = args.infer_backbone_weight
+    INFER_PROJ_WEIGHT = args.infer_proj_weight
     eval_dir = resolve_path(args.eval_dir)
     cnn_ckpt = resolve_path(args.cnn)
     if not cnn_ckpt.exists():
@@ -284,6 +307,9 @@ def main():
         "classes": classes,
         "img_size": args.img_size,
         "perplexity": perplexity,
+        "contrastive_embed_mode": INFER_EMBED_MODE,
+        "infer_backbone_weight": INFER_BACKBONE_WEIGHT,
+        "infer_proj_weight": INFER_PROJ_WEIGHT,
         "stages": [],
     }
 

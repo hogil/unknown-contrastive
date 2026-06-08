@@ -40,6 +40,10 @@ CL_PSEUDO_POS_WEIGHT  = 0.2
 CL_PSEUDO_POS_MIN_SIM = 0.90
 CL_PSEUDO_POS_TOPK    = 2
 CL_PSEUDO_POS_START_EPOCH = 2
+CL_PSEUDO_POS_SOURCE  = "backbone"
+CL_INFER_EMBED_MODE   = "weighted_concat"
+CL_INFER_BACKBONE_WEIGHT = 1.0
+CL_INFER_PROJ_WEIGHT  = 0.2
 
 # 두 stage 의 hyperparam 은 각 _ddp.py 의 CONFIG block 을 직접 수정
 #   scripts/train_cnn_ddp.py        ← CNN
@@ -91,6 +95,16 @@ def parse_args():
                    help="Contrastive anchor당 pseudo-positive 최대 개수.")
     p.add_argument("--pseudo-pos-start-epoch", type=int, default=None,
                    help="Contrastive pseudo-positive 시작 epoch.")
+    p.add_argument("--pseudo-pos-source", type=str, default=None,
+                   choices=["backbone", "projection"],
+                   help="Contrastive pseudo-positive 후보 source.")
+    p.add_argument("--infer-embed-mode", type=str, default=None,
+                   choices=["projection", "backbone", "weighted_concat"],
+                   help="Contrastive eval/grouping embedding mode.")
+    p.add_argument("--infer-backbone-weight", type=float, default=None,
+                   help="weighted_concat backbone weight.")
+    p.add_argument("--infer-proj-weight", type=float, default=None,
+                   help="weighted_concat projection weight.")
     p.add_argument("--cnn-run-dir", type=str, default=None,
                    help="기존 CNN run 폴더. 지정 시 stage1 CNN 학습을 건너뛰고 cnn/best_model.pth 사용.")
     p.add_argument("--backbone", type=str, default=None,
@@ -202,6 +216,7 @@ def main():
     global CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR, CNN_BATCH_PER_GPU, CL_BATCH_PER_GPU, SOURCE_ROOT
     global CL_IMG_SIZE, CL_IGNORE_NEG_SIM, CL_NCE_TEMP, CL_LR_HEAD, CL_NECO_WEIGHT, CL_NECO_TAU
     global CL_PSEUDO_POS_WEIGHT, CL_PSEUDO_POS_MIN_SIM, CL_PSEUDO_POS_TOPK, CL_PSEUDO_POS_START_EPOCH
+    global CL_PSEUDO_POS_SOURCE, CL_INFER_EMBED_MODE, CL_INFER_BACKBONE_WEIGHT, CL_INFER_PROJ_WEIGHT
     global GROUPING_MIN_CLUSTER_SIZE, GROUPING_MIN_SAMPLES
     global GROUPING_CLUSTER_SELECTION_METHOD, GROUPING_CLUSTER_SELECTION_EPSILON
     args = parse_args()
@@ -235,6 +250,14 @@ def main():
         CL_PSEUDO_POS_TOPK = args.pseudo_pos_topk
     if args.pseudo_pos_start_epoch is not None:
         CL_PSEUDO_POS_START_EPOCH = args.pseudo_pos_start_epoch
+    if args.pseudo_pos_source is not None:
+        CL_PSEUDO_POS_SOURCE = args.pseudo_pos_source
+    if args.infer_embed_mode is not None:
+        CL_INFER_EMBED_MODE = args.infer_embed_mode
+    if args.infer_backbone_weight is not None:
+        CL_INFER_BACKBONE_WEIGHT = args.infer_backbone_weight
+    if args.infer_proj_weight is not None:
+        CL_INFER_PROJ_WEIGHT = args.infer_proj_weight
     if args.source_root:
         SOURCE_ROOT = args.source_root
     grouping_batch = args.grouping_batch if args.grouping_batch is not None else GROUPING_BATCH
@@ -447,6 +470,10 @@ def main():
     env["CL_PSEUDO_POS_MIN_SIM"] = str(CL_PSEUDO_POS_MIN_SIM)
     env["CL_PSEUDO_POS_TOPK"] = str(CL_PSEUDO_POS_TOPK)
     env["CL_PSEUDO_POS_START_EPOCH"] = str(CL_PSEUDO_POS_START_EPOCH)
+    env["CL_PSEUDO_POS_SOURCE"] = str(CL_PSEUDO_POS_SOURCE)
+    env["CL_INFER_EMBED_MODE"] = str(CL_INFER_EMBED_MODE)
+    env["CL_INFER_BACKBONE_WEIGHT"] = str(CL_INFER_BACKBONE_WEIGHT)
+    env["CL_INFER_PROJ_WEIGHT"] = str(CL_INFER_PROJ_WEIGHT)
     if args.prod_train_dirs:
         env["CL_TAG"] = "contrastive_prod_ddp_pipe"
         env["CL_TRAIN_DIRS"] = args.prod_train_dirs
@@ -498,6 +525,9 @@ def main():
             "--min-samples", str(grouping_min_samples),
             "--cluster-selection-method", grouping_method,
             "--cluster-selection-epsilon", str(grouping_epsilon),
+            "--infer-embed-mode", str(CL_INFER_EMBED_MODE),
+            "--infer-backbone-weight", str(CL_INFER_BACKBONE_WEIGHT),
+            "--infer-proj-weight", str(CL_INFER_PROJ_WEIGHT),
         ]
         print(f"[prod pred dirs] {args.prod_pred_dirs}")
         t0 = time.time()
@@ -538,6 +568,10 @@ def main():
         "cl_pseudo_pos_min_sim": CL_PSEUDO_POS_MIN_SIM,
         "cl_pseudo_pos_topk": CL_PSEUDO_POS_TOPK,
         "cl_pseudo_pos_start_epoch": CL_PSEUDO_POS_START_EPOCH,
+        "cl_pseudo_pos_source": CL_PSEUDO_POS_SOURCE,
+        "cl_infer_embed_mode": CL_INFER_EMBED_MODE,
+        "cl_infer_backbone_weight": CL_INFER_BACKBONE_WEIGHT,
+        "cl_infer_proj_weight": CL_INFER_PROJ_WEIGHT,
         "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", "(unset)"),
         "finished_at": datetime.now().isoformat(),
     }

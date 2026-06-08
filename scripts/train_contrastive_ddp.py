@@ -45,6 +45,10 @@ PSEUDO_POS_WEIGHT     = 0.2     # class 없이 가까운 image를 weak-positive�
 PSEUDO_POS_MIN_SIM    = 0.90    # detached cosine 기준. 이보다 가까운 batch neighbor만 후보.
 PSEUDO_POS_TOPK       = 2       # anchor당 최대 weak-positive 개수.
 PSEUDO_POS_START_EPOCH = 2      # 초기 noisy embedding 보호.
+PSEUDO_POS_SOURCE     = "backbone"  # "backbone"=CNN feature 기준, "projection"=head embedding 기준.
+INFER_EMBED_MODE      = "weighted_concat"  # "projection", "backbone", "weighted_concat"
+INFER_BACKBONE_WEIGHT = 1.0
+INFER_PROJ_WEIGHT     = 0.2
 USE_LOCAL             = False
 LOCAL_WEIGHT          = 0.0
 LOCAL_TAU             = 0.1
@@ -132,6 +136,14 @@ if os.environ.get("CL_PSEUDO_POS_TOPK"):
     PSEUDO_POS_TOPK = int(os.environ["CL_PSEUDO_POS_TOPK"])
 if os.environ.get("CL_PSEUDO_POS_START_EPOCH"):
     PSEUDO_POS_START_EPOCH = int(os.environ["CL_PSEUDO_POS_START_EPOCH"])
+if os.environ.get("CL_PSEUDO_POS_SOURCE"):
+    PSEUDO_POS_SOURCE = os.environ["CL_PSEUDO_POS_SOURCE"].strip().lower()
+if os.environ.get("CL_INFER_EMBED_MODE"):
+    INFER_EMBED_MODE = os.environ["CL_INFER_EMBED_MODE"].strip().lower()
+if os.environ.get("CL_INFER_BACKBONE_WEIGHT"):
+    INFER_BACKBONE_WEIGHT = float(os.environ["CL_INFER_BACKBONE_WEIGHT"])
+if os.environ.get("CL_INFER_PROJ_WEIGHT"):
+    INFER_PROJ_WEIGHT = float(os.environ["CL_INFER_PROJ_WEIGHT"])
 if os.environ.get("CL_NCE_TEMP"):
     NCE_TEMP = float(os.environ["CL_NCE_TEMP"])
 if os.environ.get("CL_LR_HEAD"):
@@ -619,12 +631,37 @@ class ContrastiveModel(nn.Module):
         z = F.normalize(self.proj(patches), dim=1)
         return z.view(b, h * w, -1)
 
-    def forward(self, x, return_neco=False):
+    def _infer_embedding_from_features(self, f, z):
+        f = F.normalize(f, dim=1)
+        z = F.normalize(z, dim=1)
+        mode = str(INFER_EMBED_MODE).lower()
+        if mode == "projection":
+            return z
+        if mode == "backbone":
+            return f
+        if mode == "weighted_concat":
+            return F.normalize(torch.cat([
+                f * float(INFER_BACKBONE_WEIGHT),
+                z * float(INFER_PROJ_WEIGHT),
+            ], dim=1), dim=1)
+        raise ValueError(f"unknown INFER_EMBED_MODE: {INFER_EMBED_MODE}")
+
+    def infer_embedding(self, x):
         fm = self._forward_features(x)
         f = self._pool_features(fm)
         z = F.normalize(self.proj(f), dim=1)
+        return self._infer_embedding_from_features(f, z)
+
+    def forward(self, x, return_neco=False, return_feature=False):
+        fm = self._forward_features(x)
+        f = self._pool_features(fm)
+        z = F.normalize(self.proj(f), dim=1)
+        if return_neco and return_feature:
+            return z, self._project_patches(fm), F.normalize(f, dim=1)
         if return_neco:
             return z, self._project_patches(fm)
+        if return_feature:
+            return z, F.normalize(f, dim=1)
         return z
 
 
@@ -914,6 +951,10 @@ def train_worker(rank, world_size):
             "pseudo_pos_min_sim": PSEUDO_POS_MIN_SIM,
             "pseudo_pos_topk": PSEUDO_POS_TOPK,
             "pseudo_pos_start_epoch": PSEUDO_POS_START_EPOCH,
+            "pseudo_pos_source": PSEUDO_POS_SOURCE,
+            "infer_embed_mode": INFER_EMBED_MODE,
+            "infer_backbone_weight": INFER_BACKBONE_WEIGHT,
+            "infer_proj_weight": INFER_PROJ_WEIGHT,
             "use_local": USE_LOCAL,
             "neco_weight": NECO_WEIGHT,
             "neco_tau": NECO_TAU,
@@ -953,29 +994,53 @@ def train_worker(rank, world_size):
             #   기대를 깨서 RuntimeError → process exit 1 (single-GPU 는 정상, multi-GPU 만 crash).
             bs = x1.size(0)
             need_patches = NECO_WEIGHT > 0 or LOCAL_WEIGHT > 0
+            use_pseudo = PSEUDO_POS_WEIGHT > 0 and ep >= PSEUDO_POS_START_EPOCH
+            pseudo_source = str(PSEUDO_POS_SOURCE).lower()
+            need_feature = use_pseudo and pseudo_source == "backbone"
             if need_patches:
-                z_cat, p_cat = model(torch.cat([x1, x2], dim=0), return_neco=True)
+                out = model(torch.cat([x1, x2], dim=0),
+                            return_neco=True, return_feature=need_feature)
+                if need_feature:
+                    z_cat, p_cat, f_cat = out
+                    f1, f2 = f_cat[:bs], f_cat[bs:]
+                else:
+                    z_cat, p_cat = out
                 p1, p2 = p_cat[:bs], p_cat[bs:]
                 loss_neco = neco_loss(p1, p2, NECO_TAU, NECO_GRID) if NECO_WEIGHT > 0 else z_cat.new_zeros(())
                 loss_local = local_grid_loss(p1, p2, LOCAL_TAU, LOCAL_GRID, LOCAL_WINDOW) if LOCAL_WEIGHT > 0 else z_cat.new_zeros(())
             else:
-                z_cat = model(torch.cat([x1, x2], dim=0))
+                out = model(torch.cat([x1, x2], dim=0), return_feature=need_feature)
+                if need_feature:
+                    z_cat, f_cat = out
+                    f1, f2 = f_cat[:bs], f_cat[bs:]
+                else:
+                    z_cat = out
                 loss_neco = z_cat.new_zeros(())
                 loss_local = z_cat.new_zeros(())
             z1, z2 = z_cat[:bs], z_cat[bs:]
-            use_pseudo = PSEUDO_POS_WEIGHT > 0 and ep >= PSEUDO_POS_START_EPOCH
             if use_pseudo:
-                pseudo12 = build_pseudo_pos_mask(z1, z2, PSEUDO_POS_MIN_SIM, PSEUDO_POS_TOPK)
-                pseudo21 = build_pseudo_pos_mask(z2, z1, PSEUDO_POS_MIN_SIM, PSEUDO_POS_TOPK)
+                if pseudo_source == "backbone":
+                    pseudo12 = build_pseudo_pos_mask(f1, f2, PSEUDO_POS_MIN_SIM, PSEUDO_POS_TOPK)
+                    pseudo21 = build_pseudo_pos_mask(f2, f1, PSEUDO_POS_MIN_SIM, PSEUDO_POS_TOPK)
+                elif pseudo_source == "projection":
+                    pseudo12 = build_pseudo_pos_mask(z1, z2, PSEUDO_POS_MIN_SIM, PSEUDO_POS_TOPK)
+                    pseudo21 = build_pseudo_pos_mask(z2, z1, PSEUDO_POS_MIN_SIM, PSEUDO_POS_TOPK)
+                else:
+                    raise ValueError(f"unknown PSEUDO_POS_SOURCE: {PSEUDO_POS_SOURCE}")
                 loss_pseudo, pseudo_anchors, pseudo_pairs = pseudo_positive_loss(
                     z1, z2, pseudo12, pseudo21, NCE_TEMP)
             else:
                 pseudo12 = None
+                pseudo21 = None
                 loss_pseudo = z_cat.new_zeros(())
                 pseudo_anchors = 0
                 pseudo_pairs = 0
-            loss_nce = info_nce_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM,
-                                     LABEL_SMOOTHING, pseudo12)
+            loss_nce = 0.5 * (
+                info_nce_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM,
+                              LABEL_SMOOTHING, pseudo12) +
+                info_nce_loss(z2, z1, queue, NCE_TEMP, IGNORE_NEG_SIM,
+                              LABEL_SMOOTHING, pseudo21)
+            )
             loss = (loss_nce + (PSEUDO_POS_WEIGHT * loss_pseudo) +
                     (NECO_WEIGHT * loss_neco) + (LOCAL_WEIGHT * loss_local))
             loss.backward()
@@ -1058,7 +1123,7 @@ def train_worker(rank, world_size):
     with torch.no_grad():
         for imgs, lbls, paths in eval_ld:
             imgs = imgs.to(device, non_blocking=True)
-            z = model(imgs)
+            z = model.module.infer_embedding(imgs)
             local_z.append(z); local_lbl.extend(lbls.tolist()); local_path.extend(paths)
     z_local = torch.cat(local_z, dim=0)
     z_all = all_gather_concat(z_local, device)
@@ -1231,6 +1296,16 @@ if __name__ == "__main__":
                      help="anchor당 pseudo-positive 최대 개수. 기본 2")
     _ap.add_argument("--pseudo-pos-start-epoch", type=int, default=None,
                      help="pseudo-positive 시작 epoch. 기본 2")
+    _ap.add_argument("--pseudo-pos-source", type=str, default=None,
+                     choices=["backbone", "projection"],
+                     help="pseudo-positive 후보를 고를 embedding. 기본 backbone.")
+    _ap.add_argument("--infer-embed-mode", type=str, default=None,
+                     choices=["projection", "backbone", "weighted_concat"],
+                     help="eval/grouping embedding mode. 기본 weighted_concat.")
+    _ap.add_argument("--infer-backbone-weight", type=float, default=None,
+                     help="weighted_concat backbone weight. 기본 1.0")
+    _ap.add_argument("--infer-proj-weight", type=float, default=None,
+                     help="weighted_concat projection weight. 기본 0.2")
     _ap.add_argument("--nce-temp", type=float, default=None,
                      help="InfoNCE temperature. 낮을수록 similarity 차이에 민감. 예: 0.05")
     _ap.add_argument("--lr-head", type=float, default=None,
@@ -1269,6 +1344,10 @@ if __name__ == "__main__":
     if _a.pseudo_pos_min_sim is not None: os.environ["CL_PSEUDO_POS_MIN_SIM"] = str(_a.pseudo_pos_min_sim)
     if _a.pseudo_pos_topk is not None: os.environ["CL_PSEUDO_POS_TOPK"] = str(_a.pseudo_pos_topk)
     if _a.pseudo_pos_start_epoch is not None: os.environ["CL_PSEUDO_POS_START_EPOCH"] = str(_a.pseudo_pos_start_epoch)
+    if _a.pseudo_pos_source is not None: os.environ["CL_PSEUDO_POS_SOURCE"] = _a.pseudo_pos_source
+    if _a.infer_embed_mode is not None: os.environ["CL_INFER_EMBED_MODE"] = _a.infer_embed_mode
+    if _a.infer_backbone_weight is not None: os.environ["CL_INFER_BACKBONE_WEIGHT"] = str(_a.infer_backbone_weight)
+    if _a.infer_proj_weight is not None: os.environ["CL_INFER_PROJ_WEIGHT"] = str(_a.infer_proj_weight)
     if _a.nce_temp is not None:       os.environ["CL_NCE_TEMP"] = str(_a.nce_temp)
     if _a.lr_head is not None:        os.environ["CL_LR_HEAD"] = str(_a.lr_head)
     if _a.neco_weight is not None:    os.environ["CL_NECO_WEIGHT"] = str(_a.neco_weight)
@@ -1295,6 +1374,10 @@ if __name__ == "__main__":
     if _a.pseudo_pos_min_sim is not None: PSEUDO_POS_MIN_SIM = _a.pseudo_pos_min_sim
     if _a.pseudo_pos_topk is not None: PSEUDO_POS_TOPK = _a.pseudo_pos_topk
     if _a.pseudo_pos_start_epoch is not None: PSEUDO_POS_START_EPOCH = _a.pseudo_pos_start_epoch
+    if _a.pseudo_pos_source is not None: PSEUDO_POS_SOURCE = _a.pseudo_pos_source
+    if _a.infer_embed_mode is not None: INFER_EMBED_MODE = _a.infer_embed_mode
+    if _a.infer_backbone_weight is not None: INFER_BACKBONE_WEIGHT = _a.infer_backbone_weight
+    if _a.infer_proj_weight is not None: INFER_PROJ_WEIGHT = _a.infer_proj_weight
     if _a.nce_temp is not None:       NCE_TEMP = _a.nce_temp
     if _a.lr_head is not None:        LR_HEAD = _a.lr_head
     if _a.neco_weight is not None:    NECO_WEIGHT = _a.neco_weight

@@ -66,6 +66,9 @@ CLUSTER_SELECTION_EPSILON = 0.06
 # Backbone (같은 architecture 가정)
 BACKBONE            = "convnextv2_base.fcmae_ft_in22k_in1k_384"
 PROJ_DIM            = 128
+INFER_EMBED_MODE    = "weighted_concat"  # "projection", "backbone", "weighted_concat"
+INFER_BACKBONE_WEIGHT = 1.0
+INFER_PROJ_WEIGHT   = 0.2
 
 SEED                = 42
 # ===================================================================
@@ -498,11 +501,31 @@ class ContrastiveInferModel(nn.Module):
             nn.Linear(feat_dim, feat_dim), nn.GELU(),
             nn.Linear(feat_dim, proj_dim),
         )
+        self.feat_dim = feat_dim
+
+    @property
+    def embed_dim(self) -> int:
+        if str(INFER_EMBED_MODE).lower() == "weighted_concat":
+            return self.feat_dim + PROJ_DIM
+        if str(INFER_EMBED_MODE).lower() == "backbone":
+            return self.feat_dim
+        return PROJ_DIM
 
     def forward(self, x):
         f = self.backbone(x)
-        z = self.proj(f)
-        return F.normalize(z, dim=1)
+        z = F.normalize(self.proj(f), dim=1)
+        f = F.normalize(f, dim=1)
+        mode = str(INFER_EMBED_MODE).lower()
+        if mode == "projection":
+            return z
+        if mode == "backbone":
+            return f
+        if mode == "weighted_concat":
+            return F.normalize(torch.cat([
+                f * float(INFER_BACKBONE_WEIGHT),
+                z * float(INFER_PROJ_WEIGHT),
+            ], dim=1), dim=1)
+        raise ValueError(f"unknown INFER_EMBED_MODE: {INFER_EMBED_MODE}")
 
 
 def enumerate_targets():
@@ -744,6 +767,7 @@ def _apply_args():
     global REPRESENTATIVES_ONLY, MIN_CLUSTER_SIZE, MIN_SAMPLES
     global CLUSTER_SELECTION_METHOD, CLUSTER_SELECTION_EPSILON
     global IMG_SIZE, BATCH, NUM_WORKERS, PREFETCH_FACTOR, PROGRESS_EVERY
+    global INFER_EMBED_MODE, INFER_BACKBONE_WEIGHT, INFER_PROJ_WEIGHT
     global PRODUCT_FILTER, LINE_FILTER, DATE_FILTER
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", type=str, default=None, help="contrastive best_model.pt 경로")
@@ -770,6 +794,13 @@ def _apply_args():
     ap.add_argument("--workers", type=int, default=None, help="DataLoader num_workers")
     ap.add_argument("--prefetch-factor", type=int, default=None, help="DataLoader prefetch_factor (workers>0)")
     ap.add_argument("--progress-every", type=int, default=None, help="embedding progress 출력 batch 간격")
+    ap.add_argument("--infer-embed-mode", type=str, default=None,
+                    choices=["projection", "backbone", "weighted_concat"],
+                    help="embedding mode. 기본 weighted_concat")
+    ap.add_argument("--infer-backbone-weight", type=float, default=None,
+                    help="weighted_concat backbone weight. 기본 1.0")
+    ap.add_argument("--infer-proj-weight", type=float, default=None,
+                    help="weighted_concat projection weight. 기본 0.2")
     ap.add_argument("--min-cluster-size", type=int, default=None)
     ap.add_argument("--min-samples", type=int, default=None)
     ap.add_argument("--cluster-selection-method", type=str, default=None,
@@ -795,6 +826,9 @@ def _apply_args():
     if a.workers is not None: NUM_WORKERS = a.workers
     if a.prefetch_factor is not None: PREFETCH_FACTOR = max(1, a.prefetch_factor)
     if a.progress_every is not None: PROGRESS_EVERY = max(1, a.progress_every)
+    if a.infer_embed_mode is not None: INFER_EMBED_MODE = a.infer_embed_mode
+    if a.infer_backbone_weight is not None: INFER_BACKBONE_WEIGHT = a.infer_backbone_weight
+    if a.infer_proj_weight is not None: INFER_PROJ_WEIGHT = a.infer_proj_weight
     if a.min_cluster_size is not None: MIN_CLUSTER_SIZE = a.min_cluster_size
     if a.min_samples is not None:      MIN_SAMPLES = a.min_samples
     if a.cluster_selection_method is not None:
