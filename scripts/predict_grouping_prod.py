@@ -65,8 +65,8 @@ CLUSTER_SELECTION_EPSILON = 0.06
 
 # Backbone (같은 architecture 가정)
 BACKBONE            = "convnextv2_base.fcmae_ft_in22k_in1k_384"
-PROJ_DIM            = 128
-INFER_EMBED_MODE    = "weighted_concat"  # "projection", "backbone", "weighted_concat"
+PROJ_DIM            = 1024
+INFER_EMBED_MODE    = "projection"  # "projection", "backbone", "weighted_concat"
 INFER_BACKBONE_WEIGHT = 1.0
 INFER_PROJ_WEIGHT   = 0.2
 
@@ -502,14 +502,15 @@ class ContrastiveInferModel(nn.Module):
             nn.Linear(feat_dim, proj_dim),
         )
         self.feat_dim = feat_dim
+        self.proj_dim = proj_dim
 
     @property
     def embed_dim(self) -> int:
         if str(INFER_EMBED_MODE).lower() == "weighted_concat":
-            return self.feat_dim + PROJ_DIM
+            return self.feat_dim + self.proj_dim
         if str(INFER_EMBED_MODE).lower() == "backbone":
             return self.feat_dim
-        return PROJ_DIM
+        return self.proj_dim
 
     def forward(self, x):
         f = self.backbone(x)
@@ -526,6 +527,20 @@ class ContrastiveInferModel(nn.Module):
                 z * float(INFER_PROJ_WEIGHT),
             ], dim=1), dim=1)
         raise ValueError(f"unknown INFER_EMBED_MODE: {INFER_EMBED_MODE}")
+
+
+def infer_proj_dim_from_state_dict(sd, default: int = PROJ_DIM) -> int:
+    if not isinstance(sd, dict):
+        return int(default)
+    for key in ("proj.2.weight", "module.proj.2.weight"):
+        v = sd.get(key)
+        if hasattr(v, "shape") and len(v.shape) >= 2:
+            return int(v.shape[0])
+    for k, v in sd.items():
+        kk = str(k).removeprefix("module.")
+        if kk.endswith("proj.2.weight") and hasattr(v, "shape") and len(v.shape) >= 2:
+            return int(v.shape[0])
+    return int(default)
 
 
 def enumerate_targets():
@@ -796,7 +811,7 @@ def _apply_args():
     ap.add_argument("--progress-every", type=int, default=None, help="embedding progress 출력 batch 간격")
     ap.add_argument("--infer-embed-mode", type=str, default=None,
                     choices=["projection", "backbone", "weighted_concat"],
-                    help="embedding mode. 기본 weighted_concat")
+                    help="embedding mode. 기본 projection")
     ap.add_argument("--infer-backbone-weight", type=float, default=None,
                     help="weighted_concat backbone weight. 기본 1.0")
     ap.add_argument("--infer-proj-weight", type=float, default=None,
@@ -931,9 +946,11 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[model] loading {model_path} on {device}", flush=True)
-    model = ContrastiveInferModel(BACKBONE, PROJ_DIM).to(device)
     ck = torch.load(model_path, map_location=device, weights_only=False)
     sd = ck["state_dict"] if isinstance(ck, dict) and "state_dict" in ck else ck
+    proj_dim = infer_proj_dim_from_state_dict(sd, PROJ_DIM)
+    print(f"[model] detected proj_dim={proj_dim} infer_mode={INFER_EMBED_MODE}", flush=True)
+    model = ContrastiveInferModel(BACKBONE, proj_dim).to(device)
     if isinstance(sd, dict) and any(k.startswith("module.") for k in sd):
         sd = {k.removeprefix("module."): v for k, v in sd.items()}
     load = model.load_state_dict(sd, strict=False)
@@ -952,6 +969,7 @@ def main():
            and isinstance(v, (str, int, float, bool, tuple, list, type(None), set))}
     cfg = {k: (list(v) if isinstance(v, set) else v) for k, v in cfg.items()}
     cfg["RESOLVED_MODEL_PATH"] = str(model_path)
+    cfg["RESOLVED_MODEL_PROJ_DIM"] = int(proj_dim)
     snapshot_config(run_dir, cfg)
     system_info(run_dir)
 

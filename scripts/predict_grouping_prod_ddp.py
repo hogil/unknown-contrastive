@@ -25,9 +25,12 @@ from _ddp_utils import all_gather_concat, cleanup_ddp, is_main, launch_ddp, setu
 
 def _load_model(model_path: Path, device):
     print(f"[rank {dist.get_rank()}] loading {model_path} on {device}", flush=True)
-    model = pg.ContrastiveInferModel(pg.BACKBONE, pg.PROJ_DIM).to(device)
     ck = torch.load(model_path, map_location=device, weights_only=False)
     sd = ck["state_dict"] if isinstance(ck, dict) and "state_dict" in ck else ck
+    proj_dim = pg.infer_proj_dim_from_state_dict(sd, pg.PROJ_DIM)
+    if is_main(dist.get_rank()):
+        print(f"[model] detected proj_dim={proj_dim} infer_mode={pg.INFER_EMBED_MODE}", flush=True)
+    model = pg.ContrastiveInferModel(pg.BACKBONE, proj_dim).to(device)
     if isinstance(sd, dict) and any(k.startswith("module.") for k in sd):
         sd = {k.removeprefix("module."): v for k, v in sd.items()}
     load = model.load_state_dict(sd, strict=False)

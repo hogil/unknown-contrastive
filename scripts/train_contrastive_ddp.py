@@ -19,34 +19,37 @@ CNN_RUN_DIR           = None
 BACKBONE_CKPT         = None
 WEIGHTS_DIR           = "weights"
 BACKBONE              = "convnextv2_base.fcmae_ft_in22k_in1k_384"
-FREEZE_BACKBONE       = True
+FREEZE_BACKBONE       = False
 
 OUTPUT_ROOT           = "runs"
 TAG                   = "contrastive_ddp"
 
 IMG_SIZE              = 512
-PROJ_DIM              = 128
+PROJ_DIM              = 1024
 BATCH_PER_GPU         = 8
 NUM_WORKERS_PER_GPU   = None         # None = auto: os.cpu_count() // world_size (환경 코어 전부 활용)
 EPOCHS                = 20
 WARMUP_EPOCHS         = 1
-TRAIN_SAMPLING_RATIO  = 0.25
+TRAIN_SAMPLING_RATIO  = 1.0
 LR_HEAD               = 1e-3
+LR_BACKBONE           = 1e-5
 LR_MIN                = 1e-6
+LR_BACKBONE_MIN       = 1e-7
 WEIGHT_DECAY          = 1e-6
 NCE_TEMP              = 0.05
 GRAD_CLIP             = 1.0
 LABEL_SMOOTHING       = 0.02
 
 USE_QUEUE             = True
-QUEUE_SIZE            = 4096
-IGNORE_NEG_SIM        = 0.95
-PSEUDO_POS_WEIGHT     = 0.2     # class 없이 가까운 image를 weak-positive로 당김. 0이면 OFF.
+QUEUE_SIZE            = 16384
+IGNORE_NEG_SIM        = 0.70
+PSEUDO_POS_WEIGHT     = 0.0     # class 없이 가까운 image를 weak-positive로 당김. 0이면 OFF.
+PSEUDO_NEG_REMOVE     = True    # 가까운 샘플은 negative 에서 제거(FNC/IFND식 false-negative 완화).
 PSEUDO_POS_MIN_SIM    = 0.90    # detached cosine 기준. 이보다 가까운 batch neighbor만 후보.
 PSEUDO_POS_TOPK       = 2       # anchor당 최대 weak-positive 개수.
 PSEUDO_POS_START_EPOCH = 2      # 초기 noisy embedding 보호.
 PSEUDO_POS_SOURCE     = "backbone"  # "backbone"=CNN feature 기준, "projection"=head embedding 기준.
-INFER_EMBED_MODE      = "weighted_concat"  # "projection", "backbone", "weighted_concat"
+INFER_EMBED_MODE      = "projection"  # "projection", "backbone", "weighted_concat"
 INFER_BACKBONE_WEIGHT = 1.0
 INFER_PROJ_WEIGHT     = 0.2
 USE_LOCAL             = False
@@ -126,10 +129,18 @@ if os.environ.get("CL_BATCH_PER_GPU"):
     BATCH_PER_GPU = int(os.environ["CL_BATCH_PER_GPU"])
 if os.environ.get("CL_IMG_SIZE"):
     IMG_SIZE = int(os.environ["CL_IMG_SIZE"])
+if os.environ.get("CL_PROJ_DIM"):
+    PROJ_DIM = int(os.environ["CL_PROJ_DIM"])
+if os.environ.get("CL_FREEZE_BACKBONE"):
+    FREEZE_BACKBONE = os.environ["CL_FREEZE_BACKBONE"].strip().lower() in {"1", "true", "yes", "y"}
+if os.environ.get("CL_TRAIN_SAMPLING_RATIO"):
+    TRAIN_SAMPLING_RATIO = float(os.environ["CL_TRAIN_SAMPLING_RATIO"])
 if os.environ.get("CL_IGNORE_NEG_SIM"):
     IGNORE_NEG_SIM = float(os.environ["CL_IGNORE_NEG_SIM"])
 if os.environ.get("CL_PSEUDO_POS_WEIGHT"):
     PSEUDO_POS_WEIGHT = float(os.environ["CL_PSEUDO_POS_WEIGHT"])
+if os.environ.get("CL_PSEUDO_NEG_REMOVE"):
+    PSEUDO_NEG_REMOVE = os.environ["CL_PSEUDO_NEG_REMOVE"].strip().lower() in {"1", "true", "yes", "y"}
 if os.environ.get("CL_PSEUDO_POS_MIN_SIM"):
     PSEUDO_POS_MIN_SIM = float(os.environ["CL_PSEUDO_POS_MIN_SIM"])
 if os.environ.get("CL_PSEUDO_POS_TOPK"):
@@ -148,6 +159,8 @@ if os.environ.get("CL_NCE_TEMP"):
     NCE_TEMP = float(os.environ["CL_NCE_TEMP"])
 if os.environ.get("CL_LR_HEAD"):
     LR_HEAD = float(os.environ["CL_LR_HEAD"])
+if os.environ.get("CL_LR_BACKBONE"):
+    LR_BACKBONE = float(os.environ["CL_LR_BACKBONE"])
 if os.environ.get("CL_NECO_WEIGHT"):
     NECO_WEIGHT = float(os.environ["CL_NECO_WEIGHT"])
 if os.environ.get("CL_NECO_TAU"):
@@ -176,13 +189,13 @@ def seed_all(s=42):
     torch.manual_seed(s); torch.cuda.manual_seed_all(s)
 
 
-def contrastive_lr_for_epoch(ep: int) -> float:
+def contrastive_lr_for_epoch(ep: int, base_lr: float = LR_HEAD, min_lr: float = LR_MIN) -> float:
     """Warmup 후 cosine decay. CNN/anomaly stage 와 같은 LR shape."""
     if WARMUP_EPOCHS > 0 and ep <= WARMUP_EPOCHS:
-        return LR_HEAD * ep / max(1, WARMUP_EPOCHS)
+        return base_lr * ep / max(1, WARMUP_EPOCHS)
     decay_epochs = max(1, EPOCHS - WARMUP_EPOCHS)
     t = min(1.0, max(0.0, (ep - WARMUP_EPOCHS) / decay_epochs))
-    return LR_MIN + 0.5 * (LR_HEAD - LR_MIN) * (1.0 + math.cos(math.pi * t))
+    return min_lr + 0.5 * (base_lr - min_lr) * (1.0 + math.cos(math.pi * t))
 
 
 # ---------- Dataset ----------
@@ -931,23 +944,33 @@ def train_worker(rank, world_size):
                         "no_eval": no_eval, "world_size": world_size}, indent=2),
             encoding="utf-8")
 
-    # model + DDP wrap. FREEZE_BACKBONE 면 find_unused_parameters=True
+    # model + DDP wrap. 기본은 backbone 도 작은 LR 로 같이 fine-tune.
     model = ContrastiveModel(BACKBONE, PROJ_DIM, FREEZE_BACKBONE, bp).to(device)
     model = DDP(model, device_ids=[rank] if torch.cuda.is_available() else None,
                 find_unused_parameters=FREEZE_BACKBONE)
     queue = QueueBank(PROJ_DIM, QUEUE_SIZE, device) if USE_QUEUE else None
-    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],
-                            lr=LR_HEAD, weight_decay=WEIGHT_DECAY)
+    backbone_params = [p for p in model.module.backbone.parameters() if p.requires_grad]
+    head_params = [p for p in model.module.proj.parameters() if p.requires_grad]
+    param_groups = []
+    if backbone_params:
+        param_groups.append({"params": backbone_params, "lr": LR_BACKBONE, "name": "backbone"})
+    if head_params:
+        param_groups.append({"params": head_params, "lr": LR_HEAD, "name": "head"})
+    opt = torch.optim.AdamW(param_groups, weight_decay=WEIGHT_DECAY)
 
     if is_main(rank):
         log_stage_metric(run_dir, "contrastive_ddp_setup", {
             "world_size": world_size,
             "backbone_source": str(bp), "freeze_backbone": FREEZE_BACKBONE,
             "batch_per_gpu": BATCH_PER_GPU, "total_batch": BATCH_PER_GPU * world_size,
-            "lr_head": LR_HEAD, "lr_min": LR_MIN, "lr_schedule": "warmup_cosine_epoch",
+            "proj_dim": PROJ_DIM,
+            "lr_head": LR_HEAD, "lr_backbone": LR_BACKBONE,
+            "lr_min": LR_MIN, "lr_backbone_min": LR_BACKBONE_MIN,
+            "lr_schedule": "warmup_cosine_epoch",
             "queue_size": QUEUE_SIZE if USE_QUEUE else 0,
             "ignore_neg_sim": IGNORE_NEG_SIM,
             "pseudo_pos_weight": PSEUDO_POS_WEIGHT,
+            "pseudo_neg_remove": PSEUDO_NEG_REMOVE,
             "pseudo_pos_min_sim": PSEUDO_POS_MIN_SIM,
             "pseudo_pos_topk": PSEUDO_POS_TOPK,
             "pseudo_pos_start_epoch": PSEUDO_POS_START_EPOCH,
@@ -978,8 +1001,10 @@ def train_worker(rank, world_size):
         sampler = DistributedSampler(sub, num_replicas=world_size, rank=rank, shuffle=True, seed=SEED + ep)
         ld = DataLoader(sub, batch_size=BATCH_PER_GPU, sampler=sampler,
                         num_workers=nw, pin_memory=True, drop_last=True)
-        lr = contrastive_lr_for_epoch(ep)
-        for g in opt.param_groups: g["lr"] = lr
+        lr_head = contrastive_lr_for_epoch(ep, LR_HEAD, LR_MIN)
+        lr_backbone = contrastive_lr_for_epoch(ep, LR_BACKBONE, LR_BACKBONE_MIN)
+        for g in opt.param_groups:
+            g["lr"] = lr_backbone if g.get("name") == "backbone" else lr_head
 
         model.train()
         run_loss = 0.0; run_nce = 0.0; run_pseudo = 0.0; run_neco = 0.0; run_local = 0.0
@@ -994,7 +1019,7 @@ def train_worker(rank, world_size):
             #   기대를 깨서 RuntimeError → process exit 1 (single-GPU 는 정상, multi-GPU 만 crash).
             bs = x1.size(0)
             need_patches = NECO_WEIGHT > 0 or LOCAL_WEIGHT > 0
-            use_pseudo = PSEUDO_POS_WEIGHT > 0 and ep >= PSEUDO_POS_START_EPOCH
+            use_pseudo = (PSEUDO_NEG_REMOVE or PSEUDO_POS_WEIGHT > 0) and ep >= PSEUDO_POS_START_EPOCH
             pseudo_source = str(PSEUDO_POS_SOURCE).lower()
             need_feature = use_pseudo and pseudo_source == "backbone"
             if need_patches:
@@ -1064,7 +1089,7 @@ def train_worker(rank, world_size):
                       f"loss={run_loss/n:.4f} nce={run_nce/n:.4f} "
                       f"pseudo={run_pseudo/n:.4f} neco={run_neco/n:.4f} "
                       f"local={run_local/n:.4f} pseudo_pairs={run_pseudo_pairs:.0f} "
-                      f"lr={lr:.2e}", flush=True)
+                      f"lr_h={lr_head:.2e} lr_b={lr_backbone:.2e}", flush=True)
         ep_loss = run_loss / max(1, n)
         ep_nce = run_nce / max(1, n)
         ep_pseudo = run_pseudo / max(1, n)
@@ -1084,7 +1109,8 @@ def train_worker(rank, world_size):
                             "pseudo": avg["pseudo"], "neco": avg["neco"],
                             "local": avg["local"],
                             "pseudo_anchors": avg["pseudo_anchors"],
-                            "pseudo_pairs": avg["pseudo_pairs"], "lr": lr})
+                            "pseudo_pairs": avg["pseudo_pairs"],
+                            "lr_head": lr_head, "lr_backbone": lr_backbone})
 
     # save (rank 0)
     if is_main(rank):
@@ -1286,10 +1312,18 @@ if __name__ == "__main__":
                      help="현업 classless train only. eval/HDBSCAN metric 생략.")
     _ap.add_argument("--batch", type=int, default=None, help="BATCH_PER_GPU override.")
     _ap.add_argument("--img-size", type=int, default=None, help="contrastive input size. 기본 512")
+    _ap.add_argument("--proj-dim", type=int, default=None,
+                     help="projection embedding dim. 기본 1024")
+    _ap.add_argument("--freeze-backbone", action="store_true",
+                     help="backbone 고정(head-only ablation). 기본은 backbone 도 작은 LR 로 학습.")
+    _ap.add_argument("--train-sampling-ratio", type=float, default=None,
+                     help="epoch마다 사용할 train 비율. 기본 1.0")
     _ap.add_argument("--ignore-neg-sim", type=float, default=None,
                      help="NEG filter threshold. 예: 0.90 또는 0.95")
     _ap.add_argument("--pseudo-pos-weight", type=float, default=None,
-                     help="classless pseudo-positive loss weight. 0이면 OFF. 기본 0.2")
+                     help="classless pseudo-positive attraction loss weight. 기본 0.0")
+    _ap.add_argument("--no-pseudo-neg-remove", action="store_true",
+                     help="가까운 샘플을 negative 에서 제거하는 false-negative 완화를 끔.")
     _ap.add_argument("--pseudo-pos-min-sim", type=float, default=None,
                      help="pseudo-positive 후보 최소 cosine. 기본 0.90")
     _ap.add_argument("--pseudo-pos-topk", type=int, default=None,
@@ -1301,7 +1335,7 @@ if __name__ == "__main__":
                      help="pseudo-positive 후보를 고를 embedding. 기본 backbone.")
     _ap.add_argument("--infer-embed-mode", type=str, default=None,
                      choices=["projection", "backbone", "weighted_concat"],
-                     help="eval/grouping embedding mode. 기본 weighted_concat.")
+                     help="eval/grouping embedding mode. 기본 projection.")
     _ap.add_argument("--infer-backbone-weight", type=float, default=None,
                      help="weighted_concat backbone weight. 기본 1.0")
     _ap.add_argument("--infer-proj-weight", type=float, default=None,
@@ -1310,6 +1344,8 @@ if __name__ == "__main__":
                      help="InfoNCE temperature. 낮을수록 similarity 차이에 민감. 예: 0.05")
     _ap.add_argument("--lr-head", type=float, default=None,
                      help="projection head learning rate. 예: 5e-4")
+    _ap.add_argument("--lr-backbone", type=float, default=None,
+                     help="backbone learning rate. 기본 1e-5")
     _ap.add_argument("--neco-weight", type=float, default=None,
                      help="B6 NeCo weight. 기본 0.2, 0이면 NeCo OFF.")
     _ap.add_argument("--neco-tau", type=float, default=None,
@@ -1339,8 +1375,12 @@ if __name__ == "__main__":
     if _a.no_eval:            os.environ["CL_NO_EVAL"] = "1"
     if _a.batch is not None:  os.environ["CL_BATCH_PER_GPU"] = str(_a.batch)
     if _a.img_size is not None: os.environ["CL_IMG_SIZE"] = str(_a.img_size)
+    if _a.proj_dim is not None: os.environ["CL_PROJ_DIM"] = str(_a.proj_dim)
+    if _a.freeze_backbone:    os.environ["CL_FREEZE_BACKBONE"] = "1"
+    if _a.train_sampling_ratio is not None: os.environ["CL_TRAIN_SAMPLING_RATIO"] = str(_a.train_sampling_ratio)
     if _a.ignore_neg_sim is not None: os.environ["CL_IGNORE_NEG_SIM"] = str(_a.ignore_neg_sim)
     if _a.pseudo_pos_weight is not None: os.environ["CL_PSEUDO_POS_WEIGHT"] = str(_a.pseudo_pos_weight)
+    if _a.no_pseudo_neg_remove: os.environ["CL_PSEUDO_NEG_REMOVE"] = "0"
     if _a.pseudo_pos_min_sim is not None: os.environ["CL_PSEUDO_POS_MIN_SIM"] = str(_a.pseudo_pos_min_sim)
     if _a.pseudo_pos_topk is not None: os.environ["CL_PSEUDO_POS_TOPK"] = str(_a.pseudo_pos_topk)
     if _a.pseudo_pos_start_epoch is not None: os.environ["CL_PSEUDO_POS_START_EPOCH"] = str(_a.pseudo_pos_start_epoch)
@@ -1350,6 +1390,7 @@ if __name__ == "__main__":
     if _a.infer_proj_weight is not None: os.environ["CL_INFER_PROJ_WEIGHT"] = str(_a.infer_proj_weight)
     if _a.nce_temp is not None:       os.environ["CL_NCE_TEMP"] = str(_a.nce_temp)
     if _a.lr_head is not None:        os.environ["CL_LR_HEAD"] = str(_a.lr_head)
+    if _a.lr_backbone is not None:    os.environ["CL_LR_BACKBONE"] = str(_a.lr_backbone)
     if _a.neco_weight is not None:    os.environ["CL_NECO_WEIGHT"] = str(_a.neco_weight)
     if _a.neco_tau is not None:       os.environ["CL_NECO_TAU"] = str(_a.neco_tau)
     if _a.neco_grid is not None:      os.environ["CL_NECO_GRID"] = str(_a.neco_grid)
@@ -1369,8 +1410,12 @@ if __name__ == "__main__":
     if _a.no_eval:            NO_EVAL = True
     if _a.batch is not None:  BATCH_PER_GPU = _a.batch
     if _a.img_size is not None: IMG_SIZE = _a.img_size
+    if _a.proj_dim is not None: PROJ_DIM = _a.proj_dim
+    if _a.freeze_backbone:    FREEZE_BACKBONE = True
+    if _a.train_sampling_ratio is not None: TRAIN_SAMPLING_RATIO = _a.train_sampling_ratio
     if _a.ignore_neg_sim is not None: IGNORE_NEG_SIM = _a.ignore_neg_sim
     if _a.pseudo_pos_weight is not None: PSEUDO_POS_WEIGHT = _a.pseudo_pos_weight
+    if _a.no_pseudo_neg_remove: PSEUDO_NEG_REMOVE = False
     if _a.pseudo_pos_min_sim is not None: PSEUDO_POS_MIN_SIM = _a.pseudo_pos_min_sim
     if _a.pseudo_pos_topk is not None: PSEUDO_POS_TOPK = _a.pseudo_pos_topk
     if _a.pseudo_pos_start_epoch is not None: PSEUDO_POS_START_EPOCH = _a.pseudo_pos_start_epoch
@@ -1380,6 +1425,7 @@ if __name__ == "__main__":
     if _a.infer_proj_weight is not None: INFER_PROJ_WEIGHT = _a.infer_proj_weight
     if _a.nce_temp is not None:       NCE_TEMP = _a.nce_temp
     if _a.lr_head is not None:        LR_HEAD = _a.lr_head
+    if _a.lr_backbone is not None:    LR_BACKBONE = _a.lr_backbone
     if _a.neco_weight is not None:    NECO_WEIGHT = _a.neco_weight
     if _a.neco_tau is not None:       NECO_TAU = _a.neco_tau
     if _a.neco_grid is not None:      NECO_GRID = _a.neco_grid

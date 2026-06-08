@@ -49,22 +49,23 @@ CNN_STOCHASTIC_DEPTH  = 0.0
 CNN_SPLIT_RATIOS      = (0.8, 0.1, 0.1)
 
 # ===== Contrastive stage =====
-CL_PROJ_DIM           = 128
+CL_PROJ_DIM           = 1024
 CL_IMG_SIZE           = 512
 CL_BATCH              = 8
 CL_NUM_WORKERS        = 4
 CL_EPOCHS             = 20
 CL_WARMUP_EPOCHS      = 1
-CL_TRAIN_SAMPLING_RATIO = 0.25
+CL_TRAIN_SAMPLING_RATIO = 1.0
 CL_LR_HEAD            = 1e-3
+CL_LR_BACKBONE        = 1e-5
 CL_WEIGHT_DECAY       = 1e-6
 CL_NCE_TEMP           = 0.05
 CL_GRAD_CLIP          = 1.0
 CL_LABEL_SMOOTHING    = 0.02
-CL_FREEZE_BACKBONE    = True
+CL_FREEZE_BACKBONE    = False
 CL_USE_QUEUE          = True
-CL_QUEUE_SIZE         = 4096
-CL_IGNORE_NEG_SIM     = 0.95
+CL_QUEUE_SIZE         = 16384
+CL_IGNORE_NEG_SIM     = 0.70
 CL_USE_LOCAL          = False
 CL_NECO_WEIGHT        = 0.2
 CL_NECO_TAU           = 0.1
@@ -208,6 +209,7 @@ def main():
     tcl.WARMUP_EPOCHS         = CL_WARMUP_EPOCHS
     tcl.TRAIN_SAMPLING_RATIO  = CL_TRAIN_SAMPLING_RATIO
     tcl.LR_HEAD               = CL_LR_HEAD
+    tcl.LR_BACKBONE           = CL_LR_BACKBONE
     tcl.WEIGHT_DECAY          = CL_WEIGHT_DECAY
     tcl.NCE_TEMP              = CL_NCE_TEMP
     tcl.GRAD_CLIP             = CL_GRAD_CLIP

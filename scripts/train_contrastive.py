@@ -28,20 +28,22 @@ CNN_RUN_DIR           = None       # 예: "runs/260527_120000_cnn"
 BACKBONE_CKPT         = None       # 또는 직접 path 지정
 WEIGHTS_DIR           = "weights"
 BACKBONE              = "convnextv2_base.fcmae_ft_in22k_in1k_384"
-FREEZE_BACKBONE       = True       # ★ projection head 만 학습
+FREEZE_BACKBONE       = False      # 기본은 backbone 도 작은 LR 로 target 데이터에 적응
 
 OUTPUT_ROOT           = "runs"
 TAG                   = "contrastive"
 
 IMG_SIZE              = 512
-PROJ_DIM              = 128
+PROJ_DIM              = 1024
 BATCH                 = 8
 NUM_WORKERS           = 4
 EPOCHS                = 20
 WARMUP_EPOCHS         = 1
-TRAIN_SAMPLING_RATIO  = 0.25       # 매 epoch 25% 무작위
+TRAIN_SAMPLING_RATIO  = 1.0        # 매 epoch 전수
 LR_HEAD               = 1e-3
+LR_BACKBONE           = 1e-5
 LR_MIN                = 1e-6
+LR_BACKBONE_MIN       = 1e-7
 WEIGHT_DECAY          = 1e-6
 NCE_TEMP              = 0.05
 GRAD_CLIP             = 1.0
@@ -49,8 +51,8 @@ LABEL_SMOOTHING       = 0.02
 
 # 4-tool recipe (Step 2b SOTA)
 USE_QUEUE             = True
-QUEUE_SIZE            = 4096
-IGNORE_NEG_SIM        = 0.95       # NV-Retriever NEG filter
+QUEUE_SIZE            = 16384
+IGNORE_NEG_SIM        = 0.70       # collapse 때 negative 과제 제거가 과도해지는 것 방지
 USE_LOCAL             = False      # ★ Local DenseCL OFF (4-tool 최종)
 NECO_WEIGHT           = 0.2
 NECO_TAU              = 0.1
@@ -115,13 +117,13 @@ def seed_all(s=42):
     torch.manual_seed(s); torch.cuda.manual_seed_all(s)
 
 
-def contrastive_lr_for_epoch(ep: int) -> float:
+def contrastive_lr_for_epoch(ep: int, base_lr: float = LR_HEAD, min_lr: float = LR_MIN) -> float:
     """Warmup 후 cosine decay. DDP contrastive 와 같은 LR shape."""
     if WARMUP_EPOCHS > 0 and ep <= WARMUP_EPOCHS:
-        return LR_HEAD * ep / max(1, WARMUP_EPOCHS)
+        return base_lr * ep / max(1, WARMUP_EPOCHS)
     decay_epochs = max(1, EPOCHS - WARMUP_EPOCHS)
     t = min(1.0, max(0.0, (ep - WARMUP_EPOCHS) / decay_epochs))
-    return LR_MIN + 0.5 * (LR_HEAD - LR_MIN) * (1.0 + math.cos(math.pi * t))
+    return min_lr + 0.5 * (base_lr - min_lr) * (1.0 + math.cos(math.pi * t))
 
 
 # ---------- Dataset ----------
@@ -604,8 +606,14 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = ContrastiveModel(BACKBONE, PROJ_DIM, FREEZE_BACKBONE, backbone_ckpt).to(device)
     queue = QueueBank(PROJ_DIM, QUEUE_SIZE, device) if USE_QUEUE else None
-    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],
-                            lr=LR_HEAD, weight_decay=WEIGHT_DECAY)
+    backbone_params = [p for p in model.backbone.parameters() if p.requires_grad]
+    head_params = [p for p in model.proj.parameters() if p.requires_grad]
+    param_groups = []
+    if backbone_params:
+        param_groups.append({"params": backbone_params, "lr": LR_BACKBONE, "name": "backbone"})
+    if head_params:
+        param_groups.append({"params": head_params, "lr": LR_HEAD, "name": "head"})
+    opt = torch.optim.AdamW(param_groups, weight_decay=WEIGHT_DECAY)
 
     log_stage_metric(run_dir, "contrastive_setup", {
         "backbone": BACKBONE,
@@ -613,7 +621,9 @@ def main():
         "freeze_backbone": FREEZE_BACKBONE,
         "proj_dim": PROJ_DIM,
         "lr_head": LR_HEAD,
+        "lr_backbone": LR_BACKBONE,
         "lr_min": LR_MIN,
+        "lr_backbone_min": LR_BACKBONE_MIN,
         "lr_schedule": "warmup_cosine_epoch",
         "queue_size": QUEUE_SIZE if USE_QUEUE else 0,
         "ignore_neg_sim": IGNORE_NEG_SIM,
@@ -638,8 +648,10 @@ def main():
             sub = random.sample(train_paths_all, max(1, int(len(train_paths_all) * r)))
         else:
             sub = train_paths_all
-        lr = contrastive_lr_for_epoch(ep)
-        for g in opt.param_groups: g["lr"] = lr
+        lr_head = contrastive_lr_for_epoch(ep, LR_HEAD, LR_MIN)
+        lr_backbone = contrastive_lr_for_epoch(ep, LR_BACKBONE, LR_BACKBONE_MIN)
+        for g in opt.param_groups:
+            g["lr"] = lr_backbone if g.get("name") == "backbone" else lr_head
         pair_ds = PairDataset(sub, train_aug)
         ld = DataLoader(pair_ds, batch_size=BATCH, shuffle=True,
                         num_workers=NUM_WORKERS, pin_memory=True, drop_last=True)
@@ -676,7 +688,7 @@ def main():
             if it % max(1, len(ld) // 10) == 0:
                 print(f"  Ep {ep}/{EPOCHS} {it/len(ld)*100:>5.1f}% | "
                       f"loss={run_loss/n:.4f} nce={run_nce/n:.4f} "
-                      f"neco={run_neco/n:.4f} lr={lr:.2e}", flush=True)
+                      f"neco={run_neco/n:.4f} lr_h={lr_head:.2e} lr_b={lr_backbone:.2e}", flush=True)
         ep_loss = run_loss / max(1, n)
         ep_nce = run_nce / max(1, n)
         ep_neco = run_neco / max(1, n)
@@ -684,7 +696,7 @@ def main():
               f"nce={ep_nce:.4f} neco={ep_neco:.4f} "
               f"time={time.time()-t0:.0f}s", flush=True)
         history.append({"epoch": ep, "loss": ep_loss, "nce": ep_nce,
-                        "neco": ep_neco, "lr": lr})
+                        "neco": ep_neco, "lr_head": lr_head, "lr_backbone": lr_backbone})
 
     # save
     torch.save({

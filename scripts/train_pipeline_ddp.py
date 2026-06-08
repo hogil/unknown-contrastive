@@ -22,8 +22,11 @@ AUTO_SPLIT            = True                                # split 폴더 없�
 # ★ H100 batch per GPU (80GB). 0 = 각 _ddp.py CONFIG default (로컬 16GB: CNN16/CL8) 그대로.
 #   total batch = BATCH_PER_GPU × GPU 수. CNN 은 full fine-tune(무거움), CL 은 frozen(가벼움).
 CNN_BATCH_PER_GPU     = 32             # convnextv2_base 384 full-ft + AMP → H100 80GB 32 안전
-CL_BATCH_PER_GPU      = 64             # frozen backbone → 가벼움, contrastive 는 batch 클수록 negative↑ 유리
+CL_BATCH_PER_GPU      = 16             # backbone fine-tune 기본. head-only ablation이면 더 키워도 됨.
 CL_IMG_SIZE           = 512
+CL_PROJ_DIM           = 1024
+CL_FREEZE_BACKBONE    = False
+CL_TRAIN_SAMPLING_RATIO = 1.0
 GROUPING_BATCH        = 128
 GROUPING_WORKERS      = 64
 GROUPING_REPS_PER_CLUSTER = 30
@@ -31,17 +34,19 @@ GROUPING_MIN_CLUSTER_SIZE = 12
 GROUPING_MIN_SAMPLES = 15
 GROUPING_CLUSTER_SELECTION_METHOD = "leaf"
 GROUPING_CLUSTER_SELECTION_EPSILON = 0.06
-CL_IGNORE_NEG_SIM     = 0.95
+CL_IGNORE_NEG_SIM     = 0.70
 CL_NCE_TEMP           = 0.05
 CL_LR_HEAD            = 1e-3
+CL_LR_BACKBONE        = 1e-5
 CL_NECO_WEIGHT        = 0.2
 CL_NECO_TAU           = 0.1
-CL_PSEUDO_POS_WEIGHT  = 0.2
+CL_PSEUDO_POS_WEIGHT  = 0.0
+CL_PSEUDO_NEG_REMOVE  = True
 CL_PSEUDO_POS_MIN_SIM = 0.90
 CL_PSEUDO_POS_TOPK    = 2
 CL_PSEUDO_POS_START_EPOCH = 2
 CL_PSEUDO_POS_SOURCE  = "backbone"
-CL_INFER_EMBED_MODE   = "weighted_concat"
+CL_INFER_EMBED_MODE   = "projection"
 CL_INFER_BACKBONE_WEIGHT = 1.0
 CL_INFER_PROJ_WEIGHT  = 0.2
 
@@ -77,18 +82,28 @@ def parse_args():
                    help="Contrastive batch per GPU override.")
     p.add_argument("--cl-img-size", type=int, default=None,
                    help="Contrastive/grouping input image size override.")
+    p.add_argument("--cl-proj-dim", type=int, default=None,
+                   help="Contrastive projection dim. 기본 1024.")
+    p.add_argument("--freeze-backbone", action="store_true",
+                   help="Stage2 contrastive backbone 고정(head-only ablation). 기본은 backbone fine-tune.")
+    p.add_argument("--train-sampling-ratio", type=float, default=None,
+                   help="Stage2 epoch별 train 비율. 기본 1.0.")
     p.add_argument("--ignore-neg-sim", type=float, default=None,
                    help="Contrastive IGNORE_NEG_SIM override.")
     p.add_argument("--nce-temp", type=float, default=None,
                    help="Contrastive NCE_TEMP override.")
     p.add_argument("--cl-lr-head", type=float, default=None,
                    help="Contrastive projection head LR override.")
+    p.add_argument("--cl-lr-backbone", type=float, default=None,
+                   help="Contrastive backbone LR override. 기본 1e-5.")
     p.add_argument("--neco-weight", type=float, default=None,
                    help="Contrastive NeCo weight override.")
     p.add_argument("--neco-tau", type=float, default=None,
                    help="Contrastive NeCo tau override.")
     p.add_argument("--pseudo-pos-weight", type=float, default=None,
                    help="Contrastive classless pseudo-positive weight. 0이면 OFF.")
+    p.add_argument("--no-pseudo-neg-remove", action="store_true",
+                   help="Stage2 false-negative 제거 OFF.")
     p.add_argument("--pseudo-pos-min-sim", type=float, default=None,
                    help="Contrastive pseudo-positive 최소 cosine.")
     p.add_argument("--pseudo-pos-topk", type=int, default=None,
@@ -214,8 +229,9 @@ def _resolve_cnn_best_arg(resolve_path, raw: str) -> Path:
 
 def main():
     global CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR, CNN_BATCH_PER_GPU, CL_BATCH_PER_GPU, SOURCE_ROOT
-    global CL_IMG_SIZE, CL_IGNORE_NEG_SIM, CL_NCE_TEMP, CL_LR_HEAD, CL_NECO_WEIGHT, CL_NECO_TAU
-    global CL_PSEUDO_POS_WEIGHT, CL_PSEUDO_POS_MIN_SIM, CL_PSEUDO_POS_TOPK, CL_PSEUDO_POS_START_EPOCH
+    global CL_IMG_SIZE, CL_PROJ_DIM, CL_FREEZE_BACKBONE, CL_TRAIN_SAMPLING_RATIO
+    global CL_IGNORE_NEG_SIM, CL_NCE_TEMP, CL_LR_HEAD, CL_LR_BACKBONE, CL_NECO_WEIGHT, CL_NECO_TAU
+    global CL_PSEUDO_POS_WEIGHT, CL_PSEUDO_NEG_REMOVE, CL_PSEUDO_POS_MIN_SIM, CL_PSEUDO_POS_TOPK, CL_PSEUDO_POS_START_EPOCH
     global CL_PSEUDO_POS_SOURCE, CL_INFER_EMBED_MODE, CL_INFER_BACKBONE_WEIGHT, CL_INFER_PROJ_WEIGHT
     global GROUPING_MIN_CLUSTER_SIZE, GROUPING_MIN_SAMPLES
     global GROUPING_CLUSTER_SELECTION_METHOD, GROUPING_CLUSTER_SELECTION_EPSILON
@@ -232,18 +248,28 @@ def main():
         CL_BATCH_PER_GPU = args.cl_batch
     if args.cl_img_size is not None:
         CL_IMG_SIZE = args.cl_img_size
+    if args.cl_proj_dim is not None:
+        CL_PROJ_DIM = args.cl_proj_dim
+    if args.freeze_backbone:
+        CL_FREEZE_BACKBONE = True
+    if args.train_sampling_ratio is not None:
+        CL_TRAIN_SAMPLING_RATIO = args.train_sampling_ratio
     if args.ignore_neg_sim is not None:
         CL_IGNORE_NEG_SIM = args.ignore_neg_sim
     if args.nce_temp is not None:
         CL_NCE_TEMP = args.nce_temp
     if args.cl_lr_head is not None:
         CL_LR_HEAD = args.cl_lr_head
+    if args.cl_lr_backbone is not None:
+        CL_LR_BACKBONE = args.cl_lr_backbone
     if args.neco_weight is not None:
         CL_NECO_WEIGHT = args.neco_weight
     if args.neco_tau is not None:
         CL_NECO_TAU = args.neco_tau
     if args.pseudo_pos_weight is not None:
         CL_PSEUDO_POS_WEIGHT = args.pseudo_pos_weight
+    if args.no_pseudo_neg_remove:
+        CL_PSEUDO_NEG_REMOVE = False
     if args.pseudo_pos_min_sim is not None:
         CL_PSEUDO_POS_MIN_SIM = args.pseudo_pos_min_sim
     if args.pseudo_pos_topk is not None:
@@ -461,12 +487,17 @@ def main():
     # CNN backbone + tag 를 env 로 주입 (mp.spawn 자식이 module-level 에서 읽음)
     env["CL_BACKBONE_CKPT"] = str(cnn_best)
     env["CL_IMG_SIZE"] = str(CL_IMG_SIZE)
+    env["CL_PROJ_DIM"] = str(CL_PROJ_DIM)
+    env["CL_FREEZE_BACKBONE"] = "1" if CL_FREEZE_BACKBONE else "0"
+    env["CL_TRAIN_SAMPLING_RATIO"] = str(CL_TRAIN_SAMPLING_RATIO)
     env["CL_IGNORE_NEG_SIM"] = str(CL_IGNORE_NEG_SIM)
     env["CL_NCE_TEMP"] = str(CL_NCE_TEMP)
     env["CL_LR_HEAD"] = str(CL_LR_HEAD)
+    env["CL_LR_BACKBONE"] = str(CL_LR_BACKBONE)
     env["CL_NECO_WEIGHT"] = str(CL_NECO_WEIGHT)
     env["CL_NECO_TAU"] = str(CL_NECO_TAU)
     env["CL_PSEUDO_POS_WEIGHT"] = str(CL_PSEUDO_POS_WEIGHT)
+    env["CL_PSEUDO_NEG_REMOVE"] = "1" if CL_PSEUDO_NEG_REMOVE else "0"
     env["CL_PSEUDO_POS_MIN_SIM"] = str(CL_PSEUDO_POS_MIN_SIM)
     env["CL_PSEUDO_POS_TOPK"] = str(CL_PSEUDO_POS_TOPK)
     env["CL_PSEUDO_POS_START_EPOCH"] = str(CL_PSEUDO_POS_START_EPOCH)
@@ -560,11 +591,16 @@ def main():
         "resolved_cnn_data_dir": str(resolved_dirs["CNN_DATA_DIR"]),
         "resolved_cl_train_dir": str(resolved_dirs["CL_TRAIN_DIR"]),
         "resolved_cl_eval_dir": str(resolved_dirs["CL_EVAL_DIR"]),
+        "cl_proj_dim": CL_PROJ_DIM,
+        "cl_freeze_backbone": CL_FREEZE_BACKBONE,
+        "cl_train_sampling_ratio": CL_TRAIN_SAMPLING_RATIO,
         "cl_lr_head": CL_LR_HEAD,
+        "cl_lr_backbone": CL_LR_BACKBONE,
         "cl_ignore_neg_sim": CL_IGNORE_NEG_SIM,
         "cl_nce_temp": CL_NCE_TEMP,
         "cl_neco_weight": CL_NECO_WEIGHT,
         "cl_pseudo_pos_weight": CL_PSEUDO_POS_WEIGHT,
+        "cl_pseudo_neg_remove": CL_PSEUDO_NEG_REMOVE,
         "cl_pseudo_pos_min_sim": CL_PSEUDO_POS_MIN_SIM,
         "cl_pseudo_pos_topk": CL_PSEUDO_POS_TOPK,
         "cl_pseudo_pos_start_epoch": CL_PSEUDO_POS_START_EPOCH,

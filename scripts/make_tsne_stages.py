@@ -25,8 +25,8 @@ from _common import mask_palette_non_grade_to_white, resolve_path
 
 
 BACKBONE = "convnextv2_base.fcmae_ft_in22k_in1k_384"
-PROJ_DIM = 128
-INFER_EMBED_MODE = "weighted_concat"
+PROJ_DIM = 1024
+INFER_EMBED_MODE = "projection"
 INFER_BACKBONE_WEIGHT = 1.0
 INFER_PROJ_WEIGHT = 0.2
 
@@ -43,6 +43,7 @@ class ContrastiveInferModel(nn.Module):
             nn.Linear(feat_dim, proj_dim),
         )
         self.feat_dim = feat_dim
+        self.proj_dim = proj_dim
 
     def forward(self, x):
         f = self.backbone(x)
@@ -73,7 +74,7 @@ def parse_args():
     p.add_argument("--tag", default="tsne_stages")
     p.add_argument("--img-size", type=int, default=384)
     p.add_argument("--batch", type=int, default=16)
-    p.add_argument("--contrastive-embed-mode", type=str, default="weighted_concat",
+    p.add_argument("--contrastive-embed-mode", type=str, default="projection",
                    choices=["projection", "backbone", "weighted_concat"])
     p.add_argument("--infer-backbone-weight", type=float, default=1.0)
     p.add_argument("--infer-proj-weight", type=float, default=0.2)
@@ -145,10 +146,27 @@ def load_cnn_model(ckpt: Path, device):
     return model.to(device).eval()
 
 
+def infer_proj_dim_from_state_dict(sd, default: int = PROJ_DIM) -> int:
+    if not isinstance(sd, dict):
+        return int(default)
+    for key in ("proj.2.weight", "module.proj.2.weight"):
+        v = sd.get(key)
+        if hasattr(v, "shape") and len(v.shape) >= 2:
+            return int(v.shape[0])
+    for k, v in sd.items():
+        kk = str(k).removeprefix("module.")
+        if kk.endswith("proj.2.weight") and hasattr(v, "shape") and len(v.shape) >= 2:
+            return int(v.shape[0])
+    return int(default)
+
+
 def load_contrastive_model(ckpt: Path, device):
-    model = ContrastiveInferModel(BACKBONE, PROJ_DIM)
     ck = torch.load(ckpt, map_location="cpu", weights_only=False)
     sd = ck["state_dict"] if isinstance(ck, dict) and "state_dict" in ck else ck
+    proj_dim = infer_proj_dim_from_state_dict(sd, PROJ_DIM)
+    if isinstance(sd, dict) and any(k.startswith("module.") for k in sd):
+        sd = {k.removeprefix("module."): v for k, v in sd.items()}
+    model = ContrastiveInferModel(BACKBONE, proj_dim)
     model.load_state_dict(sd, strict=True)
     return model.to(device).eval()
 
