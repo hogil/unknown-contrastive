@@ -20,6 +20,12 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 
 DEFAULT_TRAIN_DIRS = "data/images/wm811k_50/train"
 DEFAULT_EVAL_DIR = "data/images/wm811k_50/eval"
