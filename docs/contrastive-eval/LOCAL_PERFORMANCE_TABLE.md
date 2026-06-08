@@ -281,3 +281,44 @@ Embedding kNN same-class rate:
 - `proj_dim=512`는 embedding 차원만 커졌고 이웃 품질은 떨어졌다.
 - `train_sampling_ratio=0.50`은 한 epoch에서 더 많이 보게 했지만 이 작은 synthetic split에서는 일반화가 좋아지지 않았다.
 - `ignore_neg_sim=0.80`은 false negative 무시 기준을 더 엄격하게 만들었지만 top1/k3가 떨어져 이 데이터에서는 손해다.
+
+## 2026-06-09 WM-811K Embed Mode Audit: projection vs backbone vs weighted_concat
+
+목적: 기존 best 계열 checkpoint를 추가 학습 없이 같은 WM-811K eval 80장에 대해 `projection`, `backbone`, `weighted_concat`으로 재평가했다. 진단 질문은 "contrastive가 backbone feature `h`를 개선했는가, 아니면 projection `z`에서만 개선됐는가"였다.
+
+공통 입력:
+
+- eval: `D:\project\unknown-contrastive\data\images\wm811k_50\eval` = 80 images, 8 classes
+- CNN baseline: `D:\project\unknown-contrastive\runs\260608_073602_cnn_ddp\cnn\best_model.pth`
+- DCL ep18: `D:\project\unknown-contrastive\runs\260608_181811_wm50_direct_b16_full_dcl_fn080_pseudo005_local075_freeze_neco0_epochscan\contrastive\epoch_checkpoints\epoch_018.pt`
+- Pseudo27: `D:\project\unknown-contrastive\runs\260608_204459_local_pseudobracket_nw4_260608_203904_27_fn085_pseudo004_local075\contrastive\best_model.pt`
+
+주요 결과:
+
+| mode | weights h:z | model | dim | top1 | k3 | k5 | k7 | k9 | 판단 |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---|
+| CNN baseline | - | CNN baseline | 1024 | 0.7375 | 0.7167 | 0.6975 | 0.6607 | 0.6347 | 기준 |
+| projection | - | DCL ep18 | 128 | 0.8000 | 0.7500 | 0.7100 | 0.6857 | 0.6306 | best top1, 개선은 z에서 발생 |
+| projection | - | Pseudo27 | 128 | 0.7375 | 0.7125 | 0.7000 | 0.6946 | 0.6431 | k5/k7/k9 안정성 쪽 |
+| backbone | - | DCL ep18 | 1024 | 0.7375 | 0.7167 | 0.6975 | 0.6607 | 0.6347 | CNN과 동일 |
+| backbone | - | Pseudo27 | 1024 | 0.7375 | 0.7167 | 0.6975 | 0.6607 | 0.6347 | CNN과 동일 |
+| weighted_concat | 1:0.2 | DCL ep18 | 1152 | 0.7375 | 0.7208 | 0.7000 | 0.6607 | 0.6333 | z 비중 너무 약함 |
+| weighted_concat | 1:0.5 | DCL ep18 | 1152 | 0.7375 | 0.7208 | 0.7000 | 0.6661 | 0.6333 | 거의 CNN |
+| weighted_concat | 1:1.0 | DCL ep18 | 1152 | 0.7375 | 0.7417 | 0.7025 | 0.6732 | 0.6389 | k3/k7 소폭 |
+| weighted_concat | 1:2.0 | DCL ep18 | 1152 | 0.7625 | 0.7417 | 0.7075 | 0.6768 | 0.6361 | projection으로 접근하지만 미달 |
+
+산출:
+
+- projection audit: `D:\project\unknown-contrastive\result_grouping\260609_072750_wm50_embedmode_projection_audit`
+- backbone audit: `D:\project\unknown-contrastive\result_grouping\260609_072823_wm50_embedmode_backbone_audit`
+- weighted h:z=1:0.2 audit: `D:\project\unknown-contrastive\result_grouping\260609_072856_wm50_embedmode_weighted_concat_audit`
+- weighted h:z=1:0.5 audit: `D:\project\unknown-contrastive\result_grouping\260609_073018_wm50_embedmode_weighted_z05_audit`
+- weighted h:z=1:1.0 audit: `D:\project\unknown-contrastive\result_grouping\260609_073050_wm50_embedmode_weighted_z10_audit`
+- weighted h:z=1:2.0 audit: `D:\project\unknown-contrastive\result_grouping\260609_073051_wm50_embedmode_weighted_z20_audit`
+
+해석:
+
+- DCL ep18과 Pseudo27은 freeze-backbone 계열이라 `backbone` mode에서는 CNN baseline과 완전히 같다. 즉 현 checkpoint의 contrastive 학습은 backbone `h`를 개선한 것이 아니라 projection head `z`를 새로 정렬한 것이다.
+- 이 결과는 "projection z가 항상 핸디캡"이라는 가설을 반박한다. 이 프로젝트의 frozen-backbone contrastive 계열에서는 `z`가 실제 개선 신호를 담고 있다.
+- `weighted_concat`은 `z` weight를 키울수록 좋아지지만, top1 기준으로 `projection` 단독 0.8000을 넘지 못했다.
+- 따라서 현재 WM-811K 80장 기준 production/grouping에 쓸 embedding mode는 `projection`을 유지하는 것이 맞다. 다만 n=80이므로 top1 +0.0625는 이미지 5장 차이라 더 큰 eval set으로 재검증해야 한다.
