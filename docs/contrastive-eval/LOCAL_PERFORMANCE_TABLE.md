@@ -146,15 +146,16 @@ HDBSCAN tier1:
 - `leaf + mcs=2, ms=1`은 많이 쪼개고 purity를 올리는 조건이다.
 - `eom + mcs=5~10, ms=2, eps=0`은 cluster 수는 적지만 AMI/ARI 균형이 가장 낫다.
 
-## 2026-06-08 Embedding Follow-up: Temperature / Local Weight
+## 2026-06-08 Embedding Follow-up: Temperature / Local / Pseudo
 
-목적: 21번 조건에서 embedding 분리 압력을 직접 바꾸는 두 축을 확인했다. `NCE_TEMP`를 낮추는 조건과 `local_weight`를 올리는 조건 모두 21번보다 나빴다.
+목적: 21번 조건에서 embedding 분리 압력을 직접 바꾸는 축을 확인했다. `NCE_TEMP`를 낮추는 조건과 `local_weight`를 올리는 조건은 나빴고, `pseudo_pos_weight`를 약하게 한 조건은 21번보다 좋아졌다.
 
-| condition | temp | local_weight | top1 | k5 | k7 | k9 | score(top1,k5,k7) | delta score vs 21 | 판단 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| 21 current-best | 0.07 | 0.75 | 0.7000 | 0.7075 | 0.6982 | 0.6444 | 0.7019 | 0.0000 | 유지 |
-| 22 local100 | 0.07 | 1.00 | 0.7000 | 0.6875 | 0.6768 | 0.6444 | 0.6881 | -0.0138 | 탈락 |
-| 23 lower-temp | 0.05 | 0.75 | 0.6625 | 0.6900 | 0.6714 | 0.6361 | 0.6746 | -0.0273 | 탈락 |
+| condition | temp | local_weight | pseudo_weight | top1 | k5 | k7 | k9 | score(top1,k5,k7) | delta score vs 21 | 판단 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 24 pseudo003 | 0.07 | 0.75 | 0.03 | 0.7375 | 0.6975 | 0.6946 | 0.6431 | 0.7099 | +0.0080 | 새 best 후보 |
+| 21 current-best | 0.07 | 0.75 | 0.05 | 0.7000 | 0.7075 | 0.6982 | 0.6444 | 0.7019 | 0.0000 | 기존 best |
+| 22 local100 | 0.07 | 1.00 | 0.05 | 0.7000 | 0.6875 | 0.6768 | 0.6444 | 0.6881 | -0.0138 | 탈락 |
+| 23 lower-temp | 0.05 | 0.75 | 0.05 | 0.6625 | 0.6900 | 0.6714 | 0.6361 | 0.6746 | -0.0273 | 탈락 |
 
 산출:
 
@@ -164,10 +165,14 @@ HDBSCAN tier1:
 - 23 sweep: `runs/260608_201206_local_embed23_nw4_260608_201206`
 - 23 model: `runs/260608_201209_local_embed23_nw4_260608_201206_23_fn085_pseudo005_local075_temp005_epochscan/contrastive/best_model.pt`
 - 23 t-SNE/kNN: `result_grouping/260608_201808_local_embed23_nw4_260608_201206_summary`
+- 24 sweep: `runs/260608_202738_local_embed24_nw4_260608_202738`
+- 24 model: `runs/260608_202742_local_embed24_nw4_260608_202738_24_fn085_pseudo003_local075_epochscan/contrastive/best_model.pt`
+- 24 t-SNE/kNN: `result_grouping/260608_203342_local_embed24_nw4_260608_202738_summary`
 
 결론:
 
 - `temp`를 낮추는 것이 항상 더 엄격한 embedding을 만드는 것은 아니다.
 - `local_weight`도 `0.75 -> 1.00`은 과했고, 주변 이웃 안정성(k5/k7)이 떨어졌다.
-- 현재 `wm811k_50` 로컬 조건에서는 `NCE_TEMP=0.07`, `local_weight=0.75`가 낫다.
-- 다음 embedding 개선 축은 `pseudo_pos_weight`, `IGNORE_NEG_SIM`, `proj_dim`, `train_sampling_ratio` 쪽으로 봐야 한다.
+- `pseudo_pos_weight=0.05`는 약간 과했고, `0.03`에서 top1이 `0.7000 -> 0.7375`로 회복됐다.
+- 현재 `wm811k_50` 로컬 best 후보는 24번: `NCE_TEMP=0.07`, `local_weight=0.75`, `pseudo_pos_weight=0.03`.
+- 다음 embedding 개선 축은 `pseudo_pos_weight` 근방(0.02~0.04), `IGNORE_NEG_SIM`, `proj_dim`, `train_sampling_ratio` 쪽으로 봐야 한다.
