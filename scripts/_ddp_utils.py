@@ -50,7 +50,7 @@ def find_free_port() -> int:
 
 def setup_ddp(rank: int, world_size: int, port: int | None = None,
               backend: str = "nccl") -> None:
-    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
+    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "127.0.0.1" if os.name == "nt" else "localhost")
     if port is None:
         port = int(os.environ.get("MASTER_PORT", 29500))
     os.environ["MASTER_PORT"] = str(port)
@@ -168,9 +168,11 @@ def launch_ddp(worker_fn: Callable, *args, world_size: int | None = None) -> Non
     if world_size is None:
         world_size = world_size_from_env()
     print(f"[DDP] CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES','(unset)')}  → world_size={world_size}")
+    # single-GPU 직접 호출도 process group 을 만들기 때문에, 동시 실험이면
+    # 기본 29500 포트가 충돌한다. 사용자가 지정하지 않은 경우 free port 를 잡는다.
+    if "MASTER_PORT" not in os.environ:
+        os.environ["MASTER_PORT"] = str(find_free_port())
     if world_size <= 1:
         worker_fn(0, 1, *args)
     else:
-        # MASTER_PORT 자동 할당 (충돌 방지)
-        os.environ["MASTER_PORT"] = str(find_free_port())
         mp.spawn(_spawn_entry, args=(worker_fn, world_size, args), nprocs=world_size, join=True)
