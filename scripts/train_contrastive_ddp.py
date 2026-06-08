@@ -935,7 +935,7 @@ def train_worker(rank, world_size):
     if is_main(rank):
         print(f"[train] {len(train_ds)} from {TRAIN_DATA_DIR}")
         if no_eval:
-            print("[eval]  skipped — no metric because production data has no class labels")
+            print("[eval]  skipped - no metric because production data has no class labels")
         else:
             print(f"[eval]  {len(eval_base)} from {EVAL_DATA_DIR} ({len(classes)} classes)")
         (run_dir / "classes.json").write_text(
@@ -984,7 +984,7 @@ def train_worker(rank, world_size):
             "recipe": "Classless pseudo-positive: Global InfoNCE + Queue/NEG + pseudo-kNN + NeCo",
             "n_train": len(train_ds), "n_eval": 0 if no_eval else len(eval_base),
             "n_classes_eval": len(classes), "no_eval": no_eval,
-        }, notes=f"DDP {world_size} GPUs — train flat (class hidden)"
+        }, notes=f"DDP {world_size} GPUs - train flat (class hidden)"
                  + (", eval skipped" if no_eval else ", eval ImageFolder"))
 
     history = []

@@ -270,7 +270,7 @@ class ContrastiveModel(nn.Module):
         if freeze_backbone:
             for p in self.backbone.parameters():
                 p.requires_grad = False
-            print("[backbone] FROZEN — projection head only")
+            print("[backbone] FROZEN - projection head only")
 
     def _forward_features(self, x):
         if hasattr(self.backbone, "forward_features"):
@@ -636,7 +636,7 @@ def main():
         "n_classes_eval": len(classes),
         "train_dir": TRAIN_DATA_DIR,
         "eval_dir": EVAL_DATA_DIR,
-    }, notes="train flat (label hidden) + eval ImageFolder (class for metric) — wafer disjoint")
+    }, notes="train flat (label hidden) + eval ImageFolder (class for metric) - wafer disjoint")
 
     print("[train] start")
     history = []

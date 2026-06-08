@@ -339,7 +339,13 @@ def main():
     log_line(f"  CL_EVAL_DIR:  {resolved_cl_eval}")
     log_line(f"[cuda] CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES','(unset)')}")
 
+    prod_existing_cnn_only = bool(args.prod_train_dirs and (args.backbone or args.cnn_run_dir))
+    if prod_existing_cnn_only:
+        log_line("[production existing CNN] --backbone/--cnn-run-dir + --prod-train-dirs 감지")
+        log_line("  → source/generate/split/cnn_train 준비 검사를 건너뛰고 stage2부터 실행")
+
     split_ready = (
+        prod_existing_cnn_only or
         _has_class_images(resolved_cnn)
         and _has_any_images(resolved_cl_train)
         and _has_class_images(resolved_cl_eval)
@@ -405,9 +411,12 @@ def main():
         ("CL_EVAL_DIR", CL_EVAL_DIR),
     ]:
         resolved = resolve_path(path)
-        ready = _has_any_images(resolved)
-        if name in ("CNN_DATA_DIR", "CL_EVAL_DIR"):
-            ready = _has_class_images(resolved)
+        if prod_existing_cnn_only:
+            ready = True
+        else:
+            ready = _has_any_images(resolved)
+            if name in ("CNN_DATA_DIR", "CL_EVAL_DIR"):
+                ready = _has_class_images(resolved)
         if not ready:
             raise SystemExit(
                 f"{name} not ready: {resolved}\n"
@@ -447,7 +456,7 @@ def main():
     # ============ Stage 1: CNN DDP ============
     if args.backbone or args.cnn_run_dir:
         print("\n" + "=" * 60)
-        print("STAGE 1 — CNN DDP SKIPPED (existing CNN)")
+        print("STAGE 1 - CNN DDP SKIPPED (existing CNN)")
         print("=" * 60)
         if args.backbone:
             cnn_best = _resolve_cnn_best_arg(resolve_path, args.backbone)
@@ -458,7 +467,7 @@ def main():
         print(f"[stage1 existing] cnn_run={cnn_run} best={cnn_best}")
     else:
         print("\n" + "=" * 60)
-        print("STAGE 1 — CNN DDP")
+        print("STAGE 1 - CNN DDP")
         print("=" * 60)
         t0 = time.time()
         rc = subprocess.run(
@@ -482,7 +491,7 @@ def main():
 
     # ============ Stage 2: Contrastive DDP ============
     print("\n" + "=" * 60)
-    print("STAGE 2 — Contrastive DDP" + (" (production classless)" if args.prod_train_dirs else ""))
+    print("STAGE 2 - Contrastive DDP" + (" (production classless)" if args.prod_train_dirs else ""))
     print("=" * 60)
     # CNN backbone + tag 를 env 로 주입 (mp.spawn 자식이 module-level 에서 읽음)
     env["CL_BACKBONE_CKPT"] = str(cnn_best)
@@ -542,7 +551,7 @@ def main():
         if cl_run is None:
             raise SystemExit("grouping requested but no contrastive run found")
         print("\n" + "=" * 60)
-        print("STAGE 3 — Production Grouping DDP")
+        print("STAGE 3 - Production Grouping DDP")
         print("=" * 60)
         group_cmd = [
             sys.executable, "-u", str(repo / "scripts" / "predict_grouping_prod_ddp.py"),
