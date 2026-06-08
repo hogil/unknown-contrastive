@@ -162,12 +162,13 @@ def main():
             dst = sub_dir / f"wafer_{i:04d}.png"
             tasks.append((cls, seed, str(dst)))
 
-    # 2) ProcessPoolExecutor — CPU 코어 전부 사용 (환경 사양 다 씀)
+    # 2) ProcessPoolExecutor — --workers 지정 시 그 값만 사용, 미지정 시 CPU 코어 수 사용
     from concurrent.futures import ProcessPoolExecutor, as_completed
     n_workers = max(1, n_workers_cfg if n_workers_cfg is not None else (os.cpu_count() or 8))
     total = 0
     if tasks:
-        print(f"[gen] {len(tasks)} wafers → {n_workers} workers (CPU 코어 전부 활용)", flush=True)
+        worker_mode = "user-set" if n_workers_cfg is not None else "auto-cpu-count"
+        print(f"[gen] {len(tasks)} wafers → {n_workers} workers ({worker_mode})", flush=True)
         with ProcessPoolExecutor(max_workers=n_workers) as exe:
             futs = [exe.submit(_render_one, t) for t in tasks]
             done = 0
