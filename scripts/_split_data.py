@@ -69,6 +69,8 @@ def parse_args():
     p.add_argument("--seed", type=int, default=None, help="split seed override.")
     p.add_argument("--normal-cnn-ratio", type=float, default=None,
                    help="Normal 중 CNN stream 으로 보낼 비율. 기본 0.0; 보통 CNN에는 Normal을 넣지 않음.")
+    p.add_argument("--exclude-invalid", action="store_true",
+                   help="class 이름에 invalid가 들어간 class를 CNN/contrastive split에서 제외.")
     p.add_argument("--clean-output", action="store_true",
                    help="기존 split 출력 폴더를 지우고 새로 생성. stale 파일 방지용.")
     p.add_argument("--dry-run", action="store_true", help="파일 생성 없이 경로만 출력.")
@@ -99,6 +101,9 @@ def main():
 
     cnn_classes = set(yaml.safe_load(open(resolve_path(CNN_ACTIVE_YAML))).get("classes", []))
     cl_classes = set(yaml.safe_load(open(resolve_path(CONTRASTIVE_ACTIVE_YAML))).get("classes", []))
+    if args.exclude_invalid:
+        cnn_classes = {c for c in cnn_classes if "invalid" not in c.lower()}
+        cl_classes = {c for c in cl_classes if "invalid" not in c.lower()}
     overlap = cnn_classes & cl_classes
     if overlap:
         raise SystemExit(f"[ERR] CNN ↔ Contrastive class OVERLAP detected: {sorted(overlap)}")
