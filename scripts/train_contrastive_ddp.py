@@ -990,7 +990,7 @@ def train_worker(rank, world_size):
     # model + DDP wrap. 기본은 backbone 도 작은 LR 로 같이 fine-tune.
     model = ContrastiveModel(BACKBONE, PROJ_DIM, FREEZE_BACKBONE, bp).to(device)
     model = DDP(model, device_ids=[rank] if torch.cuda.is_available() else None,
-                find_unused_parameters=FREEZE_BACKBONE)
+                find_unused_parameters=False)
     queue = QueueBank(PROJ_DIM, QUEUE_SIZE, device) if USE_QUEUE else None
     backbone_params = [p for p in model.module.backbone.parameters() if p.requires_grad]
     head_params = [p for p in model.module.proj.parameters() if p.requires_grad]
@@ -1000,6 +1000,19 @@ def train_worker(rank, world_size):
     if head_params:
         param_groups.append({"params": head_params, "lr": LR_HEAD, "name": "head"})
     opt = torch.optim.AdamW(param_groups, weight_decay=WEIGHT_DECAY)
+    _ld_kw = {"num_workers": nw, "pin_memory": True}
+    if nw > 0:
+        _ld_kw["persistent_workers"] = True
+        _ld_kw["prefetch_factor"] = 4
+
+    full_sampling = not (0 < float(TRAIN_SAMPLING_RATIO) < 1)
+    full_sampler = None
+    full_ld = None
+    if full_sampling:
+        full_sampler = DistributedSampler(train_ds, num_replicas=world_size, rank=rank,
+                                          shuffle=True, seed=SEED)
+        full_ld = DataLoader(train_ds, batch_size=BATCH_PER_GPU, sampler=full_sampler,
+                             drop_last=True, **_ld_kw)
 
     if is_main(rank):
         log_stage_metric(run_dir, "contrastive_ddp_setup", {
@@ -1032,18 +1045,23 @@ def train_worker(rank, world_size):
 
     history = []
     for ep in range(1, EPOCHS + 1):
-        # sampling subset (rank 0 결정 후 broadcast indices)
-        if is_main(rank):
-            r = TRAIN_SAMPLING_RATIO
-            n_keep = max(1, int(len(train_ds) * r)) if 0 < r < 1 else len(train_ds)
-            idx = sorted(random.sample(range(len(train_ds)), n_keep))
+        if full_sampling:
+            full_sampler.set_epoch(ep)
+            ld = full_ld
         else:
-            idx = []
-        obj = [idx]; dist.broadcast_object_list(obj, src=0); idx = obj[0]
-        sub = torch.utils.data.Subset(train_ds, idx)
-        sampler = DistributedSampler(sub, num_replicas=world_size, rank=rank, shuffle=True, seed=SEED + ep)
-        ld = DataLoader(sub, batch_size=BATCH_PER_GPU, sampler=sampler,
-                        num_workers=nw, pin_memory=True, drop_last=True)
+            # sampling subset (rank 0 결정 후 broadcast indices)
+            if is_main(rank):
+                r = TRAIN_SAMPLING_RATIO
+                n_keep = max(1, int(len(train_ds) * r))
+                idx = sorted(random.sample(range(len(train_ds)), n_keep))
+            else:
+                idx = []
+            obj = [idx]; dist.broadcast_object_list(obj, src=0); idx = obj[0]
+            sub = torch.utils.data.Subset(train_ds, idx)
+            sampler = DistributedSampler(sub, num_replicas=world_size, rank=rank,
+                                         shuffle=True, seed=SEED + ep)
+            ld = DataLoader(sub, batch_size=BATCH_PER_GPU, sampler=sampler,
+                            drop_last=True, **_ld_kw)
         lr_head = contrastive_lr_for_epoch(ep, LR_HEAD, LR_MIN)
         lr_backbone = contrastive_lr_for_epoch(ep, LR_BACKBONE, LR_BACKBONE_MIN)
         for g in opt.param_groups:
@@ -1198,7 +1216,7 @@ def train_worker(rank, world_size):
     # ---------- Eval: embed + HDBSCAN (rank 0 모음, all ranks compute) ----------
     eval_sampler = DistributedSampler(eval_base, num_replicas=world_size, rank=rank, shuffle=False)
     eval_ld = DataLoader(eval_base, batch_size=BATCH_PER_GPU * 4, sampler=eval_sampler,
-                         num_workers=nw, pin_memory=True)
+                         **_ld_kw)
     model.eval()
     local_z, local_lbl, local_path = [], [], []
     with torch.no_grad():
