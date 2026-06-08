@@ -190,3 +190,44 @@ HDBSCAN tier1:
 - fine bracket에서는 `0.035`가 0.03과 동급, `0.045`가 0.05와 유사했다.
 - 현재 `wm811k_50` 로컬 best 후보는 27번: `NCE_TEMP=0.07`, `local_weight=0.75`, `pseudo_pos_weight=0.04`.
 - 다음 embedding 개선 축은 `pseudo_pos_weight` 근방(0.035~0.045), `IGNORE_NEG_SIM`, `proj_dim`, `train_sampling_ratio` 쪽으로 봐야 한다.
+
+## 2026-06-08 Synthetic Unknown Rerun: n20 / 1024px
+
+목적: WM-811K만 보지 않고, 기존 synthetic `unknown` 계열에서도 같은 current-best family가 embedding 이웃 품질을 개선하는지 확인했다.
+
+생성/분리:
+
+- source: `data/images/unknown_synth_local_n20_1024`
+- generator: class당 20장, Normal 80장, `--output-px 1024`
+- total generated: 920 images, 43 classes
+- CNN train split: `data/images/synth_cnn_train_n20` = 420 images, 21 classes
+- contrastive train split: `data/images/synth_contrastive_train_n20` = 400 images
+- contrastive eval split: `data/images/synth_contrastive_eval_n20` = 100 images, 22 classes
+
+Synthetic CNN:
+
+- run: `runs/260608_212211_cnn_ddp`
+- model: `runs/260608_212211_cnn_ddp/cnn/best_model.pth`
+- test: acc `1.0000`, macro-F1 `1.0000`
+
+Embedding kNN same-class rate:
+
+| model | dim | top1 | k3 | k5 | k7 | k9 | score(top1,k5,k7) | 판단 |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| CNN baseline | 1024 | 1.0000 | 0.9867 | 0.6580 | 0.5200 | 0.4389 | - | 이미 매우 강함 |
+| 21 pseudo005 local075 | 128 | 1.0000 | 0.9933 | 0.6640 | 0.5200 | 0.4400 | 0.7280 | 미세 개선 |
+| 27 pseudo004 local075 | 128 | 1.0000 | 0.9933 | 0.6640 | 0.5200 | 0.4400 | 0.7280 | 21과 동일 |
+
+산출:
+
+- sweep: `runs/260608_213058_synth_n20_1024_nw4_260608_212222`
+- 21 model: `runs/260608_213101_synth_n20_1024_nw4_260608_212222_21_fn085_pseudo005_local075_epochscan/contrastive/best_model.pt`
+- 27 model: `runs/260608_213920_synth_n20_1024_nw4_260608_212222_27_fn085_pseudo004_local075/contrastive/best_model.pt`
+- t-SNE/kNN: `result_grouping/260608_214737_synth_n20_1024_nw4_260608_212222_summary`
+
+해석:
+
+- synthetic n20에서는 CNN이 이미 top1 100%라 contrastive가 크게 이기기 어렵다.
+- 그래도 `k3`, `k5`, `k9`는 아주 작게 오른다.
+- eval class당 4장이 대부분이라 k5/k7/k9는 구조적으로 낮게 보인다. 특히 non-Normal class는 같은 class 이웃이 최대 3장뿐이다.
+- 기본 HDBSCAN tier1은 `min_cluster_size=15`라 class당 4장 synthetic eval에서는 전부 noise가 되기 쉽다. 이 run은 HDBSCAN보다 embedding kNN 비교가 핵심이다.
