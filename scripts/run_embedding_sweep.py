@@ -242,6 +242,24 @@ CONDITIONS = [
         "freeze": True, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
         "save_epoch_checkpoints": True, "save_epoch_every": 2,
     },
+    {
+        "id": "26_fn085_pseudo002_local075",
+        "desc": "local 0.75 with weaker pseudo attraction 0.02",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.02, "pseudo_min": 0.85, "pseudo_topk": 1,
+        "temp": 0.07, "lr_head": 1e-3, "lr_backbone": 0.0,
+        "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
+        "freeze": True, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
+    },
+    {
+        "id": "27_fn085_pseudo004_local075",
+        "desc": "local 0.75 with pseudo attraction 0.04",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.04, "pseudo_min": 0.85, "pseudo_topk": 1,
+        "temp": 0.07, "lr_head": 1e-3, "lr_backbone": 0.0,
+        "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
+        "freeze": True, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
+    },
 ]
 
 
