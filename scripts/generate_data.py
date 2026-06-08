@@ -122,6 +122,8 @@ def parse_args():
     p.add_argument("--n-normal", type=int, default=None, help="Normal 생성 수.")
     p.add_argument("--output-px", type=int, default=None,
                    help="생성 PNG 한 변 크기. 0이면 원본 6400 유지, 예: 1024.")
+    p.add_argument("--exclude-invalid", action="store_true",
+                   help="class 이름에 invalid가 들어간 class는 생성하지 않음.")
     p.add_argument("--workers", type=int, default=None,
                    help="ProcessPool worker 수. 기본은 os.cpu_count().")
     return p.parse_args()
@@ -137,6 +139,7 @@ def main():
     if args.output_px is not None:
         OUTPUT_PX = args.output_px
     n_workers_cfg = args.workers
+    classes = [c for c in CLASSES if (not args.exclude_invalid or "invalid" not in c.lower())]
 
     out = resolve_path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -144,7 +147,7 @@ def main():
     # 1) 합성 task 수집 (skip 로직 — 가벼워서 순차)
     tasks = []
     skipped = 0
-    for cls in CLASSES:
+    for cls in classes:
         sub_dir = out / cls
         sub_dir.mkdir(exist_ok=True)
         n_target = n_normal if cls == "Normal" else n_per_class
@@ -184,7 +187,7 @@ def main():
 
     print(f"\n[OUT] {out.resolve()}")
     print(f"  requested: {output_dir}")
-    print(f"  generated: {total}, skipped(existing): {skipped}, classes: {len(CLASSES)}")
+    print(f"  generated: {total}, skipped(existing): {skipped}, classes: {len(classes)}")
 
 
 if __name__ == "__main__":
