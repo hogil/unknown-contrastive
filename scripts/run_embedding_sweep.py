@@ -278,6 +278,42 @@ CONDITIONS = [
         "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
         "freeze": True, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
     },
+    {
+        "id": "30_fn085_pseudo004_local075_proj256",
+        "desc": "current best family with 256-d projection",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.04, "pseudo_min": 0.85, "pseudo_topk": 1,
+        "temp": 0.07, "lr_head": 1e-3, "lr_backbone": 0.0,
+        "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
+        "freeze": True, "img_size": 384, "proj_dim": 256, "train_sampling_ratio": 0.25,
+    },
+    {
+        "id": "31_fn085_pseudo004_local075_proj512",
+        "desc": "current best family with 512-d projection",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.04, "pseudo_min": 0.85, "pseudo_topk": 1,
+        "temp": 0.07, "lr_head": 1e-3, "lr_backbone": 0.0,
+        "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
+        "freeze": True, "img_size": 384, "proj_dim": 512, "train_sampling_ratio": 0.25,
+    },
+    {
+        "id": "32_fn085_pseudo004_local075_sample050",
+        "desc": "current best family with 50 percent train sampling per epoch",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.04, "pseudo_min": 0.85, "pseudo_topk": 1,
+        "temp": 0.07, "lr_head": 1e-3, "lr_backbone": 0.0,
+        "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
+        "freeze": True, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.50,
+    },
+    {
+        "id": "33_fn080_pseudo004_local075",
+        "desc": "current best family with stricter false-negative ignore threshold 0.80",
+        "queue": True, "queue_size": 16384, "ignore": 0.80, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.04, "pseudo_min": 0.85, "pseudo_topk": 1,
+        "temp": 0.07, "lr_head": 1e-3, "lr_backbone": 0.0,
+        "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
+        "freeze": True, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
+    },
 ]
 
 
