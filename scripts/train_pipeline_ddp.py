@@ -36,6 +36,10 @@ CL_NCE_TEMP           = 0.05
 CL_LR_HEAD            = 1e-3
 CL_NECO_WEIGHT        = 0.2
 CL_NECO_TAU           = 0.1
+CL_PSEUDO_POS_WEIGHT  = 0.2
+CL_PSEUDO_POS_MIN_SIM = 0.90
+CL_PSEUDO_POS_TOPK    = 2
+CL_PSEUDO_POS_START_EPOCH = 2
 
 # 두 stage 의 hyperparam 은 각 _ddp.py 의 CONFIG block 을 직접 수정
 #   scripts/train_cnn_ddp.py        ← CNN
@@ -79,6 +83,14 @@ def parse_args():
                    help="Contrastive NeCo weight override.")
     p.add_argument("--neco-tau", type=float, default=None,
                    help="Contrastive NeCo tau override.")
+    p.add_argument("--pseudo-pos-weight", type=float, default=None,
+                   help="Contrastive classless pseudo-positive weight. 0이면 OFF.")
+    p.add_argument("--pseudo-pos-min-sim", type=float, default=None,
+                   help="Contrastive pseudo-positive 최소 cosine.")
+    p.add_argument("--pseudo-pos-topk", type=int, default=None,
+                   help="Contrastive anchor당 pseudo-positive 최대 개수.")
+    p.add_argument("--pseudo-pos-start-epoch", type=int, default=None,
+                   help="Contrastive pseudo-positive 시작 epoch.")
     p.add_argument("--cnn-run-dir", type=str, default=None,
                    help="기존 CNN run 폴더. 지정 시 stage1 CNN 학습을 건너뛰고 cnn/best_model.pth 사용.")
     p.add_argument("--backbone", type=str, default=None,
@@ -189,6 +201,7 @@ def _resolve_cnn_best_arg(resolve_path, raw: str) -> Path:
 def main():
     global CNN_DATA_DIR, CL_TRAIN_DIR, CL_EVAL_DIR, CNN_BATCH_PER_GPU, CL_BATCH_PER_GPU, SOURCE_ROOT
     global CL_IMG_SIZE, CL_IGNORE_NEG_SIM, CL_NCE_TEMP, CL_LR_HEAD, CL_NECO_WEIGHT, CL_NECO_TAU
+    global CL_PSEUDO_POS_WEIGHT, CL_PSEUDO_POS_MIN_SIM, CL_PSEUDO_POS_TOPK, CL_PSEUDO_POS_START_EPOCH
     global GROUPING_MIN_CLUSTER_SIZE, GROUPING_MIN_SAMPLES
     global GROUPING_CLUSTER_SELECTION_METHOD, GROUPING_CLUSTER_SELECTION_EPSILON
     args = parse_args()
@@ -214,6 +227,14 @@ def main():
         CL_NECO_WEIGHT = args.neco_weight
     if args.neco_tau is not None:
         CL_NECO_TAU = args.neco_tau
+    if args.pseudo_pos_weight is not None:
+        CL_PSEUDO_POS_WEIGHT = args.pseudo_pos_weight
+    if args.pseudo_pos_min_sim is not None:
+        CL_PSEUDO_POS_MIN_SIM = args.pseudo_pos_min_sim
+    if args.pseudo_pos_topk is not None:
+        CL_PSEUDO_POS_TOPK = args.pseudo_pos_topk
+    if args.pseudo_pos_start_epoch is not None:
+        CL_PSEUDO_POS_START_EPOCH = args.pseudo_pos_start_epoch
     if args.source_root:
         SOURCE_ROOT = args.source_root
     grouping_batch = args.grouping_batch if args.grouping_batch is not None else GROUPING_BATCH
@@ -422,6 +443,10 @@ def main():
     env["CL_LR_HEAD"] = str(CL_LR_HEAD)
     env["CL_NECO_WEIGHT"] = str(CL_NECO_WEIGHT)
     env["CL_NECO_TAU"] = str(CL_NECO_TAU)
+    env["CL_PSEUDO_POS_WEIGHT"] = str(CL_PSEUDO_POS_WEIGHT)
+    env["CL_PSEUDO_POS_MIN_SIM"] = str(CL_PSEUDO_POS_MIN_SIM)
+    env["CL_PSEUDO_POS_TOPK"] = str(CL_PSEUDO_POS_TOPK)
+    env["CL_PSEUDO_POS_START_EPOCH"] = str(CL_PSEUDO_POS_START_EPOCH)
     if args.prod_train_dirs:
         env["CL_TAG"] = "contrastive_prod_ddp_pipe"
         env["CL_TRAIN_DIRS"] = args.prod_train_dirs
@@ -509,6 +534,10 @@ def main():
         "cl_ignore_neg_sim": CL_IGNORE_NEG_SIM,
         "cl_nce_temp": CL_NCE_TEMP,
         "cl_neco_weight": CL_NECO_WEIGHT,
+        "cl_pseudo_pos_weight": CL_PSEUDO_POS_WEIGHT,
+        "cl_pseudo_pos_min_sim": CL_PSEUDO_POS_MIN_SIM,
+        "cl_pseudo_pos_topk": CL_PSEUDO_POS_TOPK,
+        "cl_pseudo_pos_start_epoch": CL_PSEUDO_POS_START_EPOCH,
         "cuda_visible": os.environ.get("CUDA_VISIBLE_DEVICES", "(unset)"),
         "finished_at": datetime.now().isoformat(),
     }

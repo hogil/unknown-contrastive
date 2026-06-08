@@ -41,6 +41,10 @@ LABEL_SMOOTHING       = 0.02
 USE_QUEUE             = True
 QUEUE_SIZE            = 4096
 IGNORE_NEG_SIM        = 0.95
+PSEUDO_POS_WEIGHT     = 0.2     # class 없이 가까운 image를 weak-positive로 당김. 0이면 OFF.
+PSEUDO_POS_MIN_SIM    = 0.90    # detached cosine 기준. 이보다 가까운 batch neighbor만 후보.
+PSEUDO_POS_TOPK       = 2       # anchor당 최대 weak-positive 개수.
+PSEUDO_POS_START_EPOCH = 2      # 초기 noisy embedding 보호.
 USE_LOCAL             = False
 LOCAL_WEIGHT          = 0.0
 LOCAL_TAU             = 0.1
@@ -120,6 +124,14 @@ if os.environ.get("CL_IMG_SIZE"):
     IMG_SIZE = int(os.environ["CL_IMG_SIZE"])
 if os.environ.get("CL_IGNORE_NEG_SIM"):
     IGNORE_NEG_SIM = float(os.environ["CL_IGNORE_NEG_SIM"])
+if os.environ.get("CL_PSEUDO_POS_WEIGHT"):
+    PSEUDO_POS_WEIGHT = float(os.environ["CL_PSEUDO_POS_WEIGHT"])
+if os.environ.get("CL_PSEUDO_POS_MIN_SIM"):
+    PSEUDO_POS_MIN_SIM = float(os.environ["CL_PSEUDO_POS_MIN_SIM"])
+if os.environ.get("CL_PSEUDO_POS_TOPK"):
+    PSEUDO_POS_TOPK = int(os.environ["CL_PSEUDO_POS_TOPK"])
+if os.environ.get("CL_PSEUDO_POS_START_EPOCH"):
+    PSEUDO_POS_START_EPOCH = int(os.environ["CL_PSEUDO_POS_START_EPOCH"])
 if os.environ.get("CL_NCE_TEMP"):
     NCE_TEMP = float(os.environ["CL_NCE_TEMP"])
 if os.environ.get("CL_LR_HEAD"):
@@ -632,7 +644,47 @@ class QueueBank:
         self.ptr = end % self.size
 
 
-def info_nce_loss(z1, z2, queue, temp, ignore_neg_sim, label_smoothing):
+def build_pseudo_pos_mask(z_anchor, z_candidate, min_sim, topk):
+    """Class/folder label 없이 batch embedding 유사도만으로 weak-positive 후보 선택."""
+    b = z_anchor.size(0)
+    if b <= 1 or topk <= 0 or min_sim >= 1.0:
+        return torch.zeros((b, b), dtype=torch.bool, device=z_anchor.device)
+    with torch.no_grad():
+        cos = z_anchor.detach() @ z_candidate.detach().T
+        eye = torch.eye(b, device=z_anchor.device, dtype=torch.bool)
+        cos = cos.masked_fill(eye, -1e9)
+        k = min(int(topk), b - 1)
+        vals, idx = cos.topk(k=k, dim=1)
+        keep = vals >= float(min_sim)
+        mask = torch.zeros((b, b), dtype=torch.bool, device=z_anchor.device)
+        mask.scatter_(1, idx, keep)
+    return mask
+
+
+def pseudo_positive_loss(z1, z2, mask12, mask21, temp):
+    """Selected weak-positive image pairs를 직접 cosine alignment로 당긴다."""
+    if mask12.numel() == 0 or (not mask12.any() and not mask21.any()):
+        return z1.new_zeros(()), 0, 0
+
+    def _oneway(anchor, candidate, extra_mask):
+        active = extra_mask.any(dim=1)
+        if not active.any():
+            return anchor.new_zeros(()), 0, 0
+        cos = anchor @ candidate.T
+        loss = (1.0 - cos[extra_mask]).mean()
+        n_active = int(active.sum().item())
+        n_pairs = int(extra_mask.sum().item())
+        return loss, n_active, n_pairs
+
+    l12, a12, p12 = _oneway(z1, z2, mask12)
+    l21, a21, p21 = _oneway(z2, z1, mask21)
+    parts = [x for x, a in ((l12, a12), (l21, a21)) if a > 0]
+    if not parts:
+        return z1.new_zeros(()), 0, 0
+    return torch.stack(parts).mean(), a12 + a21, p12 + p21
+
+
+def info_nce_loss(z1, z2, queue, temp, ignore_neg_sim, label_smoothing, pseudo_pos_mask=None):
     b = z1.size(0)
     logits_pos = (z1 * z2).sum(1, keepdim=True) / temp
     neg_bank = z2.detach()
@@ -647,6 +699,8 @@ def info_nce_loss(z1, z2, queue, temp, ignore_neg_sim, label_smoothing):
                 if i < neg_bank.size(0): mask[i, i] = False
         sim = sim.masked_fill(mask, -1e9)
     diag = torch.arange(b, device=z1.device)
+    if pseudo_pos_mask is not None and b <= sim.size(1):
+        sim[:, :b] = sim[:, :b].masked_fill(pseudo_pos_mask, -1e9)
     if b <= neg_bank.size(0):
         sim[diag, diag] = -1e9
     logits = torch.cat([logits_pos, sim], dim=1)
@@ -856,10 +910,14 @@ def train_worker(rank, world_size):
             "lr_head": LR_HEAD, "lr_min": LR_MIN, "lr_schedule": "warmup_cosine_epoch",
             "queue_size": QUEUE_SIZE if USE_QUEUE else 0,
             "ignore_neg_sim": IGNORE_NEG_SIM,
+            "pseudo_pos_weight": PSEUDO_POS_WEIGHT,
+            "pseudo_pos_min_sim": PSEUDO_POS_MIN_SIM,
+            "pseudo_pos_topk": PSEUDO_POS_TOPK,
+            "pseudo_pos_start_epoch": PSEUDO_POS_START_EPOCH,
             "use_local": USE_LOCAL,
             "neco_weight": NECO_WEIGHT,
             "neco_tau": NECO_TAU,
-            "recipe": "B6: Global InfoNCE + MoCo Queue + NEG + NeCo, no Local",
+            "recipe": "Classless pseudo-positive: Global InfoNCE + Queue/NEG + pseudo-kNN + NeCo",
             "n_train": len(train_ds), "n_eval": 0 if no_eval else len(eval_base),
             "n_classes_eval": len(classes), "no_eval": no_eval,
         }, notes=f"DDP {world_size} GPUs — train flat (class hidden)"
@@ -883,7 +941,8 @@ def train_worker(rank, world_size):
         for g in opt.param_groups: g["lr"] = lr
 
         model.train()
-        run_loss = 0.0; run_nce = 0.0; run_neco = 0.0; run_local = 0.0; n = 0
+        run_loss = 0.0; run_nce = 0.0; run_pseudo = 0.0; run_neco = 0.0; run_local = 0.0
+        run_pseudo_anchors = 0.0; run_pseudo_pairs = 0.0; n = 0
         t0 = time.time()
         for it, (x1, x2) in enumerate(ld, 1):
             x1 = x1.to(device, non_blocking=True)
@@ -904,8 +963,21 @@ def train_worker(rank, world_size):
                 loss_neco = z_cat.new_zeros(())
                 loss_local = z_cat.new_zeros(())
             z1, z2 = z_cat[:bs], z_cat[bs:]
-            loss_nce = info_nce_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM, LABEL_SMOOTHING)
-            loss = loss_nce + (NECO_WEIGHT * loss_neco) + (LOCAL_WEIGHT * loss_local)
+            use_pseudo = PSEUDO_POS_WEIGHT > 0 and ep >= PSEUDO_POS_START_EPOCH
+            if use_pseudo:
+                pseudo12 = build_pseudo_pos_mask(z1, z2, PSEUDO_POS_MIN_SIM, PSEUDO_POS_TOPK)
+                pseudo21 = build_pseudo_pos_mask(z2, z1, PSEUDO_POS_MIN_SIM, PSEUDO_POS_TOPK)
+                loss_pseudo, pseudo_anchors, pseudo_pairs = pseudo_positive_loss(
+                    z1, z2, pseudo12, pseudo21, NCE_TEMP)
+            else:
+                pseudo12 = None
+                loss_pseudo = z_cat.new_zeros(())
+                pseudo_anchors = 0
+                pseudo_pairs = 0
+            loss_nce = info_nce_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM,
+                                     LABEL_SMOOTHING, pseudo12)
+            loss = (loss_nce + (PSEUDO_POS_WEIGHT * loss_pseudo) +
+                    (NECO_WEIGHT * loss_neco) + (LOCAL_WEIGHT * loss_local))
             loss.backward()
             if GRAD_CLIP > 0:
                 torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], GRAD_CLIP)
@@ -916,25 +988,38 @@ def train_worker(rank, world_size):
                 queue.enqueue(z2_all)
             run_loss += loss.item() * x1.size(0)
             run_nce += loss_nce.item() * x1.size(0)
+            run_pseudo += loss_pseudo.item() * x1.size(0)
             run_neco += loss_neco.item() * x1.size(0)
             run_local += loss_local.item() * x1.size(0)
+            run_pseudo_anchors += float(pseudo_anchors)
+            run_pseudo_pairs += float(pseudo_pairs)
             n += x1.size(0)
             if is_main(rank) and it % max(1, len(ld) // 10) == 0:
                 print(f"  Ep {ep}/{EPOCHS} {it/len(ld)*100:>5.1f}% "
                       f"loss={run_loss/n:.4f} nce={run_nce/n:.4f} "
-                      f"neco={run_neco/n:.4f} local={run_local/n:.4f} lr={lr:.2e}", flush=True)
+                      f"pseudo={run_pseudo/n:.4f} neco={run_neco/n:.4f} "
+                      f"local={run_local/n:.4f} pseudo_pairs={run_pseudo_pairs:.0f} "
+                      f"lr={lr:.2e}", flush=True)
         ep_loss = run_loss / max(1, n)
         ep_nce = run_nce / max(1, n)
+        ep_pseudo = run_pseudo / max(1, n)
         ep_neco = run_neco / max(1, n)
         ep_local = run_local / max(1, n)
-        avg = all_reduce_avg({"loss": ep_loss, "nce": ep_nce, "neco": ep_neco,
-                              "local": ep_local}, device)
+        avg = all_reduce_avg({"loss": ep_loss, "nce": ep_nce, "pseudo": ep_pseudo,
+                              "neco": ep_neco, "local": ep_local,
+                              "pseudo_anchors": run_pseudo_anchors,
+                              "pseudo_pairs": run_pseudo_pairs}, device)
         if is_main(rank):
             print(f"  Ep {ep}/{EPOCHS} DONE loss={avg['loss']:.4f} "
-                  f"nce={avg['nce']:.4f} neco={avg['neco']:.4f} local={avg['local']:.4f} "
+                  f"nce={avg['nce']:.4f} pseudo={avg['pseudo']:.4f} "
+                  f"neco={avg['neco']:.4f} local={avg['local']:.4f} "
+                  f"pseudo_pairs={avg['pseudo_pairs']:.0f} "
                   f"time={time.time()-t0:.0f}s", flush=True)
             history.append({"epoch": ep, "loss": avg["loss"], "nce": avg["nce"],
-                            "neco": avg["neco"], "local": avg["local"], "lr": lr})
+                            "pseudo": avg["pseudo"], "neco": avg["neco"],
+                            "local": avg["local"],
+                            "pseudo_anchors": avg["pseudo_anchors"],
+                            "pseudo_pairs": avg["pseudo_pairs"], "lr": lr})
 
     # save (rank 0)
     if is_main(rank):
@@ -1138,6 +1223,14 @@ if __name__ == "__main__":
     _ap.add_argument("--img-size", type=int, default=None, help="contrastive input size. 기본 512")
     _ap.add_argument("--ignore-neg-sim", type=float, default=None,
                      help="NEG filter threshold. 예: 0.90 또는 0.95")
+    _ap.add_argument("--pseudo-pos-weight", type=float, default=None,
+                     help="classless pseudo-positive loss weight. 0이면 OFF. 기본 0.2")
+    _ap.add_argument("--pseudo-pos-min-sim", type=float, default=None,
+                     help="pseudo-positive 후보 최소 cosine. 기본 0.90")
+    _ap.add_argument("--pseudo-pos-topk", type=int, default=None,
+                     help="anchor당 pseudo-positive 최대 개수. 기본 2")
+    _ap.add_argument("--pseudo-pos-start-epoch", type=int, default=None,
+                     help="pseudo-positive 시작 epoch. 기본 2")
     _ap.add_argument("--nce-temp", type=float, default=None,
                      help="InfoNCE temperature. 낮을수록 similarity 차이에 민감. 예: 0.05")
     _ap.add_argument("--lr-head", type=float, default=None,
@@ -1172,6 +1265,10 @@ if __name__ == "__main__":
     if _a.batch is not None:  os.environ["CL_BATCH_PER_GPU"] = str(_a.batch)
     if _a.img_size is not None: os.environ["CL_IMG_SIZE"] = str(_a.img_size)
     if _a.ignore_neg_sim is not None: os.environ["CL_IGNORE_NEG_SIM"] = str(_a.ignore_neg_sim)
+    if _a.pseudo_pos_weight is not None: os.environ["CL_PSEUDO_POS_WEIGHT"] = str(_a.pseudo_pos_weight)
+    if _a.pseudo_pos_min_sim is not None: os.environ["CL_PSEUDO_POS_MIN_SIM"] = str(_a.pseudo_pos_min_sim)
+    if _a.pseudo_pos_topk is not None: os.environ["CL_PSEUDO_POS_TOPK"] = str(_a.pseudo_pos_topk)
+    if _a.pseudo_pos_start_epoch is not None: os.environ["CL_PSEUDO_POS_START_EPOCH"] = str(_a.pseudo_pos_start_epoch)
     if _a.nce_temp is not None:       os.environ["CL_NCE_TEMP"] = str(_a.nce_temp)
     if _a.lr_head is not None:        os.environ["CL_LR_HEAD"] = str(_a.lr_head)
     if _a.neco_weight is not None:    os.environ["CL_NECO_WEIGHT"] = str(_a.neco_weight)
@@ -1194,6 +1291,10 @@ if __name__ == "__main__":
     if _a.batch is not None:  BATCH_PER_GPU = _a.batch
     if _a.img_size is not None: IMG_SIZE = _a.img_size
     if _a.ignore_neg_sim is not None: IGNORE_NEG_SIM = _a.ignore_neg_sim
+    if _a.pseudo_pos_weight is not None: PSEUDO_POS_WEIGHT = _a.pseudo_pos_weight
+    if _a.pseudo_pos_min_sim is not None: PSEUDO_POS_MIN_SIM = _a.pseudo_pos_min_sim
+    if _a.pseudo_pos_topk is not None: PSEUDO_POS_TOPK = _a.pseudo_pos_topk
+    if _a.pseudo_pos_start_epoch is not None: PSEUDO_POS_START_EPOCH = _a.pseudo_pos_start_epoch
     if _a.nce_temp is not None:       NCE_TEMP = _a.nce_temp
     if _a.lr_head is not None:        LR_HEAD = _a.lr_head
     if _a.neco_weight is not None:    NECO_WEIGHT = _a.neco_weight
