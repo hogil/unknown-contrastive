@@ -153,8 +153,10 @@ HDBSCAN tier1:
 | condition | temp | local_weight | pseudo_weight | top1 | k5 | k7 | k9 | score(top1,k5,k7) | delta score vs 21 | 판단 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | 27 pseudo004 | 0.07 | 0.75 | 0.04 | 0.7375 | 0.7000 | 0.6946 | 0.6431 | 0.7107 | +0.0088 | 새 best 후보 |
+| 28 pseudo0035 | 0.07 | 0.75 | 0.035 | 0.7375 | 0.6975 | 0.6946 | 0.6431 | 0.7099 | +0.0080 | 24와 동급, 27보다 낮음 |
 | 24 pseudo003 | 0.07 | 0.75 | 0.03 | 0.7375 | 0.6975 | 0.6946 | 0.6431 | 0.7099 | +0.0080 | 이전 best 후보 |
 | 26 pseudo002 | 0.07 | 0.75 | 0.02 | 0.7250 | 0.7000 | 0.6946 | 0.6431 | 0.7065 | +0.0046 | 개선되지만 27보다 낮음 |
+| 29 pseudo0045 | 0.07 | 0.75 | 0.045 | 0.7000 | 0.7075 | 0.6982 | 0.6444 | 0.7019 | +0.0000 | top1 하락, 21과 유사 |
 | 21 current-best | 0.07 | 0.75 | 0.05 | 0.7000 | 0.7075 | 0.6982 | 0.6444 | 0.7019 | 0.0000 | 기존 best |
 | 22 local100 | 0.07 | 1.00 | 0.05 | 0.7000 | 0.6875 | 0.6768 | 0.6444 | 0.6881 | -0.0138 | 탈락 |
 | 23 lower-temp | 0.05 | 0.75 | 0.05 | 0.6625 | 0.6900 | 0.6714 | 0.6361 | 0.6746 | -0.0273 | 탈락 |
@@ -174,6 +176,10 @@ HDBSCAN tier1:
 - 26 model: `runs/260608_203907_local_pseudobracket_nw4_260608_203904_26_fn085_pseudo002_local075/contrastive/best_model.pt`
 - 27 model: `runs/260608_204459_local_pseudobracket_nw4_260608_203904_27_fn085_pseudo004_local075/contrastive/best_model.pt`
 - 26/27 t-SNE/kNN: `result_grouping/260608_205050_local_pseudobracket_nw4_260608_203904_summary`
+- 28/29 sweep: `runs/260608_205353_local_pseudofine_nw4_260608_205353`
+- 28 model: `runs/260608_205356_local_pseudofine_nw4_260608_205353_28_fn085_pseudo0035_local075/contrastive/best_model.pt`
+- 29 model: `runs/260608_205950_local_pseudofine_nw4_260608_205353_29_fn085_pseudo0045_local075/contrastive/best_model.pt`
+- 28/29 t-SNE/kNN: `result_grouping/260608_210548_local_pseudofine_nw4_260608_205353_summary`
 
 결론:
 
@@ -181,5 +187,6 @@ HDBSCAN tier1:
 - `local_weight`도 `0.75 -> 1.00`은 과했고, 주변 이웃 안정성(k5/k7)이 떨어졌다.
 - `pseudo_pos_weight=0.05`는 약간 과했고, `0.03~0.04`에서 top1이 `0.7000 -> 0.7375`로 회복됐다.
 - `0.02`는 개선되지만 top1이 `0.7250`이라 0.03/0.04보다 낮다.
+- fine bracket에서는 `0.035`가 0.03과 동급, `0.045`가 0.05와 유사했다.
 - 현재 `wm811k_50` 로컬 best 후보는 27번: `NCE_TEMP=0.07`, `local_weight=0.75`, `pseudo_pos_weight=0.04`.
 - 다음 embedding 개선 축은 `pseudo_pos_weight` 근방(0.035~0.045), `IGNORE_NEG_SIM`, `proj_dim`, `train_sampling_ratio` 쪽으로 봐야 한다.

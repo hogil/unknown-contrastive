@@ -120,17 +120,22 @@ def parse_args():
     p.add_argument("--seed", type=int, default=None, help="SEED override.")
     p.add_argument("--n-per-class", type=int, default=None, help="Normal 외 class별 생성 수.")
     p.add_argument("--n-normal", type=int, default=None, help="Normal 생성 수.")
+    p.add_argument("--output-px", type=int, default=None,
+                   help="생성 PNG 한 변 크기. 0이면 원본 6400 유지, 예: 1024.")
     p.add_argument("--workers", type=int, default=None,
                    help="ProcessPool worker 수. 기본은 os.cpu_count().")
     return p.parse_args()
 
 
 def main():
+    global OUTPUT_PX
     args = parse_args()
     output_dir = args.output_dir or OUTPUT_DIR
     seed_base = SEED if args.seed is None else args.seed
     n_per_class = N_PER_CLASS if args.n_per_class is None else args.n_per_class
     n_normal = N_NORMAL if args.n_normal is None else args.n_normal
+    if args.output_px is not None:
+        OUTPUT_PX = args.output_px
     n_workers_cfg = args.workers
 
     out = resolve_path(output_dir)
