@@ -192,6 +192,56 @@ CONDITIONS = [
         "neco": 0.0, "neco_grid": 0, "local": 0.0, "local_grid": 6, "local_window": 1,
         "freeze": False,
     },
+    {
+        "id": "21_fn085_pseudo005_local075_epochscan",
+        "desc": "current best family, stronger local loss 0.75 + epoch checkpoints",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.05, "pseudo_min": 0.85, "pseudo_topk": 1,
+        "temp": 0.07, "lr_head": 1e-3, "lr_backbone": 0.0,
+        "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
+        "freeze": True, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
+        "save_epoch_checkpoints": True, "save_epoch_every": 2,
+    },
+    {
+        "id": "22_fn085_pseudo005_local100_epochscan",
+        "desc": "current best family, stronger local loss 1.00 + epoch checkpoints",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.05, "pseudo_min": 0.85, "pseudo_topk": 1,
+        "temp": 0.07, "lr_head": 1e-3, "lr_backbone": 0.0,
+        "neco": 0.0, "neco_grid": 0, "local": 1.0, "local_grid": 6, "local_window": 4,
+        "freeze": True, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
+        "save_epoch_checkpoints": True, "save_epoch_every": 2,
+    },
+    {
+        "id": "23_fn085_pseudo005_local075_temp005_epochscan",
+        "desc": "local 0.75 with lower temperature 0.05",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.05, "pseudo_min": 0.85, "pseudo_topk": 1,
+        "temp": 0.05, "lr_head": 1e-3, "lr_backbone": 0.0,
+        "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
+        "freeze": True, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
+        "save_epoch_checkpoints": True, "save_epoch_every": 2,
+    },
+    {
+        "id": "24_fn085_pseudo003_local075_epochscan",
+        "desc": "local 0.75 with weaker pseudo attraction",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.03, "pseudo_min": 0.85, "pseudo_topk": 1,
+        "temp": 0.07, "lr_head": 1e-3, "lr_backbone": 0.0,
+        "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
+        "freeze": True, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
+        "save_epoch_checkpoints": True, "save_epoch_every": 2,
+    },
+    {
+        "id": "25_fn085_pseudo008_local075_epochscan",
+        "desc": "local 0.75 with stronger pseudo attraction",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.08, "pseudo_min": 0.85, "pseudo_topk": 1,
+        "temp": 0.07, "lr_head": 1e-3, "lr_backbone": 0.0,
+        "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
+        "freeze": True, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
+        "save_epoch_checkpoints": True, "save_epoch_every": 2,
+    },
 ]
 
 
@@ -378,8 +428,8 @@ def main():
             "--train-sampling-ratio", str(sampling_ratio),
             "--ignore-neg-sim", str(cond["ignore"]),
             "--pseudo-pos-weight", str(cond["pseudo_weight"]),
-            "--pseudo-pos-min-sim", "0.90",
-            "--pseudo-pos-topk", "2",
+            "--pseudo-pos-min-sim", str(cond.get("pseudo_min", 0.90)),
+            "--pseudo-pos-topk", str(cond.get("pseudo_topk", 2)),
             "--pseudo-pos-start-epoch", "2",
             "--pseudo-pos-source", "backbone",
             "--infer-embed-mode", "projection",
@@ -400,6 +450,11 @@ def main():
             cmd += ["--queue-size", str(cond["queue_size"])]
         if not cond["pseudo_neg_remove"]:
             cmd.append("--no-pseudo-neg-remove")
+        if cond.get("loss_mode"):
+            cmd += ["--loss-mode", str(cond["loss_mode"])]
+        if cond.get("save_epoch_checkpoints"):
+            cmd.append("--save-epoch-checkpoints")
+            cmd += ["--save-epoch-every", str(cond.get("save_epoch_every", 1))]
 
         print("\n" + "=" * 88)
         print(f"[condition] {cond['id']} - {cond['desc']}")
