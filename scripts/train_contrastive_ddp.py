@@ -37,8 +37,11 @@ LR_MIN                = 1e-6
 LR_BACKBONE_MIN       = 1e-7
 WEIGHT_DECAY          = 1e-6
 NCE_TEMP              = 0.05
+LOSS_MODE             = "nce"   # "nce" or "dcl" (small-batch decoupled contrastive)
 GRAD_CLIP             = 1.0
 LABEL_SMOOTHING       = 0.02
+SAVE_EPOCH_CKPTS      = False   # 옵션 켤 때만 epoch별 checkpoint 저장
+SAVE_EPOCH_EVERY      = 1
 
 USE_QUEUE             = True
 QUEUE_SIZE            = 16384
@@ -157,6 +160,12 @@ if os.environ.get("CL_INFER_PROJ_WEIGHT"):
     INFER_PROJ_WEIGHT = float(os.environ["CL_INFER_PROJ_WEIGHT"])
 if os.environ.get("CL_NCE_TEMP"):
     NCE_TEMP = float(os.environ["CL_NCE_TEMP"])
+if os.environ.get("CL_LOSS_MODE"):
+    LOSS_MODE = os.environ["CL_LOSS_MODE"].strip().lower()
+if os.environ.get("CL_SAVE_EPOCH_CKPTS"):
+    SAVE_EPOCH_CKPTS = os.environ["CL_SAVE_EPOCH_CKPTS"].strip().lower() in {"1", "true", "yes", "y"}
+if os.environ.get("CL_SAVE_EPOCH_EVERY"):
+    SAVE_EPOCH_EVERY = max(1, int(os.environ["CL_SAVE_EPOCH_EVERY"]))
 if os.environ.get("CL_LR_HEAD"):
     LR_HEAD = float(os.environ["CL_LR_HEAD"])
 if os.environ.get("CL_LR_BACKBONE"):
@@ -757,6 +766,40 @@ def info_nce_loss(z1, z2, queue, temp, ignore_neg_sim, label_smoothing, pseudo_p
     return masked_pos_cross_entropy(logits, label_smoothing)
 
 
+def dcl_loss(z1, z2, queue, temp, ignore_neg_sim, pseudo_pos_mask=None):
+    """Decoupled contrastive loss: positive term is not in the denominator."""
+    b = z1.size(0)
+    pos = (z1 * z2).sum(1) / temp
+    neg_bank = z2.detach()
+    if queue is not None:
+        neg_bank = torch.cat([neg_bank, queue.buf], dim=0)
+    sim = z1 @ neg_bank.T / temp
+    if ignore_neg_sim > 0:
+        with torch.no_grad():
+            cos = z1 @ neg_bank.T
+            mask = cos > ignore_neg_sim
+            for i in range(b):
+                if i < neg_bank.size(0):
+                    mask[i, i] = False
+        sim = sim.masked_fill(mask, -1e9)
+    if pseudo_pos_mask is not None and b <= sim.size(1):
+        sim[:, :b] = sim[:, :b].masked_fill(pseudo_pos_mask, -1e9)
+    if b <= neg_bank.size(0):
+        sim[torch.arange(b, device=z1.device), torch.arange(b, device=z1.device)] = -1e9
+    return (-pos + torch.logsumexp(sim, dim=1)).mean()
+
+
+def global_contrastive_loss(z1, z2, queue, temp, ignore_neg_sim, label_smoothing,
+                            pseudo_pos_mask=None):
+    mode = str(LOSS_MODE).lower()
+    if mode == "nce":
+        return info_nce_loss(z1, z2, queue, temp, ignore_neg_sim,
+                             label_smoothing, pseudo_pos_mask)
+    if mode == "dcl":
+        return dcl_loss(z1, z2, queue, temp, ignore_neg_sim, pseudo_pos_mask)
+    raise ValueError(f"unknown LOSS_MODE: {LOSS_MODE}")
+
+
 def masked_pos_cross_entropy(logits, label_smoothing):
     """Positive is column 0. Label smoothing is assigned only to unmasked negatives."""
     labels = torch.zeros(logits.size(0), dtype=torch.long, device=logits.device)
@@ -1061,10 +1104,10 @@ def train_worker(rank, world_size):
                 pseudo_anchors = 0
                 pseudo_pairs = 0
             loss_nce = 0.5 * (
-                info_nce_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM,
-                              LABEL_SMOOTHING, pseudo12) +
-                info_nce_loss(z2, z1, queue, NCE_TEMP, IGNORE_NEG_SIM,
-                              LABEL_SMOOTHING, pseudo21)
+                global_contrastive_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM,
+                                        LABEL_SMOOTHING, pseudo12) +
+                global_contrastive_loss(z2, z1, queue, NCE_TEMP, IGNORE_NEG_SIM,
+                                        LABEL_SMOOTHING, pseudo21)
             )
             loss = (loss_nce + (PSEUDO_POS_WEIGHT * loss_pseudo) +
                     (NECO_WEIGHT * loss_neco) + (LOCAL_WEIGHT * loss_local))
@@ -1111,6 +1154,18 @@ def train_worker(rank, world_size):
                             "pseudo_anchors": avg["pseudo_anchors"],
                             "pseudo_pairs": avg["pseudo_pairs"],
                             "lr_head": lr_head, "lr_backbone": lr_backbone})
+            if SAVE_EPOCH_CKPTS and (ep % SAVE_EPOCH_EVERY == 0 or ep == EPOCHS):
+                ep_dir = cl_dir / "epoch_checkpoints"
+                ep_dir.mkdir(parents=True, exist_ok=True)
+                torch.save({
+                    "state_dict": model.module.state_dict(),
+                    "classes": classes,
+                    "class_to_idx": class_to_idx,
+                    "config": cfg,
+                    "backbone_source": str(bp),
+                    "world_size": world_size,
+                    "epoch": ep,
+                }, ep_dir / f"epoch_{ep:03d}.pt")
 
     # save (rank 0)
     if is_main(rank):
@@ -1342,6 +1397,12 @@ if __name__ == "__main__":
                      help="weighted_concat projection weight. 기본 0.2")
     _ap.add_argument("--nce-temp", type=float, default=None,
                      help="InfoNCE temperature. 낮을수록 similarity 차이에 민감. 예: 0.05")
+    _ap.add_argument("--loss-mode", type=str, default=None, choices=["nce", "dcl"],
+                     help="global contrastive loss. nce=기존, dcl=small-batch decoupled loss.")
+    _ap.add_argument("--save-epoch-checkpoints", action="store_true",
+                     help="epoch별 checkpoint 저장. 디스크 사용량 큼.")
+    _ap.add_argument("--save-epoch-every", type=int, default=None,
+                     help="--save-epoch-checkpoints 사용 시 N epoch마다 저장. 기본 1.")
     _ap.add_argument("--lr-head", type=float, default=None,
                      help="projection head learning rate. 예: 5e-4")
     _ap.add_argument("--lr-backbone", type=float, default=None,
@@ -1389,6 +1450,9 @@ if __name__ == "__main__":
     if _a.infer_backbone_weight is not None: os.environ["CL_INFER_BACKBONE_WEIGHT"] = str(_a.infer_backbone_weight)
     if _a.infer_proj_weight is not None: os.environ["CL_INFER_PROJ_WEIGHT"] = str(_a.infer_proj_weight)
     if _a.nce_temp is not None:       os.environ["CL_NCE_TEMP"] = str(_a.nce_temp)
+    if _a.loss_mode is not None:      os.environ["CL_LOSS_MODE"] = _a.loss_mode
+    if _a.save_epoch_checkpoints:     os.environ["CL_SAVE_EPOCH_CKPTS"] = "1"
+    if _a.save_epoch_every is not None: os.environ["CL_SAVE_EPOCH_EVERY"] = str(_a.save_epoch_every)
     if _a.lr_head is not None:        os.environ["CL_LR_HEAD"] = str(_a.lr_head)
     if _a.lr_backbone is not None:    os.environ["CL_LR_BACKBONE"] = str(_a.lr_backbone)
     if _a.neco_weight is not None:    os.environ["CL_NECO_WEIGHT"] = str(_a.neco_weight)
@@ -1424,6 +1488,9 @@ if __name__ == "__main__":
     if _a.infer_backbone_weight is not None: INFER_BACKBONE_WEIGHT = _a.infer_backbone_weight
     if _a.infer_proj_weight is not None: INFER_PROJ_WEIGHT = _a.infer_proj_weight
     if _a.nce_temp is not None:       NCE_TEMP = _a.nce_temp
+    if _a.loss_mode is not None:      LOSS_MODE = _a.loss_mode
+    if _a.save_epoch_checkpoints:     SAVE_EPOCH_CKPTS = True
+    if _a.save_epoch_every is not None: SAVE_EPOCH_EVERY = max(1, _a.save_epoch_every)
     if _a.lr_head is not None:        LR_HEAD = _a.lr_head
     if _a.lr_backbone is not None:    LR_BACKBONE = _a.lr_backbone
     if _a.neco_weight is not None:    NECO_WEIGHT = _a.neco_weight
