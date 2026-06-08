@@ -106,6 +106,86 @@ CONDITIONS = [
         "neco": 0.0, "neco_grid": 0, "local": 0.0, "local_grid": 6, "local_window": 1,
         "freeze": True,
     },
+    {
+        "id": "11_queue_fn070_pseudo005",
+        "desc": "queue + false-negative elimination + weak NN attraction",
+        "queue": True, "queue_size": 16384, "ignore": 0.70, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.05, "temp": 0.05, "lr_head": 1e-3, "lr_backbone": 1e-5,
+        "neco": 0.0, "neco_grid": 0, "local": 0.0, "local_grid": 6, "local_window": 1,
+        "freeze": False,
+    },
+    {
+        "id": "12_queue_fn085_pseudo005",
+        "desc": "looser false-negative threshold + weak NN attraction",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.05, "temp": 0.05, "lr_head": 1e-3, "lr_backbone": 1e-5,
+        "neco": 0.0, "neco_grid": 0, "local": 0.0, "local_grid": 6, "local_window": 1,
+        "freeze": False,
+    },
+    {
+        "id": "13_proj512_queue_fn070",
+        "desc": "512 projection bottleneck check",
+        "queue": True, "queue_size": 16384, "ignore": 0.70, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.0, "temp": 0.05, "lr_head": 1e-3, "lr_backbone": 1e-5,
+        "neco": 0.0, "neco_grid": 0, "local": 0.0, "local_grid": 6, "local_window": 1,
+        "freeze": False, "proj_dim": 512,
+    },
+    {
+        "id": "14_proj256_queue_fn070",
+        "desc": "256 projection bottleneck check",
+        "queue": True, "queue_size": 16384, "ignore": 0.70, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.0, "temp": 0.05, "lr_head": 1e-3, "lr_backbone": 1e-5,
+        "neco": 0.0, "neco_grid": 0, "local": 0.0, "local_grid": 6, "local_window": 1,
+        "freeze": False, "proj_dim": 256,
+    },
+    {
+        "id": "15_queue_fn070_temp006",
+        "desc": "higher temperature: less hard-negative pressure",
+        "queue": True, "queue_size": 16384, "ignore": 0.70, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.0, "temp": 0.06, "lr_head": 1e-3, "lr_backbone": 1e-5,
+        "neco": 0.0, "neco_grid": 0, "local": 0.0, "local_grid": 6, "local_window": 1,
+        "freeze": False,
+    },
+    {
+        "id": "16_queue_fn070_lrhead5e4",
+        "desc": "smaller projection-head LR",
+        "queue": True, "queue_size": 16384, "ignore": 0.70, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.0, "temp": 0.05, "lr_head": 5e-4, "lr_backbone": 1e-5,
+        "neco": 0.0, "neco_grid": 0, "local": 0.0, "local_grid": 6, "local_window": 1,
+        "freeze": False,
+    },
+    {
+        "id": "17_queue_fn070_lrbackbone1e5_head5e4",
+        "desc": "smaller head LR + conservative backbone LR",
+        "queue": True, "queue_size": 16384, "ignore": 0.70, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.0, "temp": 0.05, "lr_head": 5e-4, "lr_backbone": 1e-5,
+        "neco": 0.0, "neco_grid": 0, "local": 0.0, "local_grid": 6, "local_window": 1,
+        "freeze": False, "epochs": 40,
+    },
+    {
+        "id": "18_queue_fn070_local_samecell",
+        "desc": "local grid InfoNCE, same-cell positives only",
+        "queue": True, "queue_size": 16384, "ignore": 0.70, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.0, "temp": 0.05, "lr_head": 1e-3, "lr_backbone": 1e-5,
+        "neco": 0.0, "neco_grid": 0, "local": 0.2, "local_grid": 6, "local_window": 0,
+        "freeze": False,
+    },
+    {
+        "id": "19_queue_fn070_neco_grid01",
+        "desc": "weaker NeCo grid",
+        "queue": True, "queue_size": 16384, "ignore": 0.70, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.0, "temp": 0.05, "lr_head": 1e-3, "lr_backbone": 1e-5,
+        "neco": 0.1, "neco_grid": 6, "local": 0.0, "local_grid": 6, "local_window": 1,
+        "freeze": False,
+    },
+    {
+        "id": "20_queue_fn075",
+        "desc": "middle false-negative threshold 0.75",
+        "queue": True, "queue_size": 16384, "ignore": 0.75, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.0, "temp": 0.05, "lr_head": 1e-3, "lr_backbone": 1e-5,
+        "neco": 0.0, "neco_grid": 0, "local": 0.0, "local_grid": 6, "local_window": 1,
+        "freeze": False,
+    },
 ]
 
 
@@ -205,10 +285,40 @@ def load_tsne_metrics(out_dir: Path) -> list[dict]:
     return rows
 
 
+def rank_metrics(rows: list[dict]) -> list[dict]:
+    ranked = []
+    baseline = next((r for r in rows if r.get("label") == "CNN baseline"), None)
+    base_top1 = baseline.get("top1") if baseline else None
+    base_k5 = baseline.get("k5") if baseline else None
+    base_k7 = baseline.get("k7") if baseline else None
+    for row in rows:
+        if row.get("label") == "CNN baseline":
+            continue
+        top1 = float(row.get("top1") or 0.0)
+        k5 = float(row.get("k5") or 0.0)
+        k7 = float(row.get("k7") or 0.0)
+        item = dict(row)
+        item["score_top1_k5_k7"] = (top1 + k5 + k7) / 3.0
+        item["score_k5_k7"] = (k5 + k7) / 2.0
+        if base_top1 is not None:
+            item["delta_top1_vs_cnn"] = top1 - float(base_top1)
+        if base_k5 is not None:
+            item["delta_k5_vs_cnn"] = k5 - float(base_k5)
+        if base_k7 is not None:
+            item["delta_k7_vs_cnn"] = k7 - float(base_k7)
+        ranked.append(item)
+    return sorted(ranked, key=lambda r: (r["score_top1_k5_k7"], r["score_k5_k7"]), reverse=True)
+
+
 def write_metric_csv(rows: list[dict], out: Path) -> None:
-    fields = ["label", "embedding_dim", "top1", "k3", "k5", "k7", "k9", "checkpoint"]
+    fields = [
+        "label", "embedding_dim", "top1", "k3", "k5", "k7", "k9",
+        "score_top1_k5_k7", "score_k5_k7",
+        "delta_top1_vs_cnn", "delta_k5_vs_cnn", "delta_k7_vs_cnn",
+        "checkpoint",
+    ]
     with out.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
+        w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         for row in rows:
             w.writerow(row)
@@ -244,17 +354,22 @@ def main():
         started = time.time()
         tag = f"{args.tag_prefix}_{cond['id']}"
         log_path = sweep_dir / f"{cond['id']}.log"
+        epochs = int(cond.get("epochs", args.epochs))
+        batch = int(cond.get("batch", args.batch))
+        img_size = int(cond.get("img_size", args.img_size))
+        proj_dim = int(cond.get("proj_dim", args.proj_dim))
+        sampling_ratio = float(cond.get("train_sampling_ratio", args.train_sampling_ratio))
         cmd = [
             sys.executable, "-u", str(repo / "scripts" / "train_contrastive_ddp.py"),
             "--backbone", str(backbone),
             "--tag", tag,
             "--train-dirs", args.train_dirs,
             "--eval-dirs", str(eval_dir),
-            "--epochs", str(args.epochs),
-            "--batch", str(args.batch),
-            "--img-size", str(args.img_size),
-            "--proj-dim", str(args.proj_dim),
-            "--train-sampling-ratio", str(args.train_sampling_ratio),
+            "--epochs", str(epochs),
+            "--batch", str(batch),
+            "--img-size", str(img_size),
+            "--proj-dim", str(proj_dim),
+            "--train-sampling-ratio", str(sampling_ratio),
             "--ignore-neg-sim", str(cond["ignore"]),
             "--pseudo-pos-weight", str(cond["pseudo_weight"]),
             "--pseudo-pos-min-sim", "0.90",
@@ -331,10 +446,22 @@ def main():
             tsne_dir = sorted(hits, key=lambda p: p.stat().st_mtime, reverse=True)[0]
             metrics = load_tsne_metrics(tsne_dir)
             write_metric_csv(metrics, sweep_dir / "embedding_metrics.csv")
+            ranked = rank_metrics(metrics)
+            write_metric_csv(ranked, sweep_dir / "embedding_ranking.csv")
             (sweep_dir / "embedding_metrics.json").write_text(
                 json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
+            (sweep_dir / "embedding_ranking.json").write_text(
+                json.dumps(ranked, indent=2, ensure_ascii=False), encoding="utf-8")
             print(f"[metrics] {(sweep_dir / 'embedding_metrics.csv').resolve()}")
+            print(f"[ranking] {(sweep_dir / 'embedding_ranking.csv').resolve()}")
             print(f"[tsne_dir] {tsne_dir.resolve()}")
+            if ranked:
+                best = ranked[0]
+                print("[best] "
+                      f"{best['label']} score={best['score_top1_k5_k7']*100:.1f}% "
+                      f"top1={float(best['top1'])*100:.1f}% "
+                      f"k5={float(best['k5'])*100:.1f}% "
+                      f"k7={float(best['k7'])*100:.1f}%", flush=True)
         summary.append({
             "tsne_returncode": rc,
             "tsne_log": str(tsne_log.resolve()),
