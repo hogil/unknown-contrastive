@@ -50,7 +50,11 @@ def find_free_port() -> int:
 
 def setup_ddp(rank: int, world_size: int, port: int | None = None,
               backend: str = "nccl") -> None:
-    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "127.0.0.1" if os.name == "nt" else "localhost")
+    if os.name == "nt":
+        # Windows local DDP can fail if MASTER_ADDR is inherited as the hostname.
+        os.environ["MASTER_ADDR"] = "127.0.0.1"
+    else:
+        os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
     if port is None:
         port = int(os.environ.get("MASTER_PORT", 29500))
     os.environ["MASTER_PORT"] = str(port)
@@ -66,7 +70,9 @@ def setup_ddp(rank: int, world_size: int, port: int | None = None,
         torch.cuda.set_device(rank)
     # timeout 넉넉히 (rank0 단독 eval/save 동안 다른 rank barrier 대기 견디게)
     from datetime import timedelta
-    dist.init_process_group(backend, rank=rank, world_size=world_size,
+    init_method = f"tcp://{os.environ['MASTER_ADDR']}:{port}"
+    dist.init_process_group(backend, init_method=init_method,
+                            rank=rank, world_size=world_size,
                             timeout=timedelta(minutes=60))
 
 
