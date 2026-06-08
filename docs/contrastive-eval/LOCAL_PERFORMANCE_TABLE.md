@@ -231,3 +231,32 @@ Embedding kNN same-class rate:
 - 그래도 `k3`, `k5`, `k9`는 아주 작게 오른다.
 - eval class당 4장이 대부분이라 k5/k7/k9는 구조적으로 낮게 보인다. 특히 non-Normal class는 같은 class 이웃이 최대 3장뿐이다.
 - 기본 HDBSCAN tier1은 `min_cluster_size=15`라 class당 4장 synthetic eval에서는 전부 noise가 되기 쉽다. 이 run은 HDBSCAN보다 embedding kNN 비교가 핵심이다.
+
+### Synthetic Axis Sweep: proj_dim / sampling / ignore
+
+목적: 21/27이 synthetic에서 동률이라, pseudo weight 대신 projection 차원, epoch sampling 비율, false-negative ignore 기준을 흔들었다.
+
+| condition | dim | train_sampling | ignore_neg_sim | top1 | k3 | k5 | k7 | k9 | score(top1,k5,k7) | 판단 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 21 pseudo005 local075 | 128 | 0.25 | 0.85 | 1.0000 | 0.9933 | 0.6640 | 0.5200 | 0.4400 | 0.7280 | synthetic best 동률 |
+| 27 pseudo004 local075 | 128 | 0.25 | 0.85 | 1.0000 | 0.9933 | 0.6640 | 0.5200 | 0.4400 | 0.7280 | synthetic best 동률 |
+| 30 proj256 | 256 | 0.25 | 0.85 | 1.0000 | 0.9733 | 0.6600 | 0.5200 | 0.4400 | 0.7267 | 근접하지만 낮음 |
+| 33 ignore080 | 128 | 0.25 | 0.80 | 0.9900 | 0.9567 | 0.6560 | 0.5200 | 0.4400 | 0.7220 | top1/k3 하락 |
+| 32 sample050 | 128 | 0.50 | 0.85 | 0.9800 | 0.9467 | 0.6540 | 0.5186 | 0.4389 | 0.7175 | sampling 증가 악화 |
+| 31 proj512 | 512 | 0.25 | 0.85 | 0.9500 | 0.9333 | 0.6480 | 0.5129 | 0.4356 | 0.7036 | 탈락 |
+
+산출:
+
+- sweep: `runs/260608_215221_synth_axes_n20_1024_nw4_260608_215000`
+- 30 model: `runs/260608_215224_synth_axes_n20_1024_nw4_260608_215000_30_fn085_pseudo004_local075_proj256/contrastive/best_model.pt`
+- 31 model: `runs/260608_220034_synth_axes_n20_1024_nw4_260608_215000_31_fn085_pseudo004_local075_proj512/contrastive/best_model.pt`
+- 32 model: `runs/260608_220842_synth_axes_n20_1024_nw4_260608_215000_32_fn085_pseudo004_local075_sample050/contrastive/best_model.pt`
+- 33 model: `runs/260608_221925_synth_axes_n20_1024_nw4_260608_215000_33_fn080_pseudo004_local075/contrastive/best_model.pt`
+- t-SNE/kNN: `result_grouping/260608_222657_synth_axes_n20_1024_nw4_260608_215000_summary`
+
+해석:
+
+- synthetic n20에서는 `proj_dim=128`, `sampling_ratio=0.25`, `ignore_neg_sim=0.85`가 유지되는 쪽이 낫다.
+- `proj_dim=512`는 embedding 차원만 커졌고 이웃 품질은 떨어졌다.
+- `train_sampling_ratio=0.50`은 한 epoch에서 더 많이 보게 했지만 이 작은 synthetic split에서는 일반화가 좋아지지 않았다.
+- `ignore_neg_sim=0.80`은 false negative 무시 기준을 더 엄격하게 만들었지만 top1/k3가 떨어져 이 데이터에서는 손해다.
