@@ -191,6 +191,27 @@ HDBSCAN tier1:
 - 현재 `wm811k_50` 로컬 best 후보는 27번: `NCE_TEMP=0.07`, `local_weight=0.75`, `pseudo_pos_weight=0.04`.
 - 다음 embedding 개선 축은 `pseudo_pos_weight` 근방(0.035~0.045), `IGNORE_NEG_SIM`, `proj_dim`, `train_sampling_ratio` 쪽으로 봐야 한다.
 
+### WM-811K Axis Check: proj256
+
+목적: synthetic axis sweep에서 `proj_dim=256`이 128차원 best에 근접했기 때문에, WM-811K에서도 확인했다.
+
+| model | dim | top1 | k3 | k5 | k7 | k9 | 판단 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| CNN baseline | 1024 | 0.7375 | 0.7167 | 0.6975 | 0.6607 | 0.6347 | 기준 |
+| 27 pseudo004 local075 | 128 | 0.7375 | 0.7125 | 0.7000 | 0.6946 | 0.6431 | 현재 WM best |
+| 30 proj256 | 256 | 0.7250 | 0.6875 | 0.6825 | 0.6839 | 0.6319 | 탈락 |
+
+산출:
+
+- 30 model: `D:\project\unknown-contrastive\runs\260608_222947_wm50_axes_nw4_260608_223000_30_fn085_pseudo004_local075_proj256\contrastive\best_model.pt`
+- comparison: `D:\project\unknown-contrastive\result_grouping\260608_223702_wm50_compare_27_30_260608_223800`
+
+해석:
+
+- WM에서도 `proj_dim=256`은 128차원 27번보다 나쁘다.
+- frozen backbone + projection head 미세조정 계열은 성능 개선 폭이 작다.
+- 다음 축은 단순 projection 차원/weak positive 미세조정이 아니라 backbone을 아주 작게 unfreeze하거나, embedding mode를 CNN feature와 결합하는 방향으로 봐야 한다.
+
 ## 2026-06-08 Synthetic Unknown Rerun: n20 / 1024px
 
 목적: WM-811K만 보지 않고, 기존 synthetic `unknown` 계열에서도 같은 current-best family가 embedding 이웃 품질을 개선하는지 확인했다.
