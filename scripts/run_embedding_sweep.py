@@ -314,6 +314,33 @@ CONDITIONS = [
         "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
         "freeze": True, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
     },
+    {
+        "id": "34_fn085_pseudo004_local075_unfreeze1e6",
+        "desc": "current best family with tiny backbone unfreeze LR 1e-6",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.04, "pseudo_min": 0.85, "pseudo_topk": 1,
+        "temp": 0.07, "lr_head": 5e-4, "lr_backbone": 1e-6,
+        "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
+        "freeze": False, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
+    },
+    {
+        "id": "35_fn085_pseudo004_local075_unfreeze3e6",
+        "desc": "current best family with small backbone unfreeze LR 3e-6",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.04, "pseudo_min": 0.85, "pseudo_topk": 1,
+        "temp": 0.07, "lr_head": 5e-4, "lr_backbone": 3e-6,
+        "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
+        "freeze": False, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
+    },
+    {
+        "id": "36_fn085_pseudo004_local075_projpos",
+        "desc": "current best family with pseudo positives selected from projection embedding",
+        "queue": True, "queue_size": 16384, "ignore": 0.85, "pseudo_neg_remove": True,
+        "pseudo_weight": 0.04, "pseudo_min": 0.85, "pseudo_topk": 1, "pseudo_source": "projection",
+        "temp": 0.07, "lr_head": 1e-3, "lr_backbone": 0.0,
+        "neco": 0.0, "neco_grid": 0, "local": 0.75, "local_grid": 6, "local_window": 4,
+        "freeze": True, "img_size": 384, "proj_dim": 128, "train_sampling_ratio": 0.25,
+    },
 ]
 
 
@@ -505,7 +532,7 @@ def main():
             "--pseudo-pos-min-sim", str(cond.get("pseudo_min", 0.90)),
             "--pseudo-pos-topk", str(cond.get("pseudo_topk", 2)),
             "--pseudo-pos-start-epoch", "2",
-            "--pseudo-pos-source", "backbone",
+            "--pseudo-pos-source", str(cond.get("pseudo_source", "backbone")),
             "--infer-embed-mode", "projection",
             "--nce-temp", str(cond["temp"]),
             "--lr-head", str(cond["lr_head"]),
