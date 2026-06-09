@@ -111,7 +111,8 @@ Best full-unfreeze ARI is `0.3950`, below the selected last-stage model
 ## Temperature Check
 
 Lowering the InfoNCE temperature from `0.05` to `0.03` was tested with the same
-last-stage unfreeze recipe. It did not improve held-out novel ARI.
+last-stage unfreeze recipe. Raising it to `0.07` was also tested. Neither
+temperature improved held-out novel ARI.
 
 - `TEMP=0.03` embeddings:
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_temp003_cuda_ep1.npy`
@@ -124,9 +125,13 @@ last-stage unfreeze recipe. It did not improve held-out novel ARI.
 | 0.03 | 2 | 0.4170 | 0.3830 | 0.3822 | 0.1788 |
 | 0.03 | 3 | 0.4270 | 0.3863 | 0.3855 | 0.2081 |
 | 0.03 | 4 | 0.4451 | 0.4031 | 0.4023 | 0.1977 |
+| 0.07 | 1 | 0.3639 | 0.3424 | 0.3416 | 0.0428 |
+| 0.07 | 2 | 0.3789 | 0.3561 | 0.3553 | 0.1412 |
+| 0.07 | 3 | 0.4222 | 0.3876 | 0.3869 | 0.1874 |
+| 0.07 | 4 | 0.4259 | 0.3920 | 0.3913 | 0.0388 |
 
-Best `TEMP=0.03` ARI is `0.4451`, below the selected `TEMP=0.05` model
-(`0.4681`).
+Best tested non-default temperature is `TEMP=0.03` epoch 4 (`0.4451`), below
+the selected `TEMP=0.05` model (`0.4681`).
 
 ## Interpretation
 

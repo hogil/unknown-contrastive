@@ -750,3 +750,6 @@ reinforces selecting by held-out novel ARI rather than training loss.
 Lowering InfoNCE temperature to `0.03` was tested with the same last-stage
 recipe. It converged but reached only `0.4451` ARI at epoch 4, so the selected
 recipe keeps `TEMP=0.05`.
+
+Raising InfoNCE temperature to `0.07` was also tested and was worse (`0.4259`
+best ARI). The temperature check currently supports keeping `TEMP=0.05`.
