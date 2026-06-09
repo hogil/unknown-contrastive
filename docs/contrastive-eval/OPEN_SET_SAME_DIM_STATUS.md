@@ -485,6 +485,8 @@ Same C novel eval, same 128-dimensional comparison:
 | DINOv3 B-contrastive 7e-6 ep8 backbone | 84.33% | 82.22% | 81.04% | 80.29% | 79.74% | 81.20% | 0.1785 | 0.2757 | first v2 gain |
 | DINOv3 B-contrastive 1e-5 ep8 weighted | 86.16% | 83.72% | 82.98% | 82.16% | 81.55% | 71.54% | 0.2465 | 0.3650 | best v2 top1 |
 | DINOv3 B-contrastive 1e-5 ep8 backbone | 85.64% | 84.28% | 83.34% | 82.61% | 81.93% | 70.58% | 0.2374 | 0.3503 | best v2 k3/k5/k7/k9 |
+| DINOv3 B-contrastive 1.2e-5 ep8 weighted | 81.03% | 78.74% | 77.28% | 76.50% | 75.93% | 55.00% | 0.1944 | 0.3216 | higher LR regresses below Raw |
+| DINOv3 B-contrastive 1.2e-5 ep8 backbone | 82.07% | 79.08% | 77.84% | 77.10% | 76.34% | 51.78% | 0.1937 | 0.3190 | higher LR still below Raw |
 
 Key artifacts:
 
@@ -502,6 +504,14 @@ Key artifacts:
   `D:\project\unknown-contrastive\result_grouping\260609_192030_wm811k_novel_v2_baseline_vs_dinov3_B_moco_lrb1e5_ep8_weighted`
 - v2 1e-5 backbone result:
   `D:\project\unknown-contrastive\result_grouping\260609_192146_wm811k_novel_v2_dinov3_B_moco_lrb1e5_ep8_backbone`
+- v2 1e-5 HDBSCAN sweep:
+  `D:\project\unknown-contrastive\result_grouping\260609_1927_wm811k_novel_v2_lrb1e5_hdbscan_sweep`
+- DINOv3 1.2e-5 ep8 training run:
+  `D:\project\unknown-contrastive\runs\260609_193303_wm811k_novel_v2_dinov3_B_moco_q1024_ep8_lrb1p2e5`
+- v2 1.2e-5 weighted result:
+  `D:\project\unknown-contrastive\result_grouping\260609_194315_wm811k_novel_v2_baseline_vs_dinov3_B_moco_lrb1p2e5_ep8_weighted`
+- v2 1.2e-5 backbone result:
+  `D:\project\unknown-contrastive\result_grouping\260609_194427_wm811k_novel_v2_dinov3_B_moco_lrb1p2e5_ep8_backbone`
 
 Interpretation: the DINOv3 contrastive improvement is not unique to the v1
 class split. On v2, Raw FCMAE is weaker because the novel set is harder
@@ -511,4 +521,11 @@ strongest v2 setting. HDBSCAN noise is still higher than Raw FCMAE under the
 same clustering parameters, but ARI/AMI also improve versus Raw FCMAE, so this
 is no longer just a top-k-only gain; the embedding quality is moving in the
 right direction, while deployment HDBSCAN thresholds still need a separate
-tuning pass.
+tuning pass. A first HDBSCAN sweep on the `1e-5` weighted embedding found
+`cluster_selection_method=leaf`, `min_cluster_size=20`, `min_samples=5` as the
+best ARI setting in the tested grid, improving ARI/AMI to `0.2689/0.3990` with
+four clusters but still high noise (`76.50%`). Raising `lr_backbone` to
+`1.2e-5` reduced training NCE further (`0.3400` at epoch 8) but hurt novel-C
+top-k below Raw FCMAE, so NCE decrease alone is not a sufficient selection
+criterion. The current v2 sweet spot remains full-backbone DINOv3 at `1e-5`
+for 8 epochs.
