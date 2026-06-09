@@ -736,3 +736,8 @@ CUDA. It converged (`loss 1.4233 -> 0.8184`) but did not beat the selected
 `3e-6` epoch-4 model. Its best primary ARI was epoch 3 (`0.4575`), below
 `3e-6` epoch 4 (`0.4681`). Details are in
 `D:\project\unknown-contrastive\docs\contrastive-eval\PAPER_ABLATION_WATERFALL.md`.
+
+Full-backbone unfreeze was also tested with `lr_backbone=1e-6`. It reduced
+training loss further (`1.4038 -> 0.5773`) but the best held-out ARI was only
+`0.3950`, so the current selected recipe remains DINOv3 + last-stage unfreeze
+at `3e-6` for four epochs.

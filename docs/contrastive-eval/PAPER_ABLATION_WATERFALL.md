@@ -60,6 +60,27 @@ alone.
 
 Best by primary ARI is `3e-6`, epoch 4.
 
+## Unfreeze Scope Check
+
+Full-backbone unfreeze was also tested with a lower backbone LR. It reduced the
+training loss more aggressively (`1.4038 -> 0.5773`) but degraded held-out
+novel ARI. This supports using last-stage unfreeze for the paper recipe.
+
+- full-unfreeze embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr1e6_cuda_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr1e6_cuda_ep4.npy`
+
+| Train mode | LR backbone | Epoch | ARI | NMI | AMI | ARI_hdb |
+|---|---:|---:|---:|---:|---:|---:|
+| all | 1e-6 | 1 | 0.3411 | 0.3291 | 0.3282 | 0.1486 |
+| all | 1e-6 | 2 | 0.3744 | 0.3629 | 0.3621 | 0.1915 |
+| all | 1e-6 | 3 | 0.3602 | 0.3475 | 0.3467 | 0.2854 |
+| all | 1e-6 | 4 | 0.3950 | 0.3647 | 0.3639 | 0.1920 |
+
+Best full-unfreeze ARI is `0.3950`, below the selected last-stage model
+(`0.4681`).
+
 ## Interpretation
 
 Use this table for the main paper claim:
