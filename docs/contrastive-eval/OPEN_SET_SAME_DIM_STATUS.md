@@ -374,3 +374,55 @@ On this near-novel split, B-contrastive gives a small but real same-dim kNN gain
 over Raw FCMAE, with the best top1 from A-CNN init + B-contrastive weighted
 concat. The split is still near-novel and Raw FCMAE is already strong, so the
 next target should be far-novel or a harder held-out split.
+
+## DINOv3 ConvNeXt-B Near-Novel v1 Sweep
+
+Backbone source:
+
+`hf_hub:timm/convnext_base.dinov3_lvd1689m`
+
+Code support:
+
+- `D:\project\unknown-contrastive\scripts\eval_open_set_embeddings.py` supports
+  frozen timm/HF-Hub backbones through `--timm-model`.
+- `D:\project\unknown-contrastive\scripts\train_contrastive_ddp.py` supports
+  DINOv3 training init through `--backbone-name`.
+
+Same C novel eval, same 128-dimensional comparison:
+
+| embedding | top1 | k3 | k5 | k7 | k9 | HDBSCAN noise | ARI | AMI | result |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| Raw FCMAE | 94.00% | 92.62% | 91.43% | 90.79% | 90.49% | 64.13% | 0.0824 | 0.2695 | baseline |
+| DINOv3 frozen | 93.80% | 92.33% | 91.48% | 91.26% | 90.48% | 24.27% | 0.2621 | 0.2498 | top-k similar, clustering much denser |
+| DINOv3 B-contrastive 3e-6 weighted | 93.87% | 92.84% | 92.43% | 91.88% | 91.41% | 53.60% | 0.2235 | 0.3729 | kNN improves over raw except top1 |
+| DINOv3 B-contrastive 3e-6 backbone | 93.73% | 92.98% | 92.45% | 91.85% | 91.36% | 53.67% | 0.2210 | 0.3716 | backbone better than projection |
+| DINOv3 B-contrastive 5e-6 weighted | 94.27% | 93.76% | 93.11% | 92.64% | 92.10% | 43.20% | 0.2973 | 0.4252 | strong top-k balance |
+| DINOv3 B-contrastive 5e-6 backbone | 94.20% | 93.80% | 93.15% | 92.67% | 92.13% | 42.93% | 0.3004 | 0.4283 | best k3/k5 balance |
+| DINOv3 B-contrastive 7e-6 weighted | 95.27% | 93.64% | 92.83% | 92.50% | 92.26% | 50.40% | 0.2815 | 0.4550 | best weighted top1 |
+| DINOv3 B-contrastive 7e-6 backbone | 95.33% | 93.53% | 92.83% | 92.53% | 92.32% | 53.87% | 0.2706 | 0.4350 | best top1 |
+| DINOv3 B-contrastive 1e-5 weighted | 94.53% | 93.51% | 93.27% | 93.12% | 92.85% | 54.87% | 0.2729 | 0.4346 | best weighted k5/k7/k9 |
+| DINOv3 B-contrastive 1e-5 backbone | 94.33% | 93.42% | 93.31% | 93.13% | 92.97% | 57.87% | 0.2390 | 0.4134 | best k5/k7/k9 |
+
+Key artifacts:
+
+- Frozen DINOv3 result:
+  `D:\project\unknown-contrastive\result_grouping\260609_161357_wm811k_novel_v1_rawfcmae_vs_dinov3_convnext_base_frozen`
+- DINOv3 5e-6 weighted result:
+  `D:\project\unknown-contrastive\result_grouping\260609_170031_wm811k_novel_v1_baseline_vs_dinov3_B_moco_lrb5e6_weighted`
+- DINOv3 5e-6 backbone result:
+  `D:\project\unknown-contrastive\result_grouping\260609_170034_wm811k_novel_v1_dinov3_B_moco_lrb5e6_backbone`
+- DINOv3 7e-6 weighted result:
+  `D:\project\unknown-contrastive\result_grouping\260609_171504_wm811k_novel_v1_baseline_vs_dinov3_B_moco_lrb7e6_weighted`
+- DINOv3 7e-6 backbone result:
+  `D:\project\unknown-contrastive\result_grouping\260609_171505_wm811k_novel_v1_dinov3_B_moco_lrb7e6_backbone`
+- DINOv3 1e-5 weighted result:
+  `D:\project\unknown-contrastive\result_grouping\260609_173010_wm811k_novel_v1_baseline_vs_dinov3_B_moco_lrb1e5_weighted`
+- DINOv3 1e-5 backbone result:
+  `D:\project\unknown-contrastive\result_grouping\260609_173014_wm811k_novel_v1_dinov3_B_moco_lrb1e5_backbone`
+
+Interpretation: DINOv3 is useful on this split. Frozen DINOv3 does not beat Raw
+FCMAE top1, but it gives much denser HDBSCAN clusters. With B-contrastive
+fine-tuning, DINOv3 beats Raw FCMAE on same-dim kNN. The best single-neighbor
+setting is `lr_backbone=7e-6` with backbone embedding. The best broader top-k
+setting is `lr_backbone=1e-5` with backbone embedding. Projection-only remains
+the wrong deployment embedding.
