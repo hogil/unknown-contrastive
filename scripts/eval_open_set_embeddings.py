@@ -267,7 +267,9 @@ def parse_labeled_value(raw: str) -> tuple[str, str]:
 def load_contrastive(ckpt: Path, device, mode: str):
     sd, meta = state_dict_from_checkpoint(ckpt, prefixes=("module.", "model."))
     proj_dim = infer_proj_dim(sd)
-    model = ContrastiveInferModel(BACKBONE, proj_dim, mode=mode)
+    cfg = meta.get("config") if isinstance(meta, dict) else {}
+    backbone_name = str((cfg or {}).get("BACKBONE") or BACKBONE)
+    model = ContrastiveInferModel(backbone_name, proj_dim, mode=mode)
     load = model.load_state_dict(sd, strict=False)
     bad_missing = [k for k in load.missing_keys if not k.startswith("head.")]
     bad_unexpected = [k for k in load.unexpected_keys if not k.startswith("pred.")]
@@ -281,6 +283,7 @@ def load_contrastive(ckpt: Path, device, mode: str):
         "proj_dim": proj_dim,
         "mode": mode,
         "loaded_epoch": meta.get("epoch"),
+        "backbone_name": backbone_name,
         "backbone_source": str(meta.get("backbone_source", "")),
         "classes": [],
     }

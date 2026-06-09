@@ -129,6 +129,7 @@ from _ddp_utils import (
 # ★ CLI 옵션은 env 로 전달 (mp.spawn 자식은 module 을 새로 import 하므로 module-level 에서 읽어야 상속됨)
 BACKBONE_CKPT = os.environ.get("CL_BACKBONE_CKPT") or BACKBONE_CKPT
 CNN_RUN_DIR   = os.environ.get("CL_CNN_RUN_DIR") or CNN_RUN_DIR
+BACKBONE      = os.environ.get("CL_BACKBONE_NAME") or BACKBONE
 TAG           = os.environ.get("CL_TAG") or TAG
 if os.environ.get("CL_EPOCHS"):
     EPOCHS = int(os.environ["CL_EPOCHS"])
@@ -614,10 +615,10 @@ def build_eval_tf():
 
 class ContrastiveModel(nn.Module):
     def __init__(self, backbone_name, proj_dim, freeze_backbone, backbone_ckpt,
-                 use_predictor=False):
+                 use_predictor=False, pretrained_backbone=False):
         super().__init__()
         import timm
-        self.backbone = timm.create_model(backbone_name, pretrained=False,
+        self.backbone = timm.create_model(backbone_name, pretrained=pretrained_backbone,
                                           num_classes=0, global_pool="avg")
         if backbone_ckpt and Path(backbone_ckpt).exists():
             sd = torch.load(backbone_ckpt, map_location="cpu", weights_only=False)
@@ -1049,9 +1050,11 @@ def train_worker(rank, world_size):
         if c.exists(): bp = c
     if bp is None and BACKBONE_CKPT and Path(BACKBONE_CKPT).exists():
         bp = Path(BACKBONE_CKPT)
-    if bp is None:
+    pretrained_backbone = bp is None and str(BACKBONE).startswith("hf_hub:")
+    if bp is None and not pretrained_backbone:
         bp = ensure_backbone_weights(WEIGHTS_DIR, BACKBONE)
-    if is_main(rank): print(f"[backbone] {bp}")
+    backbone_source = str(bp) if bp is not None else BACKBONE
+    if is_main(rank): print(f"[backbone] {backbone_source}")
     dist.barrier()
 
     active_classes = None
@@ -1109,7 +1112,8 @@ def train_worker(rank, world_size):
 
     # model + DDP wrap. 기본은 backbone 도 작은 LR 로 같이 fine-tune.
     base_model = ContrastiveModel(BACKBONE, PROJ_DIM, FREEZE_BACKBONE, bp,
-                                  use_predictor=use_predictor).to(device)
+                                  use_predictor=use_predictor,
+                                  pretrained_backbone=pretrained_backbone).to(device)
     backbone_train_mode = "frozen" if FREEZE_BACKBONE else BACKBONE_TRAIN_MODE
     backbone_trainable, backbone_total = apply_backbone_train_mode(
         base_model.backbone, backbone_train_mode)
@@ -1120,7 +1124,8 @@ def train_worker(rank, world_size):
     key_model = None
     if use_momentum_encoder:
         key_model = ContrastiveModel(BACKBONE, PROJ_DIM, FREEZE_BACKBONE, bp,
-                                     use_predictor=False).to(device)
+                                     use_predictor=False,
+                                     pretrained_backbone=pretrained_backbone).to(device)
         key_model.load_state_dict(model.module.state_dict(), strict=False)
         for p in key_model.parameters():
             p.requires_grad = False
@@ -1152,7 +1157,9 @@ def train_worker(rank, world_size):
     if is_main(rank):
         log_stage_metric(run_dir, "contrastive_ddp_setup", {
             "world_size": world_size,
-            "backbone_source": str(bp), "freeze_backbone": FREEZE_BACKBONE,
+            "backbone_source": backbone_source,
+            "pretrained_backbone": pretrained_backbone,
+            "freeze_backbone": FREEZE_BACKBONE,
             "batch_per_gpu": BATCH_PER_GPU, "total_batch": BATCH_PER_GPU * world_size,
             "proj_dim": PROJ_DIM,
             "lr_head": LR_HEAD, "lr_backbone": LR_BACKBONE,
@@ -1362,7 +1369,7 @@ def train_worker(rank, world_size):
                     "classes": classes,
                     "class_to_idx": class_to_idx,
                     "config": cfg,
-                    "backbone_source": str(bp),
+                    "backbone_source": backbone_source,
                     "world_size": world_size,
                     "epoch": ep,
                 }, ep_dir / f"epoch_{ep:03d}.pt")
@@ -1374,7 +1381,7 @@ def train_worker(rank, world_size):
             "classes": classes,
             "class_to_idx": class_to_idx,
             "config": cfg,
-            "backbone_source": str(bp),
+            "backbone_source": backbone_source,
             "world_size": world_size,
         }, cl_dir / "best_model.pt")
         (cl_dir / "history.json").write_text(json.dumps(history, indent=2), encoding="utf-8")
@@ -1385,7 +1392,7 @@ def train_worker(rank, world_size):
                 "n_train": len(train_ds),
                 "epochs": EPOCHS,
                 "final_loss": history[-1]["loss"] if history else None,
-                "backbone_source": str(bp),
+                "backbone_source": backbone_source,
                 "best_model": str(cl_dir / "best_model.pt"),
             }, notes="Production contrastive train only; classless data so metric/eval skipped")
             print("[eval] skipped (--no-eval). Use predict_grouping_prod.py for classless grouping.")
@@ -1555,6 +1562,8 @@ if __name__ == "__main__":
     _ap = argparse.ArgumentParser()
     _ap.add_argument("--backbone", type=str, default=None,
                      help="CNN backbone best_model.pth 경로 (stage1 결과). 생략 시 weights/ ImageNet.")
+    _ap.add_argument("--backbone-name", type=str, default=None,
+                     help="timm backbone name override. 예: hf_hub:timm/convnext_base.dinov3_lvd1689m")
     _ap.add_argument("--cnn-run-dir", type=str, default=None,
                      help="CNN run 폴더 (안의 cnn/best_model.pth 자동 사용).")
     _ap.add_argument("--tag", type=str, default=None, help="run 폴더 tag override.")
@@ -1637,6 +1646,7 @@ if __name__ == "__main__":
     _a = _ap.parse_args()
     # env 로 세팅 → mp.spawn 자식이 module re-import 시 위 module-level block 에서 읽음
     if _a.backbone:           os.environ["CL_BACKBONE_CKPT"] = _a.backbone
+    if _a.backbone_name:      os.environ["CL_BACKBONE_NAME"] = _a.backbone_name
     if _a.cnn_run_dir:        os.environ["CL_CNN_RUN_DIR"] = _a.cnn_run_dir
     if _a.tag:                os.environ["CL_TAG"] = _a.tag
     if _a.epochs is not None: os.environ["CL_EPOCHS"] = str(_a.epochs)
@@ -1679,6 +1689,7 @@ if __name__ == "__main__":
     if _a.num_workers is not None:    os.environ["CL_NUM_WORKERS_PER_GPU"] = str(_a.num_workers)
     # 부모 프로세스의 현재 module global 도 즉시 반영 (world_size<=1 직접 호출 경로)
     if _a.backbone:           BACKBONE_CKPT = _a.backbone
+    if _a.backbone_name:      BACKBONE = _a.backbone_name
     if _a.cnn_run_dir:        CNN_RUN_DIR = _a.cnn_run_dir
     if _a.tag:                TAG = _a.tag
     if _a.epochs is not None: EPOCHS = _a.epochs
