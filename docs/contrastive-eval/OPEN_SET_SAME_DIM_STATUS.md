@@ -482,7 +482,9 @@ Same C novel eval, same 128-dimensional comparison:
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | Raw FCMAE | 82.25% | 79.84% | 78.17% | 77.22% | 76.68% | 55.70% | 0.1453 | 0.2817 | baseline |
 | DINOv3 B-contrastive 7e-6 ep8 weighted | 84.25% | 81.64% | 80.87% | 80.16% | 79.56% | 81.90% | 0.1755 | 0.2736 | repeats v1 kNN gain |
-| DINOv3 B-contrastive 7e-6 ep8 backbone | 84.33% | 82.22% | 81.04% | 80.29% | 79.74% | 81.20% | 0.1785 | 0.2757 | best v2 kNN |
+| DINOv3 B-contrastive 7e-6 ep8 backbone | 84.33% | 82.22% | 81.04% | 80.29% | 79.74% | 81.20% | 0.1785 | 0.2757 | first v2 gain |
+| DINOv3 B-contrastive 1e-5 ep8 weighted | 86.16% | 83.72% | 82.98% | 82.16% | 81.55% | 71.54% | 0.2465 | 0.3650 | best v2 top1 |
+| DINOv3 B-contrastive 1e-5 ep8 backbone | 85.64% | 84.28% | 83.34% | 82.61% | 81.93% | 70.58% | 0.2374 | 0.3503 | best v2 k3/k5/k7/k9 |
 
 Key artifacts:
 
@@ -494,10 +496,19 @@ Key artifacts:
   `D:\project\unknown-contrastive\result_grouping\260609_190025_wm811k_novel_v2_baseline_vs_dinov3_B_moco_lrb7e6_ep8_weighted`
 - v2 backbone result:
   `D:\project\unknown-contrastive\result_grouping\260609_190141_wm811k_novel_v2_dinov3_B_moco_lrb7e6_ep8_backbone`
+- DINOv3 1e-5 ep8 training run:
+  `D:\project\unknown-contrastive\runs\260609_190717_wm811k_novel_v2_dinov3_B_moco_q1024_ep8_lrb1e5`
+- v2 1e-5 weighted result:
+  `D:\project\unknown-contrastive\result_grouping\260609_192030_wm811k_novel_v2_baseline_vs_dinov3_B_moco_lrb1e5_ep8_weighted`
+- v2 1e-5 backbone result:
+  `D:\project\unknown-contrastive\result_grouping\260609_192146_wm811k_novel_v2_dinov3_B_moco_lrb1e5_ep8_backbone`
 
 Interpretation: the DINOv3 contrastive improvement is not unique to the v1
 class split. On v2, Raw FCMAE is weaker because the novel set is harder
 (`Loc`, `Scratch`, `Near-full`), and DINOv3 B-contrastive still improves same-dim
-kNN by about +2.1 top1 points and +2.9 k5 points. HDBSCAN noise increases,
-so this gain is currently a neighbor-retrieval gain rather than a cleaner
-automatic-clustering gain under the same HDBSCAN parameters.
+kNN by up to +3.9 top1 points and +5.2 k5 points. The `1e-5` recipe is now the
+strongest v2 setting. HDBSCAN noise is still higher than Raw FCMAE under the
+same clustering parameters, but ARI/AMI also improve versus Raw FCMAE, so this
+is no longer just a top-k-only gain; the embedding quality is moving in the
+right direction, while deployment HDBSCAN thresholds still need a separate
+tuning pass.
