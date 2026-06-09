@@ -167,7 +167,9 @@ def load_contrastive_model(ckpt: Path, device):
     if isinstance(sd, dict) and any(k.startswith("module.") for k in sd):
         sd = {k.removeprefix("module."): v for k, v in sd.items()}
     model = ContrastiveInferModel(BACKBONE, proj_dim)
-    model.load_state_dict(sd, strict=True)
+    m_sd = model.state_dict()
+    compat = {k: v for k, v in sd.items() if k in m_sd and m_sd[k].shape == v.shape}
+    model.load_state_dict(compat, strict=False)
     return model.to(device).eval()
 
 

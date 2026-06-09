@@ -37,15 +37,16 @@ LR_MIN                = 1e-6
 LR_BACKBONE_MIN       = 1e-7
 WEIGHT_DECAY          = 1e-6
 NCE_TEMP              = 0.05
-LOSS_MODE             = "nce"   # "nce" or "dcl" (small-batch decoupled contrastive)
+LOSS_MODE             = "nce"   # "nce", "dcl", or "simsiam" (negative-free)
 GRAD_CLIP             = 1.0
 LABEL_SMOOTHING       = 0.02
 SAVE_EPOCH_CKPTS      = False   # 옵션 켤 때만 epoch별 checkpoint 저장
 SAVE_EPOCH_EVERY      = 1
 
 USE_QUEUE             = True
-QUEUE_SIZE            = 16384
+QUEUE_SIZE            = 4096   # old stable track. 너무 큰 queue 는 momentum encoder 없을 때 stale negative 위험.
 IGNORE_NEG_SIM        = 0.70
+MIN_VALID_NEGATIVES   = 1      # false-negative mask 가 전부 지워도 최소 안전 negative 는 남김.
 PSEUDO_POS_WEIGHT     = 0.0     # class 없이 가까운 image를 weak-positive로 당김. 0이면 OFF.
 PSEUDO_NEG_REMOVE     = True    # 가까운 샘플은 negative 에서 제거(FNC/IFND식 false-negative 완화).
 PSEUDO_POS_MIN_SIM    = 0.90    # detached cosine 기준. 이보다 가까운 batch neighbor만 후보.
@@ -202,6 +203,8 @@ def seed_all(s=42):
 
 def contrastive_lr_for_epoch(ep: int, base_lr: float = LR_HEAD, min_lr: float = LR_MIN) -> float:
     """Warmup 후 cosine decay. CNN/anomaly stage 와 같은 LR shape."""
+    if base_lr <= 0:
+        return 0.0
     if WARMUP_EPOCHS > 0 and ep <= WARMUP_EPOCHS:
         return base_lr * ep / max(1, WARMUP_EPOCHS)
     decay_epochs = max(1, EPOCHS - WARMUP_EPOCHS)
@@ -601,7 +604,8 @@ def build_eval_tf():
 
 
 class ContrastiveModel(nn.Module):
-    def __init__(self, backbone_name, proj_dim, freeze_backbone, backbone_ckpt):
+    def __init__(self, backbone_name, proj_dim, freeze_backbone, backbone_ckpt,
+                 use_predictor=False):
         super().__init__()
         import timm
         self.backbone = timm.create_model(backbone_name, pretrained=False,
@@ -619,6 +623,14 @@ class ContrastiveModel(nn.Module):
             nn.Linear(feat_dim, feat_dim), nn.GELU(),
             nn.Linear(feat_dim, proj_dim),
         )
+        self.pred = None
+        if use_predictor:
+            self.pred = nn.Sequential(
+                nn.Linear(proj_dim, proj_dim, bias=False),
+                nn.BatchNorm1d(proj_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(proj_dim, proj_dim),
+            )
         if freeze_backbone:
             for p in self.backbone.parameters():
                 p.requires_grad = False
@@ -676,33 +688,61 @@ class ContrastiveModel(nn.Module):
         z = F.normalize(self.proj(f), dim=1)
         return self._infer_embedding_from_features(f, z)
 
-    def forward(self, x, return_neco=False, return_feature=False):
+    def predict(self, z):
+        if self.pred is None:
+            raise RuntimeError("predictor is available only for LOSS_MODE=simsiam")
+        return self.pred(z)
+
+    def forward(self, x, return_neco=False, return_feature=False, return_pred=False):
         fm = self._forward_features(x)
         f = self._pool_features(fm)
         z = F.normalize(self.proj(f), dim=1)
+        pred = self.predict(z) if return_pred else None
+        if return_neco and return_feature and return_pred:
+            return z, self._project_patches(fm), F.normalize(f, dim=1), pred
         if return_neco and return_feature:
             return z, self._project_patches(fm), F.normalize(f, dim=1)
+        if return_neco and return_pred:
+            return z, self._project_patches(fm), pred
         if return_neco:
             return z, self._project_patches(fm)
+        if return_feature and return_pred:
+            return z, F.normalize(f, dim=1), pred
         if return_feature:
             return z, F.normalize(f, dim=1)
+        if return_pred:
+            return z, pred
         return z
 
 
 class QueueBank:
     def __init__(self, dim, size, device):
         self.size = size
-        self.buf = F.normalize(torch.randn(size, dim, device=device), dim=1)
+        self.buf = torch.empty(size, dim, device=device)
         self.ptr = 0
+        self.filled = 0
+
+    def get(self):
+        if self.filled <= 0:
+            return None
+        return self.buf[:self.filled]
+
     @torch.no_grad()
     def enqueue(self, z):
+        z = F.normalize(z.detach(), dim=1)
+        if z.size(0) >= self.size:
+            self.buf.copy_(z[-self.size:])
+            self.ptr = 0
+            self.filled = self.size
+            return
         b = z.size(0); end = self.ptr + b
         if end <= self.size:
-            self.buf[self.ptr:end] = z.detach()
+            self.buf[self.ptr:end] = z
         else:
-            self.buf[self.ptr:] = z[:self.size - self.ptr].detach()
-            self.buf[:end - self.size] = z[self.size - self.ptr:].detach()
+            self.buf[self.ptr:] = z[:self.size - self.ptr]
+            self.buf[:end - self.size] = z[self.size - self.ptr:]
         self.ptr = end % self.size
+        self.filled = min(self.size, self.filled + b)
 
 
 def build_pseudo_pos_mask(z_anchor, z_candidate, min_sim, topk):
@@ -750,20 +790,14 @@ def info_nce_loss(z1, z2, queue, temp, ignore_neg_sim, label_smoothing, pseudo_p
     logits_pos = (z1 * z2).sum(1, keepdim=True) / temp
     neg_bank = z2.detach()
     if queue is not None:
-        neg_bank = torch.cat([neg_bank, queue.buf], dim=0)
+        q = queue.get()
+        if q is not None:
+            neg_bank = torch.cat([neg_bank, q], dim=0)
     sim = z1 @ neg_bank.T / temp
-    if ignore_neg_sim > 0:
-        with torch.no_grad():
-            cos = z1 @ neg_bank.T
-            mask = cos > ignore_neg_sim
-            for i in range(b):
-                if i < neg_bank.size(0): mask[i, i] = False
-        sim = sim.masked_fill(mask, -1e9)
-    diag = torch.arange(b, device=z1.device)
-    if pseudo_pos_mask is not None and b <= sim.size(1):
-        sim[:, :b] = sim[:, :b].masked_fill(pseudo_pos_mask, -1e9)
-    if b <= neg_bank.size(0):
-        sim[diag, diag] = -1e9
+    with torch.no_grad():
+        cos = z1 @ neg_bank.T
+    sim = mask_false_negatives_keep_safe_negatives(
+        sim, cos, b, temp, ignore_neg_sim, pseudo_pos_mask)
     logits = torch.cat([logits_pos, sim], dim=1)
     return masked_pos_cross_entropy(logits, label_smoothing)
 
@@ -774,25 +808,59 @@ def dcl_loss(z1, z2, queue, temp, ignore_neg_sim, pseudo_pos_mask=None):
     pos = (z1 * z2).sum(1) / temp
     neg_bank = z2.detach()
     if queue is not None:
-        neg_bank = torch.cat([neg_bank, queue.buf], dim=0)
+        q = queue.get()
+        if q is not None:
+            neg_bank = torch.cat([neg_bank, q], dim=0)
     sim = z1 @ neg_bank.T / temp
-    if ignore_neg_sim > 0:
-        with torch.no_grad():
-            cos = z1 @ neg_bank.T
-            mask = cos > ignore_neg_sim
-            for i in range(b):
-                if i < neg_bank.size(0):
-                    mask[i, i] = False
-        sim = sim.masked_fill(mask, -1e9)
-    if pseudo_pos_mask is not None and b <= sim.size(1):
-        sim[:, :b] = sim[:, :b].masked_fill(pseudo_pos_mask, -1e9)
-    if b <= neg_bank.size(0):
-        sim[torch.arange(b, device=z1.device), torch.arange(b, device=z1.device)] = -1e9
+    with torch.no_grad():
+        cos = z1 @ neg_bank.T
+    sim = mask_false_negatives_keep_safe_negatives(
+        sim, cos, b, temp, ignore_neg_sim, pseudo_pos_mask)
     valid = sim > -1e8
     has_neg = valid.any(dim=1)
     if not has_neg.any():
         return z1.new_zeros(())
     return (-pos[has_neg] + torch.logsumexp(sim[has_neg], dim=1)).mean()
+
+
+def mask_false_negatives_keep_safe_negatives(sim, cos, b, temp, ignore_neg_sim,
+                                             pseudo_pos_mask=None):
+    """Mask likely false negatives, but keep at least a small safe-negative floor."""
+    blocked = torch.zeros_like(sim, dtype=torch.bool)
+    if b <= sim.size(1):
+        diag = torch.arange(b, device=sim.device)
+        blocked[diag, diag] = True
+        if pseudo_pos_mask is not None:
+            blocked[:, :b] |= pseudo_pos_mask
+
+    mask = blocked.clone()
+    if ignore_neg_sim > 0:
+        mask |= cos > float(ignore_neg_sim)
+    sim = sim.masked_fill(mask, -1e9)
+
+    if MIN_VALID_NEGATIVES > 0:
+        valid = sim > -1e8
+        need = valid.sum(dim=1) < int(MIN_VALID_NEGATIVES)
+        if need.any():
+            # High-sim negatives are the risky false negatives. If the threshold masks
+            # everything, restore the lowest-similarity candidate as the safest negative.
+            rescue_scores = cos.masked_fill(blocked, float("inf"))
+            rescue_vals, rescue_idx = rescue_scores.min(dim=1)
+            can_rescue = need & torch.isfinite(rescue_vals)
+            rows = torch.arange(sim.size(0), device=sim.device)[can_rescue]
+            cols = rescue_idx[can_rescue]
+            sim[rows, cols] = cos[rows, cols] / temp
+    return sim
+
+
+def simsiam_loss(z1, z2, pred1, pred2):
+    """Negative-free SimSiam loss: prediction of one view matches stop-grad other view."""
+    p1 = F.normalize(pred1, dim=1)
+    p2 = F.normalize(pred2, dim=1)
+    return -0.5 * (
+        (p1 * z2.detach()).sum(dim=1).mean() +
+        (p2 * z1.detach()).sum(dim=1).mean()
+    )
 
 
 def global_contrastive_loss(z1, z2, queue, temp, ignore_neg_sim, label_smoothing,
@@ -993,13 +1061,19 @@ def train_worker(rank, world_size):
                         "no_eval": no_eval, "world_size": world_size}, indent=2),
             encoding="utf-8")
 
+    loss_mode = str(LOSS_MODE).lower()
+    use_predictor = loss_mode == "simsiam"
+
     # model + DDP wrap. 기본은 backbone 도 작은 LR 로 같이 fine-tune.
-    model = ContrastiveModel(BACKBONE, PROJ_DIM, FREEZE_BACKBONE, bp).to(device)
+    model = ContrastiveModel(BACKBONE, PROJ_DIM, FREEZE_BACKBONE, bp,
+                             use_predictor=use_predictor).to(device)
     model = DDP(model, device_ids=[rank] if torch.cuda.is_available() else None,
                 find_unused_parameters=False)
-    queue = QueueBank(PROJ_DIM, QUEUE_SIZE, device) if USE_QUEUE else None
+    queue = QueueBank(PROJ_DIM, QUEUE_SIZE, device) if (USE_QUEUE and not use_predictor) else None
     backbone_params = [p for p in model.module.backbone.parameters() if p.requires_grad]
     head_params = [p for p in model.module.proj.parameters() if p.requires_grad]
+    if model.module.pred is not None:
+        head_params += [p for p in model.module.pred.parameters() if p.requires_grad]
     param_groups = []
     if backbone_params:
         param_groups.append({"params": backbone_params, "lr": LR_BACKBONE, "name": "backbone"})
@@ -1027,9 +1101,10 @@ def train_worker(rank, world_size):
             "batch_per_gpu": BATCH_PER_GPU, "total_batch": BATCH_PER_GPU * world_size,
             "proj_dim": PROJ_DIM,
             "lr_head": LR_HEAD, "lr_backbone": LR_BACKBONE,
+            "loss_mode": LOSS_MODE,
             "lr_min": LR_MIN, "lr_backbone_min": LR_BACKBONE_MIN,
             "lr_schedule": "warmup_cosine_epoch",
-            "queue_size": QUEUE_SIZE if USE_QUEUE else 0,
+            "queue_size": QUEUE_SIZE if queue is not None else 0,
             "ignore_neg_sim": IGNORE_NEG_SIM,
             "pseudo_pos_weight": PSEUDO_POS_WEIGHT,
             "pseudo_neg_remove": PSEUDO_NEG_REMOVE,
@@ -1047,7 +1122,9 @@ def train_worker(rank, world_size):
             "local_window": LOCAL_WINDOW,
             "neco_weight": NECO_WEIGHT,
             "neco_tau": NECO_TAU,
-            "recipe": "Classless pseudo-positive: Global InfoNCE + Queue/NEG + pseudo-kNN + NeCo",
+            "recipe": ("Classless negative-free SimSiam"
+                       if use_predictor else
+                       "Classless pseudo-positive: Global InfoNCE + Queue/NEG + pseudo-kNN + NeCo"),
             "n_train": len(train_ds), "n_eval": 0 if no_eval else len(eval_base),
             "n_classes_eval": len(classes), "no_eval": no_eval,
         }, notes=f"DDP {world_size} GPUs - train flat (class hidden)"
@@ -1090,25 +1167,43 @@ def train_worker(rank, world_size):
             #   기대를 깨서 RuntimeError → process exit 1 (single-GPU 는 정상, multi-GPU 만 crash).
             bs = x1.size(0)
             need_patches = NECO_WEIGHT > 0 or LOCAL_WEIGHT > 0
-            use_pseudo = (PSEUDO_NEG_REMOVE or PSEUDO_POS_WEIGHT > 0) and ep >= PSEUDO_POS_START_EPOCH
+            use_pseudo = (
+                (not use_predictor) and
+                (PSEUDO_NEG_REMOVE or PSEUDO_POS_WEIGHT > 0) and
+                ep >= PSEUDO_POS_START_EPOCH
+            )
             pseudo_source = str(PSEUDO_POS_SOURCE).lower()
             need_feature = use_pseudo and pseudo_source == "backbone"
             if need_patches:
                 out = model(torch.cat([x1, x2], dim=0),
-                            return_neco=True, return_feature=need_feature)
-                if need_feature:
+                            return_neco=True, return_feature=need_feature,
+                            return_pred=use_predictor)
+                pred_cat = None
+                if need_feature and use_predictor:
+                    z_cat, p_cat, f_cat, pred_cat = out
+                    f1, f2 = f_cat[:bs], f_cat[bs:]
+                elif need_feature:
                     z_cat, p_cat, f_cat = out
                     f1, f2 = f_cat[:bs], f_cat[bs:]
+                elif use_predictor:
+                    z_cat, p_cat, pred_cat = out
                 else:
                     z_cat, p_cat = out
                 p1, p2 = p_cat[:bs], p_cat[bs:]
                 loss_neco = neco_loss(p1, p2, NECO_TAU, NECO_GRID) if NECO_WEIGHT > 0 else z_cat.new_zeros(())
                 loss_local = local_grid_loss(p1, p2, LOCAL_TAU, LOCAL_GRID, LOCAL_WINDOW) if LOCAL_WEIGHT > 0 else z_cat.new_zeros(())
             else:
-                out = model(torch.cat([x1, x2], dim=0), return_feature=need_feature)
-                if need_feature:
+                out = model(torch.cat([x1, x2], dim=0), return_feature=need_feature,
+                            return_pred=use_predictor)
+                pred_cat = None
+                if need_feature and use_predictor:
+                    z_cat, f_cat, pred_cat = out
+                    f1, f2 = f_cat[:bs], f_cat[bs:]
+                elif need_feature:
                     z_cat, f_cat = out
                     f1, f2 = f_cat[:bs], f_cat[bs:]
+                elif use_predictor:
+                    z_cat, pred_cat = out
                 else:
                     z_cat = out
                 loss_neco = z_cat.new_zeros(())
@@ -1131,12 +1226,16 @@ def train_worker(rank, world_size):
                 loss_pseudo = z_cat.new_zeros(())
                 pseudo_anchors = 0
                 pseudo_pairs = 0
-            loss_nce = 0.5 * (
-                global_contrastive_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM,
-                                        LABEL_SMOOTHING, pseudo12) +
-                global_contrastive_loss(z2, z1, queue, NCE_TEMP, IGNORE_NEG_SIM,
-                                        LABEL_SMOOTHING, pseudo21)
-            )
+            if use_predictor:
+                pred1, pred2 = pred_cat[:bs], pred_cat[bs:]
+                loss_nce = simsiam_loss(z1, z2, pred1, pred2)
+            else:
+                loss_nce = 0.5 * (
+                    global_contrastive_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM,
+                                            LABEL_SMOOTHING, pseudo12) +
+                    global_contrastive_loss(z2, z1, queue, NCE_TEMP, IGNORE_NEG_SIM,
+                                            LABEL_SMOOTHING, pseudo21)
+                )
             loss = (loss_nce + (PSEUDO_POS_WEIGHT * loss_pseudo) +
                     (NECO_WEIGHT * loss_neco) + (LOCAL_WEIGHT * loss_local))
             loss.backward()
@@ -1156,11 +1255,12 @@ def train_worker(rank, world_size):
             run_pseudo_pairs += float(pseudo_pairs)
             n += x1.size(0)
             if is_main(rank) and it % max(1, len(ld) // 10) == 0:
+                q_state = f" q={queue.filled}/{queue.size}" if queue is not None else ""
                 print(f"  Ep {ep}/{EPOCHS} {it/len(ld)*100:>5.1f}% "
                       f"loss={run_loss/n:.4f} nce={run_nce/n:.4f} "
                       f"pseudo={run_pseudo/n:.4f} neco={run_neco/n:.4f} "
                       f"local={run_local/n:.4f} pseudo_pairs={run_pseudo_pairs:.0f} "
-                      f"lr_h={lr_head:.2e} lr_b={lr_backbone:.2e}", flush=True)
+                      f"lr_h={lr_head:.2e} lr_b={lr_backbone:.2e}{q_state}", flush=True)
         ep_loss = run_loss / max(1, n)
         ep_nce = run_nce / max(1, n)
         ep_pseudo = run_pseudo / max(1, n)
@@ -1175,7 +1275,9 @@ def train_worker(rank, world_size):
                   f"nce={avg['nce']:.4f} pseudo={avg['pseudo']:.4f} "
                   f"neco={avg['neco']:.4f} local={avg['local']:.4f} "
                   f"pseudo_pairs={avg['pseudo_pairs']:.0f} "
-                  f"time={time.time()-t0:.0f}s", flush=True)
+                  f"time={time.time()-t0:.0f}s"
+                  f"{(' q=' + str(queue.filled) + '/' + str(queue.size)) if queue is not None else ''}",
+                  flush=True)
             history.append({"epoch": ep, "loss": avg["loss"], "nce": avg["nce"],
                             "pseudo": avg["pseudo"], "neco": avg["neco"],
                             "local": avg["local"],
@@ -1425,8 +1527,8 @@ if __name__ == "__main__":
                      help="weighted_concat projection weight. 기본 0.2")
     _ap.add_argument("--nce-temp", type=float, default=None,
                      help="InfoNCE temperature. 낮을수록 similarity 차이에 민감. 예: 0.05")
-    _ap.add_argument("--loss-mode", type=str, default=None, choices=["nce", "dcl"],
-                     help="global contrastive loss. nce=기존, dcl=small-batch decoupled loss.")
+    _ap.add_argument("--loss-mode", type=str, default=None, choices=["nce", "dcl", "simsiam"],
+                     help="global contrastive loss. simsiam=negative-free.")
     _ap.add_argument("--save-epoch-checkpoints", action="store_true",
                      help="epoch별 checkpoint 저장. 디스크 사용량 큼.")
     _ap.add_argument("--save-epoch-every", type=int, default=None,

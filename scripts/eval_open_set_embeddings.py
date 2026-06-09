@@ -241,10 +241,11 @@ def load_contrastive(ckpt: Path, device, mode: str):
     model = ContrastiveInferModel(BACKBONE, proj_dim, mode=mode)
     load = model.load_state_dict(sd, strict=False)
     bad_missing = [k for k in load.missing_keys if not k.startswith("head.")]
-    if bad_missing or load.unexpected_keys:
+    bad_unexpected = [k for k in load.unexpected_keys if not k.startswith("pred.")]
+    if bad_missing or bad_unexpected:
         raise SystemExit(
             f"contrastive checkpoint incompatible: {ckpt.resolve()}\n"
-            f"missing={bad_missing[:10]} unexpected={load.unexpected_keys[:10]}"
+            f"missing={bad_missing[:10]} unexpected={bad_unexpected[:10]}"
         )
     return model.to(device).eval(), {
         "source": str(ckpt.resolve()),

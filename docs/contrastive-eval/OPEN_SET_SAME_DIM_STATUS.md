@@ -218,6 +218,50 @@ HDBSCAN noise. The next quick ablation should reduce global NCE pressure
 (`--no-queue`) and make pseudo-positive alignment dominate, otherwise the
 projection head keeps collapsing broad groups.
 
+## 2026-06-09 Contrastive Learning Fix
+
+Problem found after comparing old and new tracks:
+
+- old stable track used batch 8 and queue 4096, and global/queue losses decreased;
+- new script track used much larger queue pressure and the NCE/DCL loss either
+  rose over epochs or collapsed broad groups;
+- current `QueueBank` also used a full random queue from step 1 instead of only
+  real queued embeddings;
+- false-negative masking could remove every negative for an anchor, making NCE
+  effectively zero after early saturation.
+
+Code changes:
+
+- `D:\project\unknown-contrastive\scripts\train_contrastive_ddp.py`
+  - default `QUEUE_SIZE` restored to `4096`;
+  - queue now tracks `filled` and only exposes actual queued embeddings;
+  - progress log prints `q=<filled>/<size>`;
+  - false-negative mask keeps at least one lowest-similarity safe negative;
+  - `--loss-mode simsiam` added as a negative-free diagnostic alternative;
+  - `--lr-backbone 0.0` now stays exactly zero under the cosine scheduler.
+- `D:\project\unknown-contrastive\scripts\eval_open_set_embeddings.py`
+- `D:\project\unknown-contrastive\scripts\predict_grouping_prod.py`
+- `D:\project\unknown-contrastive\scripts\make_tsne_stages.py`
+  - inference loaders tolerate SimSiam `pred.*` checkpoint keys.
+
+Verification runs:
+
+`D:\project\unknown-contrastive\runs\260609_132852_smoke_nce_queue_floor_check`
+
+- queue filled from `8/64` to `64/64`, not from random negatives;
+- NCE stayed live: epoch 1 `0.2431`, epoch 2 `0.1877`.
+
+`D:\project\unknown-contrastive\runs\260609_132947_wm811k500_nce_queuefix_floor_losscheck`
+
+- real WM train split, frozen raw FCMAE, NCE + NeCo, queue 4096, 25% sample;
+- epoch NCE: `0.1232 -> 0.1176 -> 0.1184`;
+- this confirms the loop no longer explodes upward and no longer dies at
+  `0.0000` after false-negative masking.
+
+Interpretation: this is a learning-loop repair, not yet a final metric win.
+The next real experiment should use this fixed queue path for a full run, then
+compare projection/backbone/weighted-concat embeddings against Raw FCMAE.
+
 ## Real WM No-Queue Pseudo-Dominant Checks
 
 Pseudo-dominant no-queue projection dim 128 run:

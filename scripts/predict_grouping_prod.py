@@ -954,10 +954,12 @@ def main():
     if isinstance(sd, dict) and any(k.startswith("module.") for k in sd):
         sd = {k.removeprefix("module."): v for k, v in sd.items()}
     load = model.load_state_dict(sd, strict=False)
-    if load.missing_keys or load.unexpected_keys:
+    bad_missing = list(load.missing_keys)
+    bad_unexpected = [k for k in load.unexpected_keys if not k.startswith("pred.")]
+    if bad_missing or bad_unexpected:
         raise SystemExit(
             f"MODEL_PATH is not a compatible contrastive best_model.pt: {model_path}\n"
-            f"  missing_keys={len(load.missing_keys)} unexpected_keys={len(load.unexpected_keys)}\n"
+            f"  missing_keys={len(bad_missing)} unexpected_keys={len(bad_unexpected)}\n"
             f"  grouping에는 CNN .pth 가 아니라 contrastive best_model.pt 를 넣어야 함")
     print(f"[model] loaded from {model_path}")
 
