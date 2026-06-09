@@ -773,6 +773,10 @@ The current selected recipe was also retested at `TEMP=0.04` with
 `lr_backbone=2.5e-6` and `lr_head=5e-4`; its best ARI was `0.4969`, below the
 selected `TEMP=0.05` model (`0.5294`).
 
+`TEMP=0.06` was also tested on the same selected recipe. It was very close on
+paper-primary ARI (`0.5265`) and had higher NMI/AMI (`0.4739/0.4732`), but it
+did not beat the selected ARI and had lower auxiliary HDBSCAN ARI.
+
 Raising the false-negative ignore threshold to `0.8` was also tested. It reached
 only `0.4479` ARI, below the selected `ignore=0.7` model (`0.5294`).
 
