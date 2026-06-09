@@ -513,6 +513,7 @@ same-class pair cosine distance. Higher is better.
 | DINOv3 B-contrastive weighted | 86.16% | 83.72% | 82.98% | 82.16% | 81.54% | 0.4691 | 3 | 71.54% | 0.2465 | 0.3650 |
 | TPAT ConvNeXtV2 A-CNN + B-contrastive last-stage weighted | 87.47% | 85.35% | 83.62% | 82.58% | 82.27% | 0.4153 | 2 | 27.94% | 0.1794 | 0.2641 |
 | TPAT ConvNeXtV2 A-CNN + B-contrastive last-stage backbone | 87.38% | 85.38% | 83.64% | 82.54% | 82.20% | 0.4183 | 2 | 28.37% | 0.1797 | 0.2660 |
+| TPAT ConvNeXtV2 A-CNN + B-contrastive last-stage `lr=5e-6` ep6 weighted | 87.38% | 85.55% | 83.69% | 82.78% | 82.23% | 0.4104 | 5 | 59.70% | 0.0944 | 0.2396 |
 
 TPAT A-CNN + B-contrastive last-stage keeps top1 nearly flat against the TPAT A-CNN baseline, but slightly improves k3/k5, distance ratio, noise rate, ARI, and AMI. Full-backbone TPAT+B was too heavy for the local 16GB GPU; use the H100/server condition for that variant.
 
@@ -534,6 +535,12 @@ Key artifacts:
   `D:\project\unknown-contrastive\result_grouping\260609_215254_wm811k_novel_v2_same_folder_5model_tpatB_laststage_distance`
 - TPAT ConvNeXtV2 A-CNN + B-contrastive last-stage backbone result:
   `D:\project\unknown-contrastive\result_grouping\260609_215606_wm811k_novel_v2_tpatB_laststage_backbone_distance`
+- TPAT ConvNeXtV2 A-CNN + B-contrastive `lr=5e-6` ep6 training run:
+  `D:\project\unknown-contrastive\runs\260609_224021_wm811k_novel_v2_tpatA_B_moco_laststage_lrb5e6_img384_ep6`
+- TPAT ConvNeXtV2 A-CNN + B-contrastive `lr=5e-6` ep6 checkpoint:
+  `D:\project\unknown-contrastive\runs\260609_224021_wm811k_novel_v2_tpatA_B_moco_laststage_lrb5e6_img384_ep6\contrastive\best_model.pt`
+- TPAT ConvNeXtV2 A-CNN + B-contrastive `lr=5e-6` ep6 same-folder result:
+  `D:\project\unknown-contrastive\result_grouping\260609_225046_wm811k_novel_v2_same_folder_6model_tpat_lrb5e6_ep6_distance`
 - DINOv3 7e-6 ep8 training run:
   `D:\project\unknown-contrastive\runs\260609_184928_wm811k_novel_v2_dinov3_B_moco_q1024_ep8_lrb7e6`
 - v2 weighted result:
@@ -605,3 +612,71 @@ settings collapse almost everything into one giant cluster (`1074/1149` in one
 cluster, ARI `-0.0089`). Operationally, DINOv3+B is useful when prioritizing
 high-purity small clusters, but TPAT A-CNN / TPAT+B remains better for lower
 noise grouping on this v2 split.
+
+Current domain-safe augmentation in
+`D:\project\unknown-contrastive\scripts\train_contrastive_ddp.py`: palette
+non-grade pixels are masked to white before RGB conversion; training uses
+`RandomResizedCrop(scale=0.94..1.0, ratio=1.0)`, `RandomAffine(degrees=7,
+translate=0.05, scale=0.95..1.05)`, and Gaussian noise `0.02`. It does not use
+flip, large rotation, or color jitter. This matches the wafer rule that location
+and direction should be preserved while minor alignment/noise is ignored.
+
+TPAT+B `lr=5e-6` ep6 note: the raw 2048D internal eval looked much better
+(`noise=45.43%`, ARI/AMI `0.3117/0.4957`), but after the same 128D PCA
+comparison it mainly improves k3/k5 slightly while lowering fixed-HDBSCAN
+quality versus the `lr=1e-5` ep4 same-dim row. This suggests TPAT+B should be
+selected by the exact deployment embedding dimension, not only by internal
+training-report HDBSCAN.
+
+## Paper Ablation Ladder Candidates
+
+For paper writing, do not present one mixed table as if every metric improves
+monotonically. Current evidence supports two honest ablation ladders on the same
+held-out C eval folder:
+
+1. DINOv3 domain-SSL adaptation ladder: Raw DINOv3 -> DINOv3 + B contrastive.
+   This strongly improves same-128 kNN and best clustering ARI/AMI, but keeps a
+   high-noise strict-cluster behavior.
+2. TPAT retrieval ladder: Raw FCMAE -> TPAT A-CNN -> TPAT A-CNN + B
+   contrastive. This is strongest for top-k retrieval and lower-noise grouping;
+   the contrastive step improves k3/k5 slightly while top1 is saturated/flat.
+
+Same-128 paper candidate eval:
+
+- output:
+  `D:\project\unknown-contrastive\result_grouping\260609_230931_wm811k_novel_v2_paper_ablation_candidates_same128`
+- summary:
+  `D:\project\unknown-contrastive\result_grouping\260609_230931_wm811k_novel_v2_paper_ablation_candidates_same128\summary.md`
+- t-SNE:
+  `D:\project\unknown-contrastive\result_grouping\260609_230931_wm811k_novel_v2_paper_ablation_candidates_same128\tsne_same_dim_sheet.png`
+
+| ladder | step | top1 | k3 | k5 | dist ratio | note |
+|---|---|---:|---:|---:|---:|---|
+| DINOv3 domain SSL | Raw DINOv3 | 75.20% | 74.04% | 73.07% | 0.2307 | no wafer training |
+| DINOv3 domain SSL | + B contrastive | 86.16% | 83.72% | 82.98% | 0.4691 | large retrieval/distance gain, high-noise clusters |
+| TPAT retrieval | Raw FCMAE | 82.25% | 79.84% | 78.17% | 0.3294 | no wafer training |
+| TPAT retrieval | + A-CNN supervised TPAT | 87.55% | 85.23% | 83.46% | 0.3927 | strongest top1 |
+| TPAT retrieval | + B contrastive `lr=5e-6` ep6 | 87.38% | 85.55% | 83.69% | 0.4104 | k3/k5 improve, top1 flat |
+
+Fast same-128 HDBSCAN sweep:
+
+- output:
+  `D:\project\unknown-contrastive\result_grouping\260609_2329_wm811k_novel_v2_paper_fast_hdbscan_sweep_same128`
+- sweep csv:
+  `D:\project\unknown-contrastive\result_grouping\260609_2329_wm811k_novel_v2_paper_fast_hdbscan_sweep_same128\sweep.csv`
+- summary:
+  `D:\project\unknown-contrastive\result_grouping\260609_2329_wm811k_novel_v2_paper_fast_hdbscan_sweep_same128\summary.md`
+
+| model | best ARI/AMI | noise | best ARI/AMI under noise<=50% | noise | note |
+|---|---:|---:|---:|---:|---|
+| Raw FCMAE | 0.1638/0.3007 | 43.69% | 0.1638/0.3007 | 43.69% | baseline SSL |
+| Raw DINOv3 | 0.1355/0.2118 | 63.45% | 0.0579/0.1213 | 43.60% | weak on this wafer split before adaptation |
+| DINOv3 + B contrastive | 0.2689/0.3990 | 76.50% | 0.2089/0.3434 | 43.69% | best strict ARI/AMI, high noise |
+| TPAT A-CNN | 0.2218/0.3486 | 28.46% | 0.2218/0.3486 | 28.46% | best low-noise clustering in sweep |
+| TPAT A-CNN + B contrastive `lr=5e-6` ep6 | 0.2100/0.3449 | 34.55% | 0.2100/0.3449 | 34.55% | kNN improves, clustering does not beat A-CNN |
+
+Paper-safe conclusion: use DINOv3+B to support the claim that domain SSL
+adaptation improves raw DINOv3 novel embedding, and use TPAT A-CNN / TPAT+B to
+support the practical retrieval/grouping branch. Do not claim that B
+contrastive improves every metric after TPAT; in same-128 it mainly improves
+k3/k5, while clustering ARI is best for TPAT A-CNN alone.
