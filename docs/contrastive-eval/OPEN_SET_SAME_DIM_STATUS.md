@@ -494,6 +494,24 @@ Same C novel eval, same 128-dimensional comparison:
 | DINOv3 B-contrastive 1.2e-5 ep8 weighted | 81.03% | 78.74% | 77.28% | 76.50% | 75.93% | 55.00% | 0.1944 | 0.3216 | higher LR regresses below Raw |
 | DINOv3 B-contrastive 1.2e-5 ep8 backbone | 82.07% | 79.08% | 77.84% | 77.10% | 76.34% | 51.78% | 0.1937 | 0.3190 | higher LR still below Raw |
 
+Same-folder four-model check with distance ratio:
+
+`D:\project\unknown-contrastive\result_grouping\260609_211313_wm811k_novel_v2_same_folder_4model_distance`
+
+All rows below use the same C eval folder:
+
+`D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v2\novel_eval`
+
+`dist ratio` is mean nearest-other-class cosine distance divided by mean
+same-class pair cosine distance. Higher is better.
+
+| embedding | top1 | k3 | k5 | k7 | k9 | dist ratio | HDBSCAN clusters | noise | ARI | AMI |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Raw FCMAE | 82.25% | 79.84% | 78.17% | 77.22% | 76.68% | 0.3294 | 4 | 55.70% | 0.1453 | 0.2817 |
+| Raw DINOv3 frozen | 75.20% | 74.04% | 73.07% | 72.04% | 70.98% | 0.2307 | 3 | 58.05% | 0.1028 | 0.1936 |
+| TPAT ConvNeXtV2 A-CNN backbone | 87.55% | 85.23% | 83.46% | 82.95% | 82.43% | 0.3927 | 2 | 29.85% | 0.1729 | 0.2580 |
+| DINOv3 B-contrastive weighted | 86.16% | 83.72% | 82.98% | 82.16% | 81.54% | 0.4691 | 3 | 71.54% | 0.2465 | 0.3650 |
+
 Key artifacts:
 
 - v2 split summary:
@@ -547,7 +565,9 @@ points and +5.3 k5 points on C (`Loc`, `Scratch`, `Near-full`) without seeing
 those C classes. HDBSCAN interpretation is more mixed: TPAT top-k is best
 but produces only two clusters under the fixed eom parameters, while DINOv3
 contrastive gives better ARI/AMI than Raw FCMAE and should still be evaluated
-with a separate HDBSCAN threshold sweep. A first HDBSCAN sweep on the DINOv3
+with a separate HDBSCAN threshold sweep. The same-folder distance-ratio check
+also favors DINOv3 B-contrastive (`0.4691`) over TPAT ConvNeXtV2 (`0.3927`),
+even though TPAT remains best on top-k. A first HDBSCAN sweep on the DINOv3
 `1e-5` weighted embedding found `cluster_selection_method=leaf`,
 `min_cluster_size=20`, `min_samples=5` as the best ARI setting in the tested
 grid, improving ARI/AMI to `0.2689/0.3990` with four clusters but still high

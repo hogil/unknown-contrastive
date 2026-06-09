@@ -359,6 +359,76 @@ def knn_same_rates(emb: np.ndarray, y: np.ndarray, ks=(1, 3, 5, 7, 9)):
     return rates
 
 
+def class_distance_metrics(emb: np.ndarray, y: np.ndarray) -> dict[str, Any]:
+    d = pairwise_distances(emb, metric="cosine").astype(np.float32, copy=False)
+    labels = sorted(int(v) for v in np.unique(y))
+    per_class: dict[str, Any] = {}
+    intra_vals = []
+    nearest_other_vals = []
+    centroid_intra_vals = []
+    centroid_nearest_vals = []
+
+    for c in labels:
+        idx = np.where(y == c)[0]
+        other = np.where(y != c)[0]
+        if len(idx) <= 1 or len(other) == 0:
+            continue
+
+        intra = d[np.ix_(idx, idx)]
+        tri = intra[np.triu_indices(len(idx), k=1)]
+        intra_mean = float(np.mean(tri)) if len(tri) else 0.0
+        intra_median = float(np.median(tri)) if len(tri) else 0.0
+
+        nearest_other = np.min(d[np.ix_(idx, other)], axis=1)
+        nearest_other_mean = float(np.mean(nearest_other))
+        nearest_other_median = float(np.median(nearest_other))
+
+        same_centroid = l2_normalize(emb[idx].mean(axis=0, keepdims=True))[0]
+        other_centroids = []
+        for oc in labels:
+            if oc == c:
+                continue
+            oidx = np.where(y == oc)[0]
+            other_centroids.append(l2_normalize(emb[oidx].mean(axis=0, keepdims=True))[0])
+        other_centroids_np = np.stack(other_centroids, axis=0)
+        centroid_intra = float(np.mean(pairwise_distances(emb[idx], same_centroid[None, :], metric="cosine")))
+        centroid_nearest = float(np.min(pairwise_distances(same_centroid[None, :], other_centroids_np, metric="cosine")))
+
+        intra_vals.append(intra_mean)
+        nearest_other_vals.append(nearest_other_mean)
+        centroid_intra_vals.append(centroid_intra)
+        centroid_nearest_vals.append(centroid_nearest)
+
+        per_class[str(c)] = {
+            "n": int(len(idx)),
+            "pair_intra_mean": intra_mean,
+            "pair_intra_median": intra_median,
+            "nearest_other_mean": nearest_other_mean,
+            "nearest_other_median": nearest_other_median,
+            "nearest_other_over_intra_mean": float(nearest_other_mean / max(intra_mean, 1e-12)),
+            "intra_over_nearest_other_mean": float(intra_mean / max(nearest_other_mean, 1e-12)),
+            "centroid_intra_mean": centroid_intra,
+            "centroid_nearest_other": centroid_nearest,
+            "centroid_nearest_other_over_intra": float(centroid_nearest / max(centroid_intra, 1e-12)),
+        }
+
+    intra_mean_all = float(np.mean(intra_vals)) if intra_vals else 0.0
+    nearest_other_mean_all = float(np.mean(nearest_other_vals)) if nearest_other_vals else 0.0
+    centroid_intra_all = float(np.mean(centroid_intra_vals)) if centroid_intra_vals else 0.0
+    centroid_nearest_all = float(np.mean(centroid_nearest_vals)) if centroid_nearest_vals else 0.0
+    return {
+        "metric": "cosine_distance",
+        "pair_intra_mean": intra_mean_all,
+        "nearest_other_mean": nearest_other_mean_all,
+        "nearest_other_over_intra_mean": float(nearest_other_mean_all / max(intra_mean_all, 1e-12)),
+        "intra_over_nearest_other_mean": float(intra_mean_all / max(nearest_other_mean_all, 1e-12)),
+        "centroid_intra_mean": centroid_intra_all,
+        "centroid_nearest_other": centroid_nearest_all,
+        "centroid_nearest_other_over_intra": float(centroid_nearest_all / max(centroid_intra_all, 1e-12)),
+        "per_class": per_class,
+    }
+
+
 def purity_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     total = len(y_true)
     if total == 0:
@@ -472,15 +542,17 @@ def write_summary(out_dir: Path, diagnostics: dict[str, Any]):
         f"- ignored_classes: {diagnostics['ignore_classes']}",
         f"- same_vector_dim: {diagnostics['same_vector_dim']}",
         "",
-        "| stage | input dim | same dim | top1 | k3 | k5 | k7 | k9 | HDBSCAN clusters | noise | ARI | AMI |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| stage | input dim | same dim | top1 | k3 | k5 | k7 | k9 | dist ratio | HDBSCAN clusters | noise | ARI | AMI |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for s in diagnostics["stages"]:
         r = s["knn_same_rate"]
         h = s["hdbscan"]
+        dm = s.get("distance_metrics", {})
         lines.append(
             f"| {s['label']} | {s['pca']['input_dim']} | {s['embedding_dim']} | "
             f"{r['1']:.4f} | {r['3']:.4f} | {r['5']:.4f} | {r['7']:.4f} | {r['9']:.4f} | "
+            f"{dm.get('nearest_other_over_intra_mean', 0.0):.4f} | "
             f"{h.get('n_clusters', '-')} | {h.get('noise_pct', 0.0):.4f} | "
             f"{h.get('ari', 0.0):.4f} | {h.get('ami', 0.0):.4f} |"
         )
@@ -587,6 +659,7 @@ def main():
 
         emb, pca_info = to_same_dim(raw_emb, same_dim, args.seed)
         rates = knn_same_rates(emb, y_good)
+        dist_metrics = class_distance_metrics(emb, y_good)
         hdb = hdbscan_metrics(emb, y_good, args)
         name = f"{idx:02d}_{slug(label)}"
         np.save(emb_dir / f"{name}_raw.npy", raw_emb)
@@ -599,6 +672,7 @@ def main():
             "embedding_dim": int(emb.shape[1]),
             "pca": pca_info,
             "knn_same_rate": rates,
+            "distance_metrics": dist_metrics,
             "hdbscan": hdb,
             "corrupt_skipped": bad,
             "raw_embedding_file": str((emb_dir / f"{name}_raw.npy").resolve()),
