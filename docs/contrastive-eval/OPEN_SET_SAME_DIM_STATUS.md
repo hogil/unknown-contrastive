@@ -715,6 +715,8 @@ table above. The clean paper table is documented here:
   `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\novel_eval`
 - final fine-tuned embedding:
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ssl_embeddings\simclr_ep5.npy`
+- companion embedding retrieval report:
+  `D:\project\unknown-contrastive\docs\contrastive-eval\PAPER_ABLATION_EMBEDDING_RETRIEVAL.md`
 
 Primary metric: k-means with the known novel class count (`k=3`), following the
 standard NCD evaluation style where every sample is assigned. The monotonic
@@ -737,10 +739,21 @@ with `0.5976` ARI / `0.5258` NMI / `0.5252` AMI. Its auxiliary HDBSCAN ARI is
 low (`0.0582`), so operational HDBSCAN grouping remains a separate tuning
 branch.
 
+Embedding retrieval tells a slightly different story: Raw FCMAE is still
+slightly higher on single-nearest-neighbor `top1` (`94.00%` vs SimCLR
+`93.67%`), but SimCLR improves the broader neighborhood (`k3/k5/k7/k9`) and the
+class-separation distance ratio (`0.4529` vs Raw FCMAE `0.3434`). Use this as a
+retrieval-side companion table, not as a replacement for the NCD clustering
+waterfall.
+
 BYOL collapsed on the same split (`0.0190` ARI by epoch 5). SimSiam is weaker
 for paper-primary NCD (`0.4307` best ARI among checked epochs so far), but its
 epoch-2 HDBSCAN ARI is strong (`0.5143`), making it a candidate for the
 operational grouping branch rather than the paper-primary all-sample NCD table.
+Barlow Twins was also checked and peaked at `0.4332` ARI at epoch 4, so it is
+not selected for the monotonic paper table. VICReg peaked at `0.5295` ARI at
+epoch 4, roughly tying the MoCo-style selected recipe but remaining below
+SimCLR.
 
 Follow-up last-stage LR scan: `lr_backbone=5e-6` was also tested on the same
 setup with CUDA. It converged (`loss 1.4233 -> 0.8184`) but did not beat either

@@ -25,6 +25,13 @@ HDBSCAN noise threshold.
 | S2 | + PCA dimension tuning | 0.3173 | 0.2957 | 0.2949 | 0.2965 | 0.2950 |
 | S3 | + wafer contrastive fine-tune | 0.5976 | 0.5258 | 0.5252 | 0.5259 | 0.5257 |
 
+Companion embedding retrieval metrics are recorded in
+`D:\project\unknown-contrastive\docs\contrastive-eval\PAPER_ABLATION_EMBEDDING_RETRIEVAL.md`.
+Those kNN metrics show that the final SimCLR fine-tune mainly improves the
+broader neighborhood structure (`k3`/`k5`/`k7`/`k9`) and class-separation
+distance ratio, while Raw FCMAE remains slightly higher on the single-nearest
+neighbor `top1` metric.
+
 ## Delta From Baseline
 
 | Stage | ARI Gain | AMI Gain | Relative ARI Gain |
@@ -257,6 +264,14 @@ score, although its HDBSCAN branch is weaker.
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ssl_embeddings\simclr_ep1.npy`
   through
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ssl_embeddings\simclr_ep5.npy`
+- Barlow Twins embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ssl_embeddings\barlow_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ssl_embeddings\barlow_ep5.npy`
+- VICReg embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ssl_embeddings\vicreg_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ssl_embeddings\vicreg_ep5.npy`
 
 | Method | Epoch | ARI | NMI | AMI | ARI_hdb |
 |---|---:|---:|---:|---:|---:|
@@ -271,13 +286,25 @@ score, although its HDBSCAN branch is weaker.
 | SimSiam | 1 | 0.4146 | 0.3732 | 0.3725 | 0.4151 |
 | SimSiam | 2 | 0.3956 | 0.3656 | 0.3648 | 0.5143 |
 | SimSiam | 5 | 0.4307 | 0.4412 | 0.4405 | 0.4022 |
+| Barlow Twins | 1 | 0.3517 | 0.3782 | 0.3774 | 0.1529 |
+| Barlow Twins | 2 | 0.3536 | 0.3376 | 0.3368 | 0.3993 |
+| Barlow Twins | 3 | 0.4099 | 0.3980 | 0.3973 | 0.3947 |
+| Barlow Twins | 4 | 0.4332 | 0.4029 | 0.4022 | 0.3819 |
+| Barlow Twins | 5 | 0.4031 | 0.4246 | 0.4238 | 0.3773 |
+| VICReg | 1 | 0.5043 | 0.5030 | 0.5024 | 0.4510 |
+| VICReg | 2 | 0.3858 | 0.3611 | 0.3603 | 0.4492 |
+| VICReg | 3 | 0.4952 | 0.4799 | 0.4792 | 0.3137 |
+| VICReg | 4 | 0.5295 | 0.5035 | 0.5029 | 0.2523 |
+| VICReg | 5 | 0.4904 | 0.4782 | 0.4776 | 0.2219 |
 
 This is the current best paper-primary result. It changes the method family, so
 the paper should present it as a method-level improvement rather than as a
 minor hyperparameter refinement. HDBSCAN remains weaker for SimCLR, so the
 operational grouping branch still needs separate tuning. SimSiam is weaker for
 paper-primary NCD, but its epoch-2 HDBSCAN ARI (`0.5143`) is currently the best
-operational HDBSCAN result in this SSL-method sweep.
+operational HDBSCAN result in this SSL-method sweep. Barlow Twins improves over
+raw DINOv3 but does not beat the selected SimCLR paper-primary result. VICReg
+peaks near the MoCo-style recipe and is also below SimCLR.
 
 ## False-Negative Ignore Threshold Check
 

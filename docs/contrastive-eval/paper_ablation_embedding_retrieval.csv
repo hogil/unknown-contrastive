@@ -1,0 +1,5 @@
+stage,input_dim,eval_dim,top1,k3,k5,k7,k9,dist_ratio,embedding
+S0 Raw FCMAE baseline,1024,128,0.94,0.9262222222222222,0.9142666666666667,0.9079047619047618,0.904888888888889,0.3434400429219315,D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\embeddings\FCMAE_baseline.npy
+S1 + DINOv3 SSL backbone,1024,128,0.938,0.9233333333333333,0.9149333333333334,0.9125714285714286,0.9048148148148147,0.2459765763756605,D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\embeddings\dinov3_convnext_base.npy
+S2 + PCA dimension tuning,1024,1024,0.9386666666666666,0.923111111111111,0.9142666666666666,0.9061904761904761,0.9028148148148147,0.2490373317368246,D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\embeddings\dinov3_convnext_base.npy
+S3 + wafer SimCLR SSL fine-tune,1024,1024,0.9366666666666666,0.9282222222222222,0.9228000000000001,0.9195238095238095,0.9155555555555557,0.4528792081902658,D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ssl_embeddings\simclr_ep5.npy
