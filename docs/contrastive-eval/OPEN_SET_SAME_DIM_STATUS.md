@@ -457,3 +457,47 @@ but reduced novel-C kNN, which is evidence of overfitting to B rather than bette
 open-set transfer. Shortening the `7e-6` top1 recipe from 8 to 6 epochs also
 reduced top1, so the current top1 sweet spot remains `7e-6` at 8 epochs.
 Projection-only remains the wrong deployment embedding.
+
+## WM-811K Class-Disjoint Near-Novel v2
+
+Split root:
+
+`D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v2`
+
+Split summary:
+
+`D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v2\summary.json`
+
+The split is class-disjoint and swaps the v1 B/C roles:
+
+| split | folder | classes | images |
+|---|---|---|---:|
+| A supervised CNN seen | `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v2\cnn_seen_train` | Center, Edge-Loc, Random | 1500 |
+| B contrastive unlabeled train | `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v2\contrastive_unlabeled_train` | Donut, Edge-Ring | 1000 |
+| C novel eval | `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v2\novel_eval` | Loc, Scratch, Near-full | 1149 |
+
+Same C novel eval, same 128-dimensional comparison:
+
+| embedding | top1 | k3 | k5 | k7 | k9 | HDBSCAN noise | ARI | AMI | result |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| Raw FCMAE | 82.25% | 79.84% | 78.17% | 77.22% | 76.68% | 55.70% | 0.1453 | 0.2817 | baseline |
+| DINOv3 B-contrastive 7e-6 ep8 weighted | 84.25% | 81.64% | 80.87% | 80.16% | 79.56% | 81.90% | 0.1755 | 0.2736 | repeats v1 kNN gain |
+| DINOv3 B-contrastive 7e-6 ep8 backbone | 84.33% | 82.22% | 81.04% | 80.29% | 79.74% | 81.20% | 0.1785 | 0.2757 | best v2 kNN |
+
+Key artifacts:
+
+- v2 split summary:
+  `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v2\summary.json`
+- DINOv3 7e-6 ep8 training run:
+  `D:\project\unknown-contrastive\runs\260609_184928_wm811k_novel_v2_dinov3_B_moco_q1024_ep8_lrb7e6`
+- v2 weighted result:
+  `D:\project\unknown-contrastive\result_grouping\260609_190025_wm811k_novel_v2_baseline_vs_dinov3_B_moco_lrb7e6_ep8_weighted`
+- v2 backbone result:
+  `D:\project\unknown-contrastive\result_grouping\260609_190141_wm811k_novel_v2_dinov3_B_moco_lrb7e6_ep8_backbone`
+
+Interpretation: the DINOv3 contrastive improvement is not unique to the v1
+class split. On v2, Raw FCMAE is weaker because the novel set is harder
+(`Loc`, `Scratch`, `Near-full`), and DINOv3 B-contrastive still improves same-dim
+kNN by about +2.1 top1 points and +2.9 k5 points. HDBSCAN noise increases,
+so this gain is currently a neighbor-retrieval gain rather than a cleaner
+automatic-clustering gain under the same HDBSCAN parameters.
