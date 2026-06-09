@@ -45,6 +45,8 @@ SAVE_EPOCH_EVERY      = 1
 
 USE_QUEUE             = True
 QUEUE_SIZE            = 4096   # old stable track. 너무 큰 queue 는 momentum encoder 없을 때 stale negative 위험.
+USE_MOMENTUM_ENCODER  = True   # MoCo queue 안정화: queue key 를 EMA encoder 로 생성.
+MOMENTUM_ENCODER_M    = 0.99
 IGNORE_NEG_SIM        = 0.70
 MIN_VALID_NEGATIVES   = 1      # false-negative mask 가 전부 지워도 최소 안전 negative 는 남김.
 PSEUDO_POS_WEIGHT     = 0.0     # class 없이 가까운 image를 weak-positive로 당김. 0이면 OFF.
@@ -189,6 +191,10 @@ if os.environ.get("CL_USE_QUEUE"):
     USE_QUEUE = os.environ["CL_USE_QUEUE"].strip().lower() in {"1", "true", "yes", "y"}
 if os.environ.get("CL_QUEUE_SIZE"):
     QUEUE_SIZE = int(os.environ["CL_QUEUE_SIZE"])
+if os.environ.get("CL_USE_MOMENTUM_ENCODER"):
+    USE_MOMENTUM_ENCODER = os.environ["CL_USE_MOMENTUM_ENCODER"].strip().lower() in {"1", "true", "yes", "y"}
+if os.environ.get("CL_MOMENTUM_ENCODER_M"):
+    MOMENTUM_ENCODER_M = float(os.environ["CL_MOMENTUM_ENCODER_M"])
 if os.environ.get("CL_NUM_WORKERS_PER_GPU"):
     NUM_WORKERS_PER_GPU = int(os.environ["CL_NUM_WORKERS_PER_GPU"])
 TRAIN_DATA_DIR = os.environ.get("CL_TRAIN_DIRS") or TRAIN_DATA_DIR   # 콤마구분 다중 가능
@@ -863,6 +869,19 @@ def simsiam_loss(z1, z2, pred1, pred2):
     )
 
 
+@torch.no_grad()
+def update_momentum_encoder(query_model, key_model, momentum):
+    """EMA update for MoCo-style key encoder."""
+    m = float(momentum)
+    for q_param, k_param in zip(query_model.parameters(), key_model.parameters()):
+        k_param.data.mul_(m).add_(q_param.data, alpha=1.0 - m)
+    for q_buf, k_buf in zip(query_model.buffers(), key_model.buffers()):
+        if torch.is_floating_point(k_buf):
+            k_buf.data.mul_(m).add_(q_buf.data, alpha=1.0 - m)
+        else:
+            k_buf.data.copy_(q_buf.data)
+
+
 def global_contrastive_loss(z1, z2, queue, temp, ignore_neg_sim, label_smoothing,
                             pseudo_pos_mask=None):
     mode = str(LOSS_MODE).lower()
@@ -1065,11 +1084,20 @@ def train_worker(rank, world_size):
     use_predictor = loss_mode == "simsiam"
 
     # model + DDP wrap. 기본은 backbone 도 작은 LR 로 같이 fine-tune.
-    model = ContrastiveModel(BACKBONE, PROJ_DIM, FREEZE_BACKBONE, bp,
-                             use_predictor=use_predictor).to(device)
-    model = DDP(model, device_ids=[rank] if torch.cuda.is_available() else None,
+    base_model = ContrastiveModel(BACKBONE, PROJ_DIM, FREEZE_BACKBONE, bp,
+                                  use_predictor=use_predictor).to(device)
+    model = DDP(base_model, device_ids=[rank] if torch.cuda.is_available() else None,
                 find_unused_parameters=False)
     queue = QueueBank(PROJ_DIM, QUEUE_SIZE, device) if (USE_QUEUE and not use_predictor) else None
+    use_momentum_encoder = bool(USE_MOMENTUM_ENCODER and queue is not None)
+    key_model = None
+    if use_momentum_encoder:
+        key_model = ContrastiveModel(BACKBONE, PROJ_DIM, FREEZE_BACKBONE, bp,
+                                     use_predictor=False).to(device)
+        key_model.load_state_dict(model.module.state_dict(), strict=False)
+        for p in key_model.parameters():
+            p.requires_grad = False
+        key_model.eval()
     backbone_params = [p for p in model.module.backbone.parameters() if p.requires_grad]
     head_params = [p for p in model.module.proj.parameters() if p.requires_grad]
     if model.module.pred is not None:
@@ -1105,6 +1133,8 @@ def train_worker(rank, world_size):
             "lr_min": LR_MIN, "lr_backbone_min": LR_BACKBONE_MIN,
             "lr_schedule": "warmup_cosine_epoch",
             "queue_size": QUEUE_SIZE if queue is not None else 0,
+            "momentum_encoder": use_momentum_encoder,
+            "momentum_encoder_m": MOMENTUM_ENCODER_M if use_momentum_encoder else 0,
             "ignore_neg_sim": IGNORE_NEG_SIM,
             "pseudo_pos_weight": PSEUDO_POS_WEIGHT,
             "pseudo_neg_remove": PSEUDO_NEG_REMOVE,
@@ -1124,7 +1154,9 @@ def train_worker(rank, world_size):
             "neco_tau": NECO_TAU,
             "recipe": ("Classless negative-free SimSiam"
                        if use_predictor else
-                       "Classless pseudo-positive: Global InfoNCE + Queue/NEG + pseudo-kNN + NeCo"),
+                       ("Classless MoCo-style EMA queue: Global InfoNCE + Queue/NEG + NeCo"
+                        if use_momentum_encoder else
+                        "Classless pseudo-positive: Global InfoNCE + Queue/NEG + pseudo-kNN + NeCo")),
             "n_train": len(train_ds), "n_eval": 0 if no_eval else len(eval_base),
             "n_classes_eval": len(classes), "no_eval": no_eval,
         }, notes=f"DDP {world_size} GPUs - train flat (class hidden)"
@@ -1174,9 +1206,9 @@ def train_worker(rank, world_size):
             )
             pseudo_source = str(PSEUDO_POS_SOURCE).lower()
             need_feature = use_pseudo and pseudo_source == "backbone"
+            x_cat = torch.cat([x1, x2], dim=0)
             if need_patches:
-                out = model(torch.cat([x1, x2], dim=0),
-                            return_neco=True, return_feature=need_feature,
+                out = model(x_cat, return_neco=True, return_feature=need_feature,
                             return_pred=use_predictor)
                 pred_cat = None
                 if need_feature and use_predictor:
@@ -1193,8 +1225,7 @@ def train_worker(rank, world_size):
                 loss_neco = neco_loss(p1, p2, NECO_TAU, NECO_GRID) if NECO_WEIGHT > 0 else z_cat.new_zeros(())
                 loss_local = local_grid_loss(p1, p2, LOCAL_TAU, LOCAL_GRID, LOCAL_WINDOW) if LOCAL_WEIGHT > 0 else z_cat.new_zeros(())
             else:
-                out = model(torch.cat([x1, x2], dim=0), return_feature=need_feature,
-                            return_pred=use_predictor)
+                out = model(x_cat, return_feature=need_feature, return_pred=use_predictor)
                 pred_cat = None
                 if need_feature and use_predictor:
                     z_cat, f_cat, pred_cat = out
@@ -1209,6 +1240,12 @@ def train_worker(rank, world_size):
                 loss_neco = z_cat.new_zeros(())
                 loss_local = z_cat.new_zeros(())
             z1, z2 = z_cat[:bs], z_cat[bs:]
+            if use_momentum_encoder:
+                with torch.no_grad():
+                    k_cat = key_model(x_cat)
+                k1, k2 = k_cat[:bs], k_cat[bs:]
+            else:
+                k1, k2 = z1, z2
             if use_pseudo:
                 if pseudo_source == "backbone":
                     pseudo12 = build_pseudo_pos_mask(f1, f2, PSEUDO_POS_MIN_SIM, PSEUDO_POS_TOPK)
@@ -1231,9 +1268,9 @@ def train_worker(rank, world_size):
                 loss_nce = simsiam_loss(z1, z2, pred1, pred2)
             else:
                 loss_nce = 0.5 * (
-                    global_contrastive_loss(z1, z2, queue, NCE_TEMP, IGNORE_NEG_SIM,
+                    global_contrastive_loss(z1, k2, queue, NCE_TEMP, IGNORE_NEG_SIM,
                                             LABEL_SMOOTHING, pseudo12) +
-                    global_contrastive_loss(z2, z1, queue, NCE_TEMP, IGNORE_NEG_SIM,
+                    global_contrastive_loss(z2, k1, queue, NCE_TEMP, IGNORE_NEG_SIM,
                                             LABEL_SMOOTHING, pseudo21)
                 )
             loss = (loss_nce + (PSEUDO_POS_WEIGHT * loss_pseudo) +
@@ -1242,10 +1279,13 @@ def train_worker(rank, world_size):
             if GRAD_CLIP > 0:
                 torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], GRAD_CLIP)
             opt.step()
+            if use_momentum_encoder:
+                update_momentum_encoder(model.module, key_model, MOMENTUM_ENCODER_M)
             if queue is not None:
-                # 각 rank 의 z2 gather 후 enqueue (queue 가 모든 rank 동일하게)
-                z2_all = all_gather_concat(z2.detach(), device)
-                queue.enqueue(z2_all)
+                # 각 rank 의 key embedding gather 후 enqueue (queue 가 모든 rank 동일하게)
+                enqueue_z = k2 if use_momentum_encoder else z2
+                z_all = all_gather_concat(enqueue_z.detach(), device)
+                queue.enqueue(z_all)
             run_loss += loss.item() * x1.size(0)
             run_nce += loss_nce.item() * x1.size(0)
             run_pseudo += loss_pseudo.item() * x1.size(0)
@@ -1555,6 +1595,10 @@ if __name__ == "__main__":
                      help="MoCo-style queue OFF (ablation).")
     _ap.add_argument("--queue-size", type=int, default=None,
                      help="MoCo-style queue size override.")
+    _ap.add_argument("--no-momentum-encoder", action="store_true",
+                     help="queue key encoder EMA OFF (ablation). 기본은 ON.")
+    _ap.add_argument("--momentum-encoder-m", type=float, default=None,
+                     help="MoCo key encoder EMA momentum. 기본 0.99")
     _ap.add_argument("--num-workers", type=int, default=None,
                      help="DataLoader workers per GPU. 기본 None=auto(os.cpu_count//world_size).")
     _a = _ap.parse_args()
@@ -1596,6 +1640,8 @@ if __name__ == "__main__":
     if _a.local_window is not None:   os.environ["CL_LOCAL_WINDOW"] = str(_a.local_window)
     if _a.no_queue:                   os.environ["CL_USE_QUEUE"] = "0"
     if _a.queue_size is not None:     os.environ["CL_QUEUE_SIZE"] = str(_a.queue_size)
+    if _a.no_momentum_encoder:        os.environ["CL_USE_MOMENTUM_ENCODER"] = "0"
+    if _a.momentum_encoder_m is not None: os.environ["CL_MOMENTUM_ENCODER_M"] = str(_a.momentum_encoder_m)
     if _a.num_workers is not None:    os.environ["CL_NUM_WORKERS_PER_GPU"] = str(_a.num_workers)
     # 부모 프로세스의 현재 module global 도 즉시 반영 (world_size<=1 직접 호출 경로)
     if _a.backbone:           BACKBONE_CKPT = _a.backbone
@@ -1635,5 +1681,7 @@ if __name__ == "__main__":
     if _a.local_window is not None:   LOCAL_WINDOW = _a.local_window
     if _a.no_queue:                   USE_QUEUE = False
     if _a.queue_size is not None:     QUEUE_SIZE = _a.queue_size
+    if _a.no_momentum_encoder:        USE_MOMENTUM_ENCODER = False
+    if _a.momentum_encoder_m is not None: MOMENTUM_ENCODER_M = _a.momentum_encoder_m
     if _a.num_workers is not None:    NUM_WORKERS_PER_GPU = _a.num_workers
     launch_ddp(train_worker)
