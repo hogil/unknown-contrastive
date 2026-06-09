@@ -20,6 +20,7 @@ BACKBONE_CKPT         = None
 WEIGHTS_DIR           = "weights"
 BACKBONE              = "convnextv2_base.fcmae_ft_in22k_in1k_384"
 FREEZE_BACKBONE       = False
+BACKBONE_TRAIN_MODE   = "all"        # all | last_stage | frozen. last_stage = ConvNeXt 1024ch stage.
 
 OUTPUT_ROOT           = "runs"
 TAG                   = "contrastive_ddp"
@@ -139,6 +140,8 @@ if os.environ.get("CL_PROJ_DIM"):
     PROJ_DIM = int(os.environ["CL_PROJ_DIM"])
 if os.environ.get("CL_FREEZE_BACKBONE"):
     FREEZE_BACKBONE = os.environ["CL_FREEZE_BACKBONE"].strip().lower() in {"1", "true", "yes", "y"}
+if os.environ.get("CL_BACKBONE_TRAIN_MODE"):
+    BACKBONE_TRAIN_MODE = os.environ["CL_BACKBONE_TRAIN_MODE"].strip().lower()
 if os.environ.get("CL_TRAIN_SAMPLING_RATIO"):
     TRAIN_SAMPLING_RATIO = float(os.environ["CL_TRAIN_SAMPLING_RATIO"])
 if os.environ.get("CL_IGNORE_NEG_SIM"):
@@ -721,6 +724,27 @@ class ContrastiveModel(nn.Module):
         return z
 
 
+def apply_backbone_train_mode(backbone: nn.Module, mode: str) -> tuple[int, int]:
+    mode = str(mode or "all").lower()
+    trainable_prefixes = ("stages.3.", "head.norm.")
+    if mode not in {"all", "last_stage", "frozen"}:
+        raise ValueError(f"unknown BACKBONE_TRAIN_MODE: {mode}")
+
+    trainable = 0
+    total = 0
+    for name, p in backbone.named_parameters():
+        total += p.numel()
+        if mode == "all":
+            p.requires_grad = True
+        elif mode == "last_stage":
+            p.requires_grad = name.startswith(trainable_prefixes)
+        else:
+            p.requires_grad = False
+        if p.requires_grad:
+            trainable += p.numel()
+    return trainable, total
+
+
 class QueueBank:
     def __init__(self, dim, size, device):
         self.size = size
@@ -1086,6 +1110,9 @@ def train_worker(rank, world_size):
     # model + DDP wrap. 기본은 backbone 도 작은 LR 로 같이 fine-tune.
     base_model = ContrastiveModel(BACKBONE, PROJ_DIM, FREEZE_BACKBONE, bp,
                                   use_predictor=use_predictor).to(device)
+    backbone_train_mode = "frozen" if FREEZE_BACKBONE else BACKBONE_TRAIN_MODE
+    backbone_trainable, backbone_total = apply_backbone_train_mode(
+        base_model.backbone, backbone_train_mode)
     model = DDP(base_model, device_ids=[rank] if torch.cuda.is_available() else None,
                 find_unused_parameters=False)
     queue = QueueBank(PROJ_DIM, QUEUE_SIZE, device) if (USE_QUEUE and not use_predictor) else None
@@ -1132,6 +1159,9 @@ def train_worker(rank, world_size):
             "loss_mode": LOSS_MODE,
             "lr_min": LR_MIN, "lr_backbone_min": LR_BACKBONE_MIN,
             "lr_schedule": "warmup_cosine_epoch",
+            "backbone_train_mode": backbone_train_mode,
+            "backbone_trainable_params": backbone_trainable,
+            "backbone_total_params": backbone_total,
             "queue_size": QUEUE_SIZE if queue is not None else 0,
             "momentum_encoder": use_momentum_encoder,
             "momentum_encoder_m": MOMENTUM_ENCODER_M if use_momentum_encoder else 0,
@@ -1541,6 +1571,9 @@ if __name__ == "__main__":
                      help="projection embedding dim. 기본 1024")
     _ap.add_argument("--freeze-backbone", action="store_true",
                      help="backbone 고정(head-only ablation). 기본은 backbone 도 작은 LR 로 학습.")
+    _ap.add_argument("--backbone-train-mode", type=str, default=None,
+                     choices=["all", "last_stage", "frozen"],
+                     help="backbone 학습 범위. last_stage=ConvNeXt stages.3/head.norm 만 학습.")
     _ap.add_argument("--train-sampling-ratio", type=float, default=None,
                      help="epoch마다 사용할 train 비율. 기본 1.0")
     _ap.add_argument("--ignore-neg-sim", type=float, default=None,
@@ -1614,6 +1647,7 @@ if __name__ == "__main__":
     if _a.img_size is not None: os.environ["CL_IMG_SIZE"] = str(_a.img_size)
     if _a.proj_dim is not None: os.environ["CL_PROJ_DIM"] = str(_a.proj_dim)
     if _a.freeze_backbone:    os.environ["CL_FREEZE_BACKBONE"] = "1"
+    if _a.backbone_train_mode is not None: os.environ["CL_BACKBONE_TRAIN_MODE"] = _a.backbone_train_mode
     if _a.train_sampling_ratio is not None: os.environ["CL_TRAIN_SAMPLING_RATIO"] = str(_a.train_sampling_ratio)
     if _a.ignore_neg_sim is not None: os.environ["CL_IGNORE_NEG_SIM"] = str(_a.ignore_neg_sim)
     if _a.pseudo_pos_weight is not None: os.environ["CL_PSEUDO_POS_WEIGHT"] = str(_a.pseudo_pos_weight)
@@ -1655,6 +1689,7 @@ if __name__ == "__main__":
     if _a.img_size is not None: IMG_SIZE = _a.img_size
     if _a.proj_dim is not None: PROJ_DIM = _a.proj_dim
     if _a.freeze_backbone:    FREEZE_BACKBONE = True
+    if _a.backbone_train_mode is not None: BACKBONE_TRAIN_MODE = _a.backbone_train_mode
     if _a.train_sampling_ratio is not None: TRAIN_SAMPLING_RATIO = _a.train_sampling_ratio
     if _a.ignore_neg_sim is not None: IGNORE_NEG_SIM = _a.ignore_neg_sim
     if _a.pseudo_pos_weight is not None: PSEUDO_POS_WEIGHT = _a.pseudo_pos_weight
