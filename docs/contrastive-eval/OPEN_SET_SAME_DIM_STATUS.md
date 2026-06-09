@@ -248,6 +248,9 @@ Weighted-concat result:
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | Raw FCMAE | 0.7068 | 0.6703 | 0.6496 | 0.6313 | 0.6186 | 6 | 0.5466 | 0.0832 | 0.3026 |
 | CNN backbone | 0.7027 | 0.6694 | 0.6474 | 0.6301 | 0.6131 | 6 | 0.5548 | 0.0769 | 0.2729 |
+| p50 no-queue projection 512 | 0.6986 | 0.6420 | 0.6156 | 0.5971 | 0.5776 | 2 | 0.2411 | 0.0380 | 0.0586 |
+| p100 no-queue projection 512 | 0.7027 | 0.6429 | 0.6181 | 0.5941 | 0.5761 | 2 | 0.2644 | 0.0406 | 0.0609 |
+| p200 no-queue projection 512 | 0.6959 | 0.6425 | 0.6233 | 0.5988 | 0.5793 | 2 | 0.2616 | 0.0410 | 0.0618 |
 | p500 no-queue projection 128 | 0.6795 | 0.6242 | 0.5967 | 0.5732 | 0.5524 | 2 | 0.2110 | 0.0223 | 0.0768 |
 | p500 no-queue weighted concat 128 | 0.7068 | 0.6703 | 0.6496 | 0.6313 | 0.6186 | 6 | 0.5466 | 0.0833 | 0.3032 |
 | p500 no-queue projection 512 | 0.6932 | 0.6470 | 0.6247 | 0.6025 | 0.5857 | 2 | 0.2521 | 0.0403 | 0.0610 |
@@ -257,4 +260,6 @@ Interpretation: projection dim 512 is better than projection dim 128, but it
 still does not beat Raw FCMAE on WM known-class neighbor metrics. Weighted concat
 only preserves Raw FCMAE; it does not add measurable improvement. Current real
 WM evidence says projection-only contrastive is the bottleneck, not vector
-dimension alone.
+dimension alone. Among pseudo weights 50/100/200/500, pseudo weight 100 gives
+the best projection top1, while pseudo weight 500 gives the best projection k5;
+neither beats Raw FCMAE.
