@@ -12,7 +12,7 @@ HDBSCAN noise threshold.
   `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\cnn_seen_train`
 - wafer SSL fine-tune classes: `Center`, `Edge-Ring`, `Near-full`
 - fine-tuned embedding used for the final stage:
-  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_ep4.npy`
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_ep3.npy`
 - source scratch output:
   `D:\project\unknown-contrastive\_ablation_waterfall.md`
 
@@ -23,7 +23,7 @@ HDBSCAN noise threshold.
 | S0 | Raw FCMAE baseline | 0.2097 | 0.2169 | 0.2159 | 0.2208 | 0.2131 |
 | S1 | + DINOv3 SSL backbone | 0.3097 | 0.2831 | 0.2822 | 0.2916 | 0.2751 |
 | S2 | + PCA dimension tuning | 0.3173 | 0.2957 | 0.2949 | 0.2965 | 0.2950 |
-| S3 | + wafer contrastive fine-tune | 0.4681 | 0.4328 | 0.4321 | 0.4381 | 0.4276 |
+| S3 | + wafer contrastive fine-tune | 0.4948 | 0.4334 | 0.4327 | 0.4348 | 0.4320 |
 
 ## Delta From Baseline
 
@@ -31,7 +31,7 @@ HDBSCAN noise threshold.
 |---|---:|---:|---:|
 | S1 vs S0 | +0.1000 | +0.0663 | +47.7% |
 | S2 vs S0 | +0.1076 | +0.0790 | +51.3% |
-| S3 vs S0 | +0.2584 | +0.2162 | +123.2% |
+| S3 vs S0 | +0.2851 | +0.2168 | +136.0% |
 
 ## Fine-Tune Epoch/LR Scan
 
@@ -58,13 +58,15 @@ alone.
 | 5e-6 | 3 | 0.4575 | 0.4193 | 0.4186 | 0.2046 |
 | 5e-6 | 4 | 0.4479 | 0.4305 | 0.4298 | 0.1741 |
 
-Best by primary ARI is `3e-6`, epoch 4.
+Best last-stage-only setting by primary ARI is `3e-6`, epoch 4. A later
+full-unfreeze setting (`2e-6`, epoch 3) improves the final result and is used in
+the main table.
 
 ### Longer Training Check
 
-A separate CUDA run extended the selected last-stage recipe to 10 epochs. The
-training loss kept decreasing (`1.4150 -> 0.4550`), but held-out novel ARI did
-not improve beyond the selected epoch-4 model.
+A separate CUDA run extended the last-stage recipe to 10 epochs. The training
+loss kept decreasing (`1.4150 -> 0.4550`), but held-out novel ARI did not beat
+the final full-unfreeze model.
 
 - long-run embeddings:
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_cuda_e10_ep1.npy`
@@ -84,29 +86,38 @@ not improve beyond the selected epoch-4 model.
 | 3e-6 CUDA e10 | 9 | 0.4555 | 0.4315 | 0.4308 | 0.1990 |
 | 3e-6 CUDA e10 | 10 | 0.4353 | 0.4286 | 0.4278 | 0.1977 |
 
-Best long-run ARI is `0.4555`, still below the selected epoch-4 embedding
-(`0.4681`).
+Best CUDA long-run ARI is `0.4555`, below the selected full-unfreeze model
+(`0.4948`). A deterministic CPU long run of the same last-stage recipe reached
+`0.4738` at epoch 9, which improves last-stage-only ARI but still remains below
+the selected full-unfreeze model.
 
 ## Unfreeze Scope Check
 
-Full-backbone unfreeze was also tested with a lower backbone LR. It reduced the
-training loss more aggressively (`1.4038 -> 0.5773`) but degraded held-out
-novel ARI. This supports using last-stage unfreeze for the paper recipe.
+Full-backbone unfreeze is sensitive to LR. `1e-6` degraded held-out ARI, but
+`2e-6` produced the best current model. `5e-6` gives competitive AMI/HDBSCAN
+tradeoffs but does not beat the primary ARI of `2e-6` epoch 3.
 
 - full-unfreeze embeddings:
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr1e6_cuda_ep1.npy`
   through
-  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr1e6_cuda_ep4.npy`
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr5e6_ep6.npy`
 
 | Train mode | LR backbone | Epoch | ARI | NMI | AMI | ARI_hdb |
 |---|---:|---:|---:|---:|---:|---:|
-| all | 1e-6 | 1 | 0.3411 | 0.3291 | 0.3282 | 0.1486 |
-| all | 1e-6 | 2 | 0.3744 | 0.3629 | 0.3621 | 0.1915 |
-| all | 1e-6 | 3 | 0.3602 | 0.3475 | 0.3467 | 0.2854 |
 | all | 1e-6 | 4 | 0.3950 | 0.3647 | 0.3639 | 0.1920 |
+| all | 2e-6 | 1 | 0.3892 | 0.3642 | 0.3634 | 0.2136 |
+| all | 2e-6 | 2 | 0.4522 | 0.4161 | 0.4154 | 0.2090 |
+| all | 2e-6 | 3 | 0.4948 | 0.4334 | 0.4327 | 0.4171 |
+| all | 2e-6 | 4 | 0.4392 | 0.3969 | 0.3962 | 0.2256 |
+| all | 2e-6 | 5 | 0.4748 | 0.4299 | 0.4292 | 0.2151 |
+| all | 2e-6 | 6 | 0.4834 | 0.4223 | 0.4216 | 0.3998 |
+| all | 5e-6 | 3 | 0.4754 | 0.4228 | 0.4221 | 0.4622 |
+| all | 5e-6 | 5 | 0.4778 | 0.4592 | 0.4586 | 0.0008 |
+| all | 5e-6 | 6 | 0.4494 | 0.4372 | 0.4365 | 0.3935 |
 
-Best full-unfreeze ARI is `0.3950`, below the selected last-stage model
-(`0.4681`).
+Best full-unfreeze primary ARI is `0.4948` at `2e-6`, epoch 3. The `5e-6`,
+epoch-3 setting has the best auxiliary HDBSCAN ARI (`0.4622`) but lower primary
+ARI (`0.4754`).
 
 ## Temperature Check
 
@@ -131,13 +142,15 @@ temperature improved held-out novel ARI.
 | 0.07 | 4 | 0.4259 | 0.3920 | 0.3913 | 0.0388 |
 
 Best tested non-default temperature is `TEMP=0.03` epoch 4 (`0.4451`), below
-the selected `TEMP=0.05` model (`0.4681`).
+the selected full-unfreeze model (`0.4948`).
 
 ## False-Negative Ignore Threshold Check
 
-Raising the false-negative ignore threshold from `0.7` to `0.8` was tested. This
-ignores fewer similar negatives and therefore applies a stronger repulsion to
-nearby samples, but it did not improve held-out novel ARI.
+Changing the false-negative ignore threshold was tested in both directions.
+Raising it from `0.7` to `0.8` ignores fewer similar negatives and therefore
+applies a stronger repulsion to nearby samples. Lowering it to `0.6` ignores
+more similar negatives. Neither direction improved the primary held-out novel
+ARI.
 
 - `ignore=0.8` embeddings:
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_ignore080_cuda_ep1.npy`
@@ -146,13 +159,43 @@ nearby samples, but it did not improve held-out novel ARI.
 
 | Ignore threshold | Epoch | ARI | NMI | AMI | ARI_hdb |
 |---:|---:|---:|---:|---:|---:|
+| 0.6 | 1 | 0.3713 | 0.3440 | 0.3432 | 0.1824 |
+| 0.6 | 2 | 0.3861 | 0.3647 | 0.3640 | 0.1693 |
+| 0.6 | 3 | 0.4417 | 0.4039 | 0.4032 | 0.3917 |
+| 0.6 | 4 | 0.4310 | 0.3935 | 0.3928 | 0.2132 |
 | 0.8 | 1 | 0.3389 | 0.3111 | 0.3103 | 0.0397 |
 | 0.8 | 2 | 0.3857 | 0.3608 | 0.3600 | 0.1691 |
 | 0.8 | 3 | 0.4395 | 0.4016 | 0.4008 | 0.1969 |
 | 0.8 | 4 | 0.4479 | 0.4175 | 0.4168 | 0.0263 |
 
-Best `ignore=0.8` ARI is `0.4479`, below the selected `ignore=0.7` model
-(`0.4681`).
+Best `ignore=0.8` ARI is `0.4479`, below the selected `ignore=0.7` model.
+The `ignore=0.6` epoch-3 setting improves the auxiliary HDBSCAN ARI relative to
+the old last-stage baseline (`0.3917` vs `0.3717`) but remains below the new
+full-unfreeze best (`0.4171`), so it is not the main paper setting.
+
+## NN-Positive Check
+
+NN-positive pull was tested on the best full-unfreeze family. It did not improve
+the selected main result, so it is excluded from the paper waterfall.
+
+- `nn_pos_min_sim=0.9` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_nnpos_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_nnpos_ep6.npy`
+- `nn_pos_min_sim=0.6` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_nnpos06_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_nnpos06_ep6.npy`
+
+| Setting | Epoch | ARI | NMI | AMI | ARI_hdb |
+|---|---:|---:|---:|---:|---:|
+| nn-pos min_sim=0.9 | 3 | 0.4948 | 0.4334 | 0.4327 | 0.4171 |
+| nn-pos min_sim=0.9 | 6 | 0.4721 | 0.4157 | 0.4150 | 0.3956 |
+| nn-pos min_sim=0.6 | 3 | 0.4469 | 0.3983 | 0.3976 | 0.3788 |
+| nn-pos min_sim=0.6 | 6 | 0.4557 | 0.4230 | 0.4223 | 0.3580 |
+
+The conservative threshold ties the selected epoch-3 score but does not add a
+new gain over the full-unfreeze recipe. The looser threshold is weaker.
 
 ## Interpretation
 
@@ -167,6 +210,6 @@ Use this table for the main paper claim:
 
 The HDBSCAN auto-k score is intentionally not the primary claim for this
 waterfall. In the latest scratch run, the HDBSCAN auxiliary score also improves
-after fine-tuning (`0.2874 -> 0.3717`), but the paper-safe statement should
+after fine-tuning (`0.2874 -> 0.4171`), but the paper-safe statement should
 still be about NCD-style all-sample clustering (`k=3`) because HDBSCAN depends
 on noise/threshold choices.

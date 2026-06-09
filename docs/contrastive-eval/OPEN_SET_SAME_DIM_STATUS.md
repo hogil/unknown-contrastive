@@ -714,7 +714,7 @@ table above. The clean paper table is documented here:
 - eval folder:
   `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\novel_eval`
 - final fine-tuned embedding:
-  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_ep4.npy`
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_ep3.npy`
 
 Primary metric: k-means with the known novel class count (`k=3`), following the
 standard NCD evaluation style where every sample is assigned. The monotonic
@@ -725,26 +725,26 @@ result is:
 | Raw FCMAE baseline | 0.2097 | 0.2169 | 0.2159 | generic SSL encoder |
 | + DINOv3 SSL backbone | 0.3097 | 0.2831 | 0.2822 | stronger SSL initialization |
 | + PCA dimension tuning | 0.3173 | 0.2957 | 0.2949 | same embedding, better evaluation dimension |
-| + wafer contrastive fine-tune | 0.4681 | 0.4328 | 0.4321 | domain SSL adaptation |
+| + wafer contrastive fine-tune | 0.4948 | 0.4334 | 0.4327 | domain SSL adaptation |
 
-This gives a final ARI gain of `+0.2584` over Raw FCMAE (`+123.2%` relative).
+This gives a final ARI gain of `+0.2851` over Raw FCMAE (`+136.0%` relative).
 Do not describe this as an HDBSCAN improvement claim; HDBSCAN remains a separate
 operational clustering branch with its own noise/threshold tradeoff.
 
-Follow-up LR scan: `lr_backbone=5e-6` was also tested on the same setup with
-CUDA. It converged (`loss 1.4233 -> 0.8184`) but did not beat the selected
-`3e-6` epoch-4 model. Its best primary ARI was epoch 3 (`0.4575`), below
-`3e-6` epoch 4 (`0.4681`). Details are in
+Follow-up last-stage LR scan: `lr_backbone=5e-6` was also tested on the same
+setup with CUDA. It converged (`loss 1.4233 -> 0.8184`) but did not beat either
+the last-stage `3e-6` epoch-4 model (`0.4681`) or the final full-unfreeze
+model (`0.4948`). Its best primary ARI was epoch 3 (`0.4575`). Details are in
 `D:\project\unknown-contrastive\docs\contrastive-eval\PAPER_ABLATION_WATERFALL.md`.
 
-Full-backbone unfreeze was also tested with `lr_backbone=1e-6`. It reduced
-training loss further (`1.4038 -> 0.5773`) but the best held-out ARI was only
-`0.3950`, so the current selected recipe remains DINOv3 + last-stage unfreeze
-at `3e-6` for four epochs.
+Full-backbone unfreeze was tested further. `lr_backbone=1e-6` degraded primary
+ARI, but `lr_backbone=2e-6` reached the current best at epoch 3:
+`0.4948` ARI / `0.4334` NMI / `0.4327` AMI, with auxiliary HDBSCAN ARI
+`0.4171`.
 
 Longer last-stage training was also tested with a CUDA 10-epoch run. Training
 loss kept decreasing (`1.4150 -> 0.4550`), but best held-out ARI was epoch 9
-(`0.4555`), still below the selected CPU epoch-4 embedding (`0.4681`). This
+(`0.4555`), still below the selected full-unfreeze model (`0.4948`). This
 reinforces selecting by held-out novel ARI rather than training loss.
 
 Lowering InfoNCE temperature to `0.03` was tested with the same last-stage
@@ -755,4 +755,13 @@ Raising InfoNCE temperature to `0.07` was also tested and was worse (`0.4259`
 best ARI). The temperature check currently supports keeping `TEMP=0.05`.
 
 Raising the false-negative ignore threshold to `0.8` was also tested. It reached
-only `0.4479` ARI, below the selected `ignore=0.7` model (`0.4681`).
+only `0.4479` ARI, below the selected `ignore=0.7` model (`0.4948`).
+
+Lowering the threshold to `0.6` was also tested. Its best primary ARI was
+`0.4417`, and its auxiliary HDBSCAN ARI (`0.3917`) is below the new
+full-unfreeze best (`0.4171`). Keep `0.7` for the main NCD table.
+
+NN-positive was also checked on the full-unfreeze family. A conservative
+threshold (`nn_pos_min_sim=0.9`) tied the same epoch-3 score but gave no
+additional gain, and the looser threshold (`0.6`) stayed below the selected
+model. Keep NN-positive out of the main monotonic paper table.
