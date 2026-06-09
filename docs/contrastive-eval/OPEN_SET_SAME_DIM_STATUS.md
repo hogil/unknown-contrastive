@@ -155,3 +155,26 @@ Important setup:
 Expected checkpoint:
 
 `D:\project\unknown-contrastive\runs\260609_091818_wm811k500_rawfcmae_dcl_fn080_pseudo005_local075_freeze_b32_logged\contrastive\best_model.pt`
+
+Completed result:
+
+`D:\project\unknown-contrastive\result_grouping\260609_100040_wm811k_train_eval_epoch_sweep_same128`
+
+| stage | input dim | same dim | top1 | k3 | k5 | k7 | k9 | HDBSCAN clusters | noise | ARI | AMI |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Raw FCMAE | 1024 | 128 | 0.7068 | 0.6703 | 0.6496 | 0.6313 | 0.6186 | 6 | 0.5466 | 0.0832 | 0.3026 |
+| CNN backbone | 1024 | 128 | 0.7027 | 0.6694 | 0.6474 | 0.6301 | 0.6131 | 6 | 0.5548 | 0.0769 | 0.2729 |
+| WM contrastive epoch 5 | 128 | 128 | 0.4863 | 0.4644 | 0.4375 | 0.4231 | 0.4119 | 4 | 0.1890 | 0.0230 | 0.1110 |
+| WM contrastive epoch 10 | 128 | 128 | 0.5178 | 0.4772 | 0.4542 | 0.4393 | 0.4291 | 2 | 0.2890 | 0.0477 | 0.1297 |
+| WM contrastive epoch 15 | 128 | 128 | 0.5151 | 0.4795 | 0.4641 | 0.4511 | 0.4437 | 3 | 0.2589 | 0.0455 | 0.1532 |
+| WM contrastive final | 128 | 128 | 0.5329 | 0.4936 | 0.4693 | 0.4511 | 0.4472 | 3 | 0.2616 | 0.0457 | 0.1527 |
+
+Interpretation: this real-WM adaptation run did not improve embedding quality.
+Projection embeddings collapsed relative to Raw FCMAE/CNN backbone. The training
+log also showed a DCL numerical failure at epoch 20 (`loss=-2.4e8`) caused by
+all negatives being masked for some anchors. DCL now skips rows with no valid
+negative instead of feeding an all-`-1e9` row to `logsumexp`.
+
+Next direction: run a backbone-preserving adaptation check. Use NCE (not DCL),
+small backbone LR, no local/pseudo attraction at first, and evaluate backbone
+mode so the raw FCMAE structure is not discarded by a projection-only head.

@@ -788,7 +788,11 @@ def dcl_loss(z1, z2, queue, temp, ignore_neg_sim, pseudo_pos_mask=None):
         sim[:, :b] = sim[:, :b].masked_fill(pseudo_pos_mask, -1e9)
     if b <= neg_bank.size(0):
         sim[torch.arange(b, device=z1.device), torch.arange(b, device=z1.device)] = -1e9
-    return (-pos + torch.logsumexp(sim, dim=1)).mean()
+    valid = sim > -1e8
+    has_neg = valid.any(dim=1)
+    if not has_neg.any():
+        return z1.new_zeros(())
+    return (-pos[has_neg] + torch.logsumexp(sim[has_neg], dim=1)).mean()
 
 
 def global_contrastive_loss(z1, z2, queue, temp, ignore_neg_sim, label_smoothing,

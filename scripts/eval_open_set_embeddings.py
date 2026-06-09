@@ -475,7 +475,8 @@ def main():
     )
     same_dim = min(int(args.pca_dim), max(1, len(paths) - 1))
     tfm = build_tfm(args.img_size)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    has_cuda = torch.cuda.is_available() and torch.cuda.device_count() > 0
+    device = torch.device("cuda" if has_cuda else "cpu")
 
     if args.fcmae_weights:
         fcmae_weights = resolve_path(args.fcmae_weights)
