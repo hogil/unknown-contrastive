@@ -12,7 +12,7 @@ HDBSCAN noise threshold.
   `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\cnn_seen_train`
 - wafer SSL fine-tune classes: `Center`, `Edge-Ring`, `Near-full`
 - fine-tuned embedding used for the final stage:
-  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_ep3.npy`
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head5e4_ep5.npy`
 - source scratch output:
   `D:\project\unknown-contrastive\_ablation_waterfall.md`
 
@@ -23,7 +23,7 @@ HDBSCAN noise threshold.
 | S0 | Raw FCMAE baseline | 0.2097 | 0.2169 | 0.2159 | 0.2208 | 0.2131 |
 | S1 | + DINOv3 SSL backbone | 0.3097 | 0.2831 | 0.2822 | 0.2916 | 0.2751 |
 | S2 | + PCA dimension tuning | 0.3173 | 0.2957 | 0.2949 | 0.2965 | 0.2950 |
-| S3 | + wafer contrastive fine-tune | 0.4948 | 0.4334 | 0.4327 | 0.4348 | 0.4320 |
+| S3 | + wafer contrastive fine-tune | 0.5143 | 0.4671 | 0.4664 | 0.4701 | 0.4641 |
 
 ## Delta From Baseline
 
@@ -31,7 +31,7 @@ HDBSCAN noise threshold.
 |---|---:|---:|---:|
 | S1 vs S0 | +0.1000 | +0.0663 | +47.7% |
 | S2 vs S0 | +0.1076 | +0.0790 | +51.3% |
-| S3 vs S0 | +0.2851 | +0.2168 | +136.0% |
+| S3 vs S0 | +0.3046 | +0.2505 | +145.3% |
 
 ## Fine-Tune Epoch/LR Scan
 
@@ -86,10 +86,10 @@ the final full-unfreeze model.
 | 3e-6 CUDA e10 | 9 | 0.4555 | 0.4315 | 0.4308 | 0.1990 |
 | 3e-6 CUDA e10 | 10 | 0.4353 | 0.4286 | 0.4278 | 0.1977 |
 
-Best CUDA long-run ARI is `0.4555`, below the selected full-unfreeze model
-(`0.4948`). A deterministic CPU long run of the same last-stage recipe reached
+Best CUDA long-run ARI is `0.4555`, below the selected final model
+(`0.5143`). A deterministic CPU long run of the same last-stage recipe reached
 `0.4738` at epoch 9, which improves last-stage-only ARI but still remains below
-the selected full-unfreeze model.
+the selected final model.
 
 ## Unfreeze Scope Check
 
@@ -115,9 +115,37 @@ tradeoffs but does not beat the primary ARI of `2e-6` epoch 3.
 | all | 5e-6 | 5 | 0.4778 | 0.4592 | 0.4586 | 0.0008 |
 | all | 5e-6 | 6 | 0.4494 | 0.4372 | 0.4365 | 0.3935 |
 
-Best full-unfreeze primary ARI is `0.4948` at `2e-6`, epoch 3. The `5e-6`,
-epoch-3 setting has the best auxiliary HDBSCAN ARI (`0.4622`) but lower primary
-ARI (`0.4754`).
+With the default projection-head LR (`1e-3`), best full-unfreeze primary ARI is
+`0.4948` at `2e-6`, epoch 3. The `5e-6`, epoch-3 setting has the best auxiliary
+HDBSCAN ARI (`0.4622`) but lower primary ARI (`0.4754`).
+
+## Projection Head LR Check
+
+The best backbone LR (`2e-6`) was kept fixed and only the projection-head LR was
+changed. Lowering the head LR to `5e-4` improved the paper-primary all-sample
+NCD score; lowering it further to `2e-4` was weaker.
+
+- `lr_head=5e-4` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head5e4_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head5e4_ep6.npy`
+- `lr_head=2e-4` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head2e4_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head2e4_ep6.npy`
+
+| LR head | Epoch | ARI | NMI | AMI | ARI_hdb |
+|---:|---:|---:|---:|---:|---:|
+| 1e-3 | 3 | 0.4948 | 0.4334 | 0.4327 | 0.4171 |
+| 5e-4 | 4 | 0.4648 | 0.3989 | 0.3982 | 0.2272 |
+| 5e-4 | 5 | 0.5143 | 0.4671 | 0.4664 | 0.2039 |
+| 5e-4 | 6 | 0.4784 | 0.4155 | 0.4148 | 0.3948 |
+| 2e-4 | 3 | 0.4574 | 0.4113 | 0.4106 | 0.2282 |
+| 2e-4 | 5 | 0.4506 | 0.4299 | 0.4292 | 0.2125 |
+
+Best paper-primary ARI is now `0.5143` at `lr_head=5e-4`, epoch 5. The
+auxiliary HDBSCAN score is not monotonic with the paper-primary score, so it is
+kept as a separate operational diagnostic.
 
 ## Temperature Check
 
@@ -142,7 +170,7 @@ temperature improved held-out novel ARI.
 | 0.07 | 4 | 0.4259 | 0.3920 | 0.3913 | 0.0388 |
 
 Best tested non-default temperature is `TEMP=0.03` epoch 4 (`0.4451`), below
-the selected full-unfreeze model (`0.4948`).
+the selected final model (`0.5143`).
 
 ## False-Negative Ignore Threshold Check
 
@@ -171,7 +199,8 @@ ARI.
 Best `ignore=0.8` ARI is `0.4479`, below the selected `ignore=0.7` model.
 The `ignore=0.6` epoch-3 setting improves the auxiliary HDBSCAN ARI relative to
 the old last-stage baseline (`0.3917` vs `0.3717`) but remains below the new
-full-unfreeze best (`0.4171`), so it is not the main paper setting.
+default-head full-unfreeze HDBSCAN result (`0.4171`), so it is not the main
+paper setting.
 
 ## NN-Positive Check
 
@@ -194,8 +223,9 @@ the selected main result, so it is excluded from the paper waterfall.
 | nn-pos min_sim=0.6 | 3 | 0.4469 | 0.3983 | 0.3976 | 0.3788 |
 | nn-pos min_sim=0.6 | 6 | 0.4557 | 0.4230 | 0.4223 | 0.3580 |
 
-The conservative threshold ties the selected epoch-3 score but does not add a
-new gain over the full-unfreeze recipe. The looser threshold is weaker.
+The conservative threshold ties the default-head epoch-3 score but does not add
+a gain over the selected `lr_head=5e-4` final model. The looser threshold is
+weaker.
 
 ## Interpretation
 
@@ -209,7 +239,9 @@ Use this table for the main paper claim:
 > unlabeled wafer fine-tuning stage.
 
 The HDBSCAN auto-k score is intentionally not the primary claim for this
-waterfall. In the latest scratch run, the HDBSCAN auxiliary score also improves
-after fine-tuning (`0.2874 -> 0.4171`), but the paper-safe statement should
-still be about NCD-style all-sample clustering (`k=3`) because HDBSCAN depends
-on noise/threshold choices.
+waterfall. HDBSCAN is useful operationally, but it is not monotonic with the
+paper-primary all-sample NCD score: default-head full-unfreeze reached `0.4171`
+HDBSCAN ARI and the `5e-6` run reached `0.4622`, while the primary-best
+`lr_head=5e-4` model has lower HDBSCAN ARI (`0.2039`). The paper-safe statement
+should therefore remain about NCD-style all-sample clustering (`k=3`), because
+HDBSCAN depends on noise/threshold choices.
