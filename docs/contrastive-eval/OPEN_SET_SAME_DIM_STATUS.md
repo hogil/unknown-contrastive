@@ -307,3 +307,70 @@ WM evidence says projection-only contrastive is the bottleneck, not vector
 dimension alone. Among pseudo weights 50/100/200/500, pseudo weight 100 gives
 the best projection top1, while pseudo weight 500 gives the best projection k5;
 neither beats Raw FCMAE.
+
+## WM-811K Class-Disjoint Near-Novel v1
+
+Split root:
+
+`D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1`
+
+Split summary:
+
+`D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\summary.json`
+
+The split is class-disjoint:
+
+| split | folder | classes | images |
+|---|---|---|---:|
+| A supervised CNN seen | `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\cnn_seen_train` | Center, Edge-Ring, Near-full | 1149 |
+| B contrastive unlabeled train | `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\contrastive_unlabeled_train` | Loc, Scratch | 1000 |
+| C novel eval | `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\novel_eval` | Donut, Edge-Loc, Random | 1500 |
+
+A-CNN checkpoint:
+
+`D:\project\unknown-contrastive\runs\260609_141113_cnn_ddp\cnn\best_model.pth`
+
+Raw-FCMAE init B-contrastive checkpoint:
+
+`D:\project\unknown-contrastive\runs\260609_142557_wm811k_novel_v1_rawfcmae_B_moco_q1024_ep8\contrastive\best_model.pt`
+
+A-CNN init B-contrastive checkpoint:
+
+`D:\project\unknown-contrastive\runs\260609_144848_wm811k_novel_v1_Acnn_B_moco_q1024_ep8\contrastive\best_model.pt`
+
+Training-loop observation:
+
+- Raw-FCMAE init NCE decreased from `1.4210` to `0.4751`.
+- A-CNN init NCE decreased from `1.2256` to `0.4231`.
+- This confirms the MoCo EMA queue path optimizes normally on B. It does not
+  by itself prove novel C metric improvement.
+
+Same C novel eval, same 128-dimensional comparison:
+
+| embedding | top1 | k3 | k5 | HDBSCAN noise | ARI | purity | result |
+|---|---:|---:|---:|---:|---:|---:|---|
+| Raw FCMAE | 94.00% | 92.62% | 91.43% | 64.13% | 0.0824 | 0.5680 | baseline |
+| Raw-FCMAE init B-contrastive projection | 92.73% | 91.89% | 91.16% | 49.87% | 0.2828 | 0.7473 | top-k worse, clustering cleaner |
+| Raw-FCMAE init B-contrastive backbone | 94.27% | 92.91% | 92.40% | 61.00% | 0.0949 | 0.6247 | small kNN gain |
+| Raw-FCMAE init B-contrastive weighted | 94.13% | 92.96% | 92.41% | 61.07% | 0.0933 | 0.6220 | small kNN gain |
+| A-CNN init B-contrastive projection | 93.87% | 92.27% | 91.05% | 59.80% | 0.2080 | 0.6160 | projection still weak |
+| A-CNN init B-contrastive backbone | 94.60% | 93.11% | 92.07% | 63.60% | 0.1417 | 0.5780 | best backbone |
+| A-CNN init B-contrastive weighted | 94.67% | 93.11% | 92.07% | 63.60% | 0.1407 | 0.5773 | best top1 |
+
+Key artifacts:
+
+- Raw-FCMAE baseline result:
+  `D:\project\unknown-contrastive\result_grouping\260609_140755_wm811k_novel_v1_raw_fcmae_baseline`
+- Raw vs A-CNN result:
+  `D:\project\unknown-contrastive\result_grouping\260609_142348_wm811k_novel_v1_raw_vs_Acnn`
+- Raw-FCMAE init weighted t-SNE:
+  `D:\project\unknown-contrastive\result_grouping\260609_144429_wm811k_novel_v1_baseline_vs_rawfcmae_B_moco_ep8_weighted\tsne_same_dim_sheet.png`
+- A-CNN init weighted t-SNE:
+  `D:\project\unknown-contrastive\result_grouping\260609_150844_wm811k_novel_v1_baseline_vs_Acnn_B_moco_ep8_weighted\tsne_same_dim_sheet.png`
+
+Interpretation: projection-only is not the right deployment/eval embedding.
+The useful signal is in the adapted backbone or backbone-heavy weighted concat.
+On this near-novel split, B-contrastive gives a small but real same-dim kNN gain
+over Raw FCMAE, with the best top1 from A-CNN init + B-contrastive weighted
+concat. The split is still near-novel and Raw FCMAE is already strong, so the
+next target should be far-novel or a harder held-out split.
