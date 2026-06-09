@@ -108,6 +108,26 @@ novel ARI. This supports using last-stage unfreeze for the paper recipe.
 Best full-unfreeze ARI is `0.3950`, below the selected last-stage model
 (`0.4681`).
 
+## Temperature Check
+
+Lowering the InfoNCE temperature from `0.05` to `0.03` was tested with the same
+last-stage unfreeze recipe. It did not improve held-out novel ARI.
+
+- `TEMP=0.03` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_temp003_cuda_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_temp003_cuda_ep4.npy`
+
+| Temp | Epoch | ARI | NMI | AMI | ARI_hdb |
+|---:|---:|---:|---:|---:|---:|
+| 0.03 | 1 | 0.3407 | 0.3159 | 0.3150 | 0.0421 |
+| 0.03 | 2 | 0.4170 | 0.3830 | 0.3822 | 0.1788 |
+| 0.03 | 3 | 0.4270 | 0.3863 | 0.3855 | 0.2081 |
+| 0.03 | 4 | 0.4451 | 0.4031 | 0.4023 | 0.1977 |
+
+Best `TEMP=0.03` ARI is `0.4451`, below the selected `TEMP=0.05` model
+(`0.4681`).
+
 ## Interpretation
 
 Use this table for the main paper claim:

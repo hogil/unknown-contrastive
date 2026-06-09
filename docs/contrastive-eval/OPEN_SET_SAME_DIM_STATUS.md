@@ -746,3 +746,7 @@ Longer last-stage training was also tested with a CUDA 10-epoch run. Training
 loss kept decreasing (`1.4150 -> 0.4550`), but best held-out ARI was epoch 9
 (`0.4555`), still below the selected CPU epoch-4 embedding (`0.4681`). This
 reinforces selecting by held-out novel ARI rather than training loss.
+
+Lowering InfoNCE temperature to `0.03` was tested with the same last-stage
+recipe. It converged but reached only `0.4451` ARI at epoch 4, so the selected
+recipe keeps `TEMP=0.05`.
