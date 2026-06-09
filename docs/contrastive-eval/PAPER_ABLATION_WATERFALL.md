@@ -60,6 +60,33 @@ alone.
 
 Best by primary ARI is `3e-6`, epoch 4.
 
+### Longer Training Check
+
+A separate CUDA run extended the selected last-stage recipe to 10 epochs. The
+training loss kept decreasing (`1.4150 -> 0.4550`), but held-out novel ARI did
+not improve beyond the selected epoch-4 model.
+
+- long-run embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_cuda_e10_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_cuda_e10_ep10.npy`
+
+| Run | Epoch | ARI | NMI | AMI | ARI_hdb |
+|---|---:|---:|---:|---:|---:|
+| 3e-6 CUDA e10 | 1 | 0.3314 | 0.3052 | 0.3044 | 0.1355 |
+| 3e-6 CUDA e10 | 2 | 0.3770 | 0.3483 | 0.3475 | 0.1264 |
+| 3e-6 CUDA e10 | 3 | 0.4228 | 0.3828 | 0.3821 | 0.1901 |
+| 3e-6 CUDA e10 | 4 | 0.4143 | 0.3791 | 0.3784 | 0.0394 |
+| 3e-6 CUDA e10 | 5 | 0.4322 | 0.4040 | 0.4033 | 0.1881 |
+| 3e-6 CUDA e10 | 6 | 0.4342 | 0.4006 | 0.3998 | 0.1943 |
+| 3e-6 CUDA e10 | 7 | 0.4209 | 0.3879 | 0.3872 | 0.2030 |
+| 3e-6 CUDA e10 | 8 | 0.4342 | 0.4081 | 0.4073 | 0.1941 |
+| 3e-6 CUDA e10 | 9 | 0.4555 | 0.4315 | 0.4308 | 0.1990 |
+| 3e-6 CUDA e10 | 10 | 0.4353 | 0.4286 | 0.4278 | 0.1977 |
+
+Best long-run ARI is `0.4555`, still below the selected epoch-4 embedding
+(`0.4681`).
+
 ## Unfreeze Scope Check
 
 Full-backbone unfreeze was also tested with a lower backbone LR. It reduced the

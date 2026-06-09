@@ -741,3 +741,8 @@ Full-backbone unfreeze was also tested with `lr_backbone=1e-6`. It reduced
 training loss further (`1.4038 -> 0.5773`) but the best held-out ARI was only
 `0.3950`, so the current selected recipe remains DINOv3 + last-stage unfreeze
 at `3e-6` for four epochs.
+
+Longer last-stage training was also tested with a CUDA 10-epoch run. Training
+loss kept decreasing (`1.4150 -> 0.4550`), but best held-out ARI was epoch 9
+(`0.4555`), still below the selected CPU epoch-4 embedding (`0.4681`). This
+reinforces selecting by held-out novel ARI rather than training loss.
