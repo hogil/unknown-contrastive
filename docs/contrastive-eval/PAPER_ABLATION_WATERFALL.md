@@ -159,8 +159,9 @@ kept as a separate operational diagnostic.
 
 After selecting `lr_head=5e-4`, the backbone LR was bracketed around `2e-6`.
 Raising it slightly to `2.5e-6` improved both the paper-primary ARI and the
-auxiliary HDBSCAN ARI. Lowering it to `1.5e-6` was weaker, and raising it
-further to `3e-6` also dropped below the selected model.
+auxiliary HDBSCAN ARI. Lowering it to `1.5e-6` was weaker. A tighter right-side
+check at `2.75e-6` came close but still stayed below `2.5e-6`, and `3e-6` also
+dropped below the selected model.
 
 - `lr_backbone=1.5e-6`, `lr_head=5e-4` embeddings:
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr1p5e6_head5e4_ep1.npy`
@@ -170,6 +171,10 @@ further to `3e-6` also dropped below the selected model.
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_ep1.npy`
   through
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_ep6.npy`
+- `lr_backbone=2.75e-6`, `lr_head=5e-4` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p75e6_head5e4_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p75e6_head5e4_ep6.npy`
 - `lr_backbone=3e-6`, `lr_head=5e-4` embeddings:
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr3e6_head5e4_ep1.npy`
   through
@@ -182,6 +187,8 @@ further to `3e-6` also dropped below the selected model.
 | 2.0e-6 | 5e-4 | 5 | 0.5143 | 0.4671 | 0.4664 | 0.2039 |
 | 2.5e-6 | 5e-4 | 5 | 0.5294 | 0.4619 | 0.4612 | 0.4477 |
 | 2.5e-6 | 5e-4 | 6 | 0.4970 | 0.4298 | 0.4291 | 0.2534 |
+| 2.75e-6 | 5e-4 | 5 | 0.5255 | 0.4542 | 0.4535 | 0.3397 |
+| 2.75e-6 | 5e-4 | 6 | 0.5028 | 0.4375 | 0.4368 | 0.2309 |
 | 3.0e-6 | 5e-4 | 5 | 0.5024 | 0.4618 | 0.4611 | 0.2128 |
 | 3.0e-6 | 5e-4 | 6 | 0.4661 | 0.3991 | 0.3984 | 0.3691 |
 

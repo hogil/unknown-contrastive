@@ -752,8 +752,9 @@ weaker, and a nearby higher value (`7e-4`) also stayed below that model
 Backbone LR was then bracketed with `lr_head=5e-4` fixed. `lr_backbone=1.5e-6`
 was weaker, while `lr_backbone=2.5e-6` reached the current paper-primary best at
 epoch 5: `0.5294` ARI / `0.4619` NMI / `0.4612` AMI, with auxiliary HDBSCAN ARI
-`0.4477`. Raising further to `3e-6` dropped to `0.5024` best ARI, so the current
-bracket supports `2.5e-6`. The final selected embedding is
+`0.4477`. A tighter right-side check at `2.75e-6` came close (`0.5255`) but did
+not beat `2.5e-6`; raising further to `3e-6` dropped to `0.5024` best ARI. The
+current bracket therefore supports `2.5e-6`. The final selected embedding is
 `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_ep5.npy`.
 
 Longer last-stage training was also tested with a CUDA 10-epoch run. Training
