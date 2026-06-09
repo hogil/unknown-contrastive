@@ -74,6 +74,12 @@ def parse_args():
     p.add_argument("--eval-dir", required=True, help="ImageFolder eval dir.")
     p.add_argument("--cnn", default=None, help="CNN best_model.pth. Optional.")
     p.add_argument(
+        "--timm-model",
+        action="append",
+        default=[],
+        help="label=timm_model_name. Example: DINOv3=hf_hub:timm/convnext_base.dinov3_lvd1689m",
+    )
+    p.add_argument(
         "--contrastive",
         action="append",
         default=[],
@@ -205,6 +211,17 @@ def load_cnn_backbone(ckpt: Path, device):
     }
 
 
+def load_timm_backbone(model_name: str, device):
+    import timm
+
+    model = timm.create_model(model_name, pretrained=True, num_classes=0, global_pool="avg")
+    return model.to(device).eval(), {
+        "source": model_name,
+        "num_features": int(getattr(model, "num_features", 0) or 0),
+        "classes": [],
+    }
+
+
 def infer_proj_dim(sd: dict[str, Any], default: int = 1024) -> int:
     for key in ("proj.2.weight", "module.proj.2.weight"):
         v = sd.get(key)
@@ -233,6 +250,18 @@ def find_contrastive_path(raw: str) -> tuple[str, Path]:
     if not label:
         label = p.parent.parent.name if p.name == "best_model.pt" else p.stem
     return label, p
+
+
+def parse_labeled_value(raw: str) -> tuple[str, str]:
+    if "=" in raw:
+        label, value = raw.split("=", 1)
+        label = label.strip()
+    else:
+        label, value = "", raw
+    value = value.strip()
+    if not label:
+        label = value.rsplit("/", 1)[-1].replace(":", "_")
+    return label, value
 
 
 def load_contrastive(ckpt: Path, device, mode: str):
@@ -486,9 +515,12 @@ def main():
     else:
         fcmae_weights = ensure_backbone_weights("weights", BACKBONE)
 
-    stages: list[tuple[str, str, Path | None]] = [("Raw FCMAE", "raw_fcmae", fcmae_weights)]
+    stages: list[tuple[str, str, Any]] = [("Raw FCMAE", "raw_fcmae", fcmae_weights)]
     if args.cnn:
         stages.append(("CNN backbone", "cnn", resolve_path(args.cnn)))
+    for raw in args.timm_model:
+        label, model_name = parse_labeled_value(raw)
+        stages.append((label, "timm_model", model_name))
     for raw in args.contrastive:
         label, ckpt = find_contrastive_path(raw)
         stages.append((label, "contrastive", ckpt))
@@ -522,7 +554,8 @@ def main():
     cnn_classes: list[str] = []
 
     for idx, (label, kind, path) in enumerate(stages, 1):
-        print(f"[stage {idx}/{len(stages)}] {label} <- {path.resolve() if path else ''}", flush=True)
+        source = path.resolve() if hasattr(path, "resolve") else path
+        print(f"[stage {idx}/{len(stages)}] {label} <- {source if source else ''}", flush=True)
         if kind == "raw_fcmae":
             model, meta = load_raw_fcmae(path, device)
         elif kind == "cnn":
@@ -530,6 +563,8 @@ def main():
                 raise SystemExit(f"CNN checkpoint not found: {path.resolve() if path else path}")
             model, meta = load_cnn_backbone(path, device)
             cnn_classes = list(meta.get("classes") or [])
+        elif kind == "timm_model":
+            model, meta = load_timm_backbone(str(path), device)
         elif kind == "contrastive":
             model, meta = load_contrastive(path, device, args.contrastive_embed_mode)
         else:
@@ -556,7 +591,7 @@ def main():
         stage_diag = {
             "label": label,
             "kind": kind,
-            "checkpoint": str(path.resolve()) if path else None,
+            "checkpoint": str(path.resolve()) if hasattr(path, "resolve") else str(path),
             "meta": meta,
             "embedding_dim": int(emb.shape[1]),
             "pca": pca_info,
