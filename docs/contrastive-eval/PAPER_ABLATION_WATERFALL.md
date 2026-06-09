@@ -12,7 +12,7 @@ HDBSCAN noise threshold.
   `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\cnn_seen_train`
 - wafer SSL fine-tune classes: `Center`, `Edge-Ring`, `Near-full`
 - fine-tuned embedding used for the final stage:
-  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_ep5.npy`
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ssl_embeddings\simclr_ep5.npy`
 - source scratch output:
   `D:\project\unknown-contrastive\_ablation_waterfall.md`
 
@@ -23,7 +23,7 @@ HDBSCAN noise threshold.
 | S0 | Raw FCMAE baseline | 0.2097 | 0.2169 | 0.2159 | 0.2208 | 0.2131 |
 | S1 | + DINOv3 SSL backbone | 0.3097 | 0.2831 | 0.2822 | 0.2916 | 0.2751 |
 | S2 | + PCA dimension tuning | 0.3173 | 0.2957 | 0.2949 | 0.2965 | 0.2950 |
-| S3 | + wafer contrastive fine-tune | 0.5294 | 0.4619 | 0.4612 | 0.4624 | 0.4614 |
+| S3 | + wafer contrastive fine-tune | 0.5976 | 0.5258 | 0.5252 | 0.5259 | 0.5257 |
 
 ## Delta From Baseline
 
@@ -31,7 +31,7 @@ HDBSCAN noise threshold.
 |---|---:|---:|---:|
 | S1 vs S0 | +0.1000 | +0.0663 | +47.7% |
 | S2 vs S0 | +0.1076 | +0.0790 | +51.3% |
-| S3 vs S0 | +0.3197 | +0.2453 | +152.5% |
+| S3 vs S0 | +0.3879 | +0.3093 | +185.0% |
 
 ## Fine-Tune Epoch/LR Scan
 
@@ -245,6 +245,32 @@ The selected full-unfreeze recipe was also retested with closer temperatures,
 This keeps `TEMP=0.05` for the selected paper-primary ARI recipe. `TEMP=0.06`
 is close on ARI and has higher NMI/AMI at epoch 5, but lower auxiliary HDBSCAN
 ARI.
+
+## SSL Method Check
+
+The previous sections tune the MoCo-style queue recipe. A separate SSL-method
+comparison was started from the same DINOv3 ConvNeXt-B backbone and the same
+wafer split. SimCLR already gives a substantially stronger paper-primary NCD
+score, although its HDBSCAN branch is weaker.
+
+- SimCLR embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ssl_embeddings\simclr_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ssl_embeddings\simclr_ep5.npy`
+
+| Method | Epoch | ARI | NMI | AMI | ARI_hdb |
+|---|---:|---:|---:|---:|---:|
+| MoCo-style selected | 5 | 0.5294 | 0.4619 | 0.4612 | 0.4477 |
+| SimCLR | 1 | 0.5287 | 0.4784 | 0.4777 | 0.3397 |
+| SimCLR | 2 | 0.5699 | 0.5102 | 0.5096 | 0.0000 |
+| SimCLR | 3 | 0.5935 | 0.5227 | 0.5222 | 0.0011 |
+| SimCLR | 4 | 0.5217 | 0.4730 | 0.4723 | 0.0994 |
+| SimCLR | 5 | 0.5976 | 0.5258 | 0.5252 | 0.0582 |
+
+This is the current best paper-primary result. It changes the method family, so
+the paper should present it as a method-level improvement rather than as a
+minor hyperparameter refinement. HDBSCAN remains weaker for SimCLR, so the
+operational grouping branch still needs separate tuning.
 
 ## False-Negative Ignore Threshold Check
 

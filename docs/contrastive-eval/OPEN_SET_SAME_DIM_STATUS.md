@@ -714,7 +714,7 @@ table above. The clean paper table is documented here:
 - eval folder:
   `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\novel_eval`
 - final fine-tuned embedding:
-  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_ep5.npy`
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ssl_embeddings\simclr_ep5.npy`
 
 Primary metric: k-means with the known novel class count (`k=3`), following the
 standard NCD evaluation style where every sample is assigned. The monotonic
@@ -725,11 +725,17 @@ result is:
 | Raw FCMAE baseline | 0.2097 | 0.2169 | 0.2159 | generic SSL encoder |
 | + DINOv3 SSL backbone | 0.3097 | 0.2831 | 0.2822 | stronger SSL initialization |
 | + PCA dimension tuning | 0.3173 | 0.2957 | 0.2949 | same embedding, better evaluation dimension |
-| + wafer contrastive fine-tune | 0.5294 | 0.4619 | 0.4612 | domain SSL adaptation |
+| + wafer contrastive fine-tune | 0.5976 | 0.5258 | 0.5252 | domain SSL adaptation |
 
-This gives a final ARI gain of `+0.3197` over Raw FCMAE (`+152.5%` relative).
+This gives a final ARI gain of `+0.3879` over Raw FCMAE (`+185.0%` relative).
 Do not describe this as an HDBSCAN improvement claim; HDBSCAN remains a separate
 operational clustering branch with its own noise/threshold tradeoff.
+
+Current paper-primary best is the SimCLR SSL-method run:
+`D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ssl_embeddings\simclr_ep5.npy`
+with `0.5976` ARI / `0.5258` NMI / `0.5252` AMI. Its auxiliary HDBSCAN ARI is
+low (`0.0582`), so operational HDBSCAN grouping remains a separate tuning
+branch.
 
 Follow-up last-stage LR scan: `lr_backbone=5e-6` was also tested on the same
 setup with CUDA. It converged (`loss 1.4233 -> 0.8184`) but did not beat either
