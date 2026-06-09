@@ -511,6 +511,10 @@ same-class pair cosine distance. Higher is better.
 | Raw DINOv3 frozen | 75.20% | 74.04% | 73.07% | 72.04% | 70.98% | 0.2307 | 3 | 58.05% | 0.1028 | 0.1936 |
 | TPAT ConvNeXtV2 A-CNN backbone | 87.55% | 85.23% | 83.46% | 82.95% | 82.43% | 0.3927 | 2 | 29.85% | 0.1729 | 0.2580 |
 | DINOv3 B-contrastive weighted | 86.16% | 83.72% | 82.98% | 82.16% | 81.54% | 0.4691 | 3 | 71.54% | 0.2465 | 0.3650 |
+| TPAT ConvNeXtV2 A-CNN + B-contrastive last-stage weighted | 87.47% | 85.35% | 83.62% | 82.58% | 82.27% | 0.4153 | 2 | 27.94% | 0.1794 | 0.2641 |
+| TPAT ConvNeXtV2 A-CNN + B-contrastive last-stage backbone | 87.38% | 85.38% | 83.64% | 82.54% | 82.20% | 0.4183 | 2 | 28.37% | 0.1797 | 0.2660 |
+
+TPAT A-CNN + B-contrastive last-stage keeps top1 nearly flat against the TPAT A-CNN baseline, but slightly improves k3/k5, distance ratio, noise rate, ARI, and AMI. Full-backbone TPAT+B was too heavy for the local 16GB GPU; use the H100/server condition for that variant.
 
 Key artifacts:
 
@@ -522,6 +526,14 @@ Key artifacts:
   `D:\project\unknown-contrastive\runs\260609_203204_cnn_ddp`
 - TPAT ConvNeXtV2 A-CNN checkpoint:
   `D:\project\unknown-contrastive\runs\260609_203204_cnn_ddp\cnn\best_model.pth`
+- TPAT ConvNeXtV2 A-CNN + B-contrastive last-stage training run:
+  `D:\project\unknown-contrastive\runs\260609_214458_wm811k_novel_v2_tpatA_B_moco_laststage_lrb1e5_img384_ep4`
+- TPAT ConvNeXtV2 A-CNN + B-contrastive last-stage checkpoint:
+  `D:\project\unknown-contrastive\runs\260609_214458_wm811k_novel_v2_tpatA_B_moco_laststage_lrb1e5_img384_ep4\contrastive\best_model.pt`
+- TPAT ConvNeXtV2 A-CNN + B-contrastive last-stage weighted result:
+  `D:\project\unknown-contrastive\result_grouping\260609_215254_wm811k_novel_v2_same_folder_5model_tpatB_laststage_distance`
+- TPAT ConvNeXtV2 A-CNN + B-contrastive last-stage backbone result:
+  `D:\project\unknown-contrastive\result_grouping\260609_215606_wm811k_novel_v2_tpatB_laststage_backbone_distance`
 - DINOv3 7e-6 ep8 training run:
   `D:\project\unknown-contrastive\runs\260609_184928_wm811k_novel_v2_dinov3_B_moco_q1024_ep8_lrb7e6`
 - v2 weighted result:
