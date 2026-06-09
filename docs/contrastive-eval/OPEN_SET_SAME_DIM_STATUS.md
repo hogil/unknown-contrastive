@@ -178,3 +178,83 @@ negative instead of feeding an all-`-1e9` row to `logsumexp`.
 Next direction: run a backbone-preserving adaptation check. Use NCE (not DCL),
 small backbone LR, no local/pseudo attraction at first, and evaluate backbone
 mode so the raw FCMAE structure is not discarded by a projection-only head.
+
+## Real WM Weighted-Concat And Strong-Pseudo Checks
+
+DCL projection-only weighted concat:
+
+`D:\project\unknown-contrastive\result_grouping\260609_103310_wm811k_train_eval_weighted_concat_same128`
+
+| stage | top1 | k5 | HDBSCAN clusters | noise | ARI | AMI |
+|---|---:|---:|---:|---:|---:|---:|
+| Raw FCMAE | 0.7068 | 0.6496 | 6 | 0.5466 | 0.0832 | 0.3026 |
+| DCL weighted concat epoch 5 | 0.7055 | 0.6496 | 6 | 0.5466 | 0.0832 | 0.3026 |
+| DCL weighted concat epoch 10 | 0.7068 | 0.6496 | 6 | 0.5466 | 0.0832 | 0.3026 |
+| DCL weighted concat final | 0.7068 | 0.6496 | 6 | 0.5466 | 0.0832 | 0.3026 |
+
+Strong pseudo-positive NCE run:
+
+`D:\project\unknown-contrastive\runs\260609_103619_wm811k500_frozen_nce_pseudo1_topk5_sim082_b48`
+
+Projection-only result:
+
+`D:\project\unknown-contrastive\result_grouping\260609_110221_wm811k_train_eval_pseudo_strong_projection_same128`
+
+Weighted-concat result:
+
+`D:\project\unknown-contrastive\result_grouping\260609_110449_wm811k_train_eval_pseudo_strong_weighted_concat_same128`
+
+| stage | top1 | k5 | HDBSCAN clusters | noise | ARI | AMI |
+|---|---:|---:|---:|---:|---:|---:|
+| Raw FCMAE | 0.7068 | 0.6496 | 6 | 0.5466 | 0.0832 | 0.3026 |
+| strong-pseudo projection epoch 4 | 0.4493 | 0.3652 | 4 | 0.2548 | 0.0826 | 0.1851 |
+| strong-pseudo projection final | 0.4000 | 0.3479 | 2 | 0.0740 | 0.0237 | 0.1060 |
+| strong-pseudo weighted concat epoch 8 | 0.7055 | 0.6477 | 6 | 0.5301 | 0.0843 | 0.3051 |
+| strong-pseudo weighted concat final | 0.7041 | 0.6482 | 6 | 0.5260 | 0.0837 | 0.3048 |
+
+Interpretation: projection-only is still worse than Raw FCMAE. Weighted concat
+preserves Raw FCMAE but does not improve top-k metrics; it only slightly lowers
+HDBSCAN noise. The next quick ablation should reduce global NCE pressure
+(`--no-queue`) and make pseudo-positive alignment dominate, otherwise the
+projection head keeps collapsing broad groups.
+
+## Real WM No-Queue Pseudo-Dominant Checks
+
+Pseudo-dominant no-queue projection dim 128 run:
+
+`D:\project\unknown-contrastive\runs\260609_110840_wm811k500_frozen_nce_noqueue_pseudo500_topk5_sim082_b64`
+
+Projection-only result:
+
+`D:\project\unknown-contrastive\result_grouping\260609_112536_wm811k_train_eval_pseudo500_noqueue_projection_same128`
+
+Weighted-concat result:
+
+`D:\project\unknown-contrastive\result_grouping\260609_112734_wm811k_train_eval_pseudo500_noqueue_weighted_concat_same128`
+
+Pseudo-dominant no-queue projection dim 512 run:
+
+`D:\project\unknown-contrastive\runs\260609_112942_wm811k500_frozen_nce_noqueue_pseudo500_topk5_sim082_proj512_b64`
+
+Projection-only result:
+
+`D:\project\unknown-contrastive\result_grouping\260609_113906_wm811k_train_eval_pseudo500_noqueue_proj512_projection_same128`
+
+Weighted-concat result:
+
+`D:\project\unknown-contrastive\result_grouping\260609_114043_wm811k_train_eval_pseudo500_noqueue_proj512_weighted_concat_same128`
+
+| stage | top1 | k3 | k5 | k7 | k9 | HDBSCAN clusters | noise | ARI | AMI |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Raw FCMAE | 0.7068 | 0.6703 | 0.6496 | 0.6313 | 0.6186 | 6 | 0.5466 | 0.0832 | 0.3026 |
+| CNN backbone | 0.7027 | 0.6694 | 0.6474 | 0.6301 | 0.6131 | 6 | 0.5548 | 0.0769 | 0.2729 |
+| p500 no-queue projection 128 | 0.6795 | 0.6242 | 0.5967 | 0.5732 | 0.5524 | 2 | 0.2110 | 0.0223 | 0.0768 |
+| p500 no-queue weighted concat 128 | 0.7068 | 0.6703 | 0.6496 | 0.6313 | 0.6186 | 6 | 0.5466 | 0.0833 | 0.3032 |
+| p500 no-queue projection 512 | 0.6932 | 0.6470 | 0.6247 | 0.6025 | 0.5857 | 2 | 0.2521 | 0.0403 | 0.0610 |
+| p500 no-queue weighted concat 512 | 0.7068 | 0.6703 | 0.6496 | 0.6313 | 0.6186 | 6 | 0.5466 | 0.0833 | 0.3032 |
+
+Interpretation: projection dim 512 is better than projection dim 128, but it
+still does not beat Raw FCMAE on WM known-class neighbor metrics. Weighted concat
+only preserves Raw FCMAE; it does not add measurable improvement. Current real
+WM evidence says projection-only contrastive is the bottleneck, not vector
+dimension alone.

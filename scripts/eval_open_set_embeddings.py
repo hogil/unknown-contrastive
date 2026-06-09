@@ -64,6 +64,8 @@ class ContrastiveInferModel(nn.Module):
             return z
         if self.mode == "backbone":
             return f
+        if self.mode == "weighted_concat":
+            return F.normalize(torch.cat([f, z], dim=1), dim=1)
         raise ValueError(f"unsupported contrastive embed mode: {self.mode}")
 
 
@@ -88,7 +90,7 @@ def parse_args():
     p.add_argument(
         "--contrastive-embed-mode",
         default="projection",
-        choices=["projection", "backbone"],
+        choices=["projection", "backbone", "weighted_concat"],
         help="Embedding exported from contrastive checkpoint.",
     )
     p.add_argument("--min-cluster-size", type=int, default=5)
