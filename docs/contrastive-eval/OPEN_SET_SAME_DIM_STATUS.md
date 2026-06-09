@@ -586,3 +586,22 @@ grid, improving ARI/AMI to `0.2689/0.3990` with four clusters but still high
 noise (`76.50%`). Raising `lr_backbone` to `1.2e-5` reduced training NCE further
 (`0.3400` at epoch 8) but hurt novel-C top-k below Raw FCMAE, so NCE decrease
 alone is not a sufficient selection criterion.
+
+Additional DINOv3+B HDBSCAN noise sweep:
+
+- output:
+  `D:\project\unknown-contrastive\result_grouping\260609_2220_wm811k_novel_v2_dinov3_B_lrb1e5_hdbscan_noise_sweep`
+- sweep csv:
+  `D:\project\unknown-contrastive\result_grouping\260609_2220_wm811k_novel_v2_dinov3_B_lrb1e5_hdbscan_noise_sweep\hdbscan_sweep.csv`
+- summary:
+  `D:\project\unknown-contrastive\result_grouping\260609_2220_wm811k_novel_v2_dinov3_B_lrb1e5_hdbscan_noise_sweep\summary.md`
+
+The high noise is not just a bad single HDBSCAN setting. For this DINOv3+B
+embedding, the best ARI settings remain strict and noisy (`leaf`, `mcs=20/30`,
+`min_samples=5`, noise `76.50%`, ARI/AMI `0.2689/0.3990`). Reducing noise below
+50% is possible (`eom`, `mcs=30`, `min_samples=1`, noise `43.69%`), but it drops
+ARI/AMI to `0.2089/0.3434` and produces only two clusters. Very low noise
+settings collapse almost everything into one giant cluster (`1074/1149` in one
+cluster, ARI `-0.0089`). Operationally, DINOv3+B is useful when prioritizing
+high-purity small clusters, but TPAT A-CNN / TPAT+B remains better for lower
+noise grouping on this v2 split.
