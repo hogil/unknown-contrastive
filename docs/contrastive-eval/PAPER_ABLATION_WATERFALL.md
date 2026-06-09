@@ -123,12 +123,17 @@ HDBSCAN ARI (`0.4622`) but lower primary ARI (`0.4754`).
 
 The best backbone LR (`2e-6`) was kept fixed and only the projection-head LR was
 changed. Lowering the head LR to `5e-4` improved the paper-primary all-sample
-NCD score; lowering it further to `2e-4` was weaker.
+NCD score. A higher nearby value (`7e-4`) and a lower value (`2e-4`) were both
+weaker.
 
 - `lr_head=5e-4` embeddings:
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head5e4_ep1.npy`
   through
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head5e4_ep6.npy`
+- `lr_head=7e-4` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head7e4_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head7e4_ep6.npy`
 - `lr_head=2e-4` embeddings:
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head2e4_ep1.npy`
   through
@@ -137,6 +142,8 @@ NCD score; lowering it further to `2e-4` was weaker.
 | LR head | Epoch | ARI | NMI | AMI | ARI_hdb |
 |---:|---:|---:|---:|---:|---:|
 | 1e-3 | 3 | 0.4948 | 0.4334 | 0.4327 | 0.4171 |
+| 7e-4 | 5 | 0.4860 | 0.4492 | 0.4485 | 0.2218 |
+| 7e-4 | 6 | 0.4654 | 0.4072 | 0.4065 | 0.2020 |
 | 5e-4 | 4 | 0.4648 | 0.3989 | 0.3982 | 0.2272 |
 | 5e-4 | 5 | 0.5143 | 0.4671 | 0.4664 | 0.2039 |
 | 5e-4 | 6 | 0.4784 | 0.4155 | 0.4148 | 0.3948 |

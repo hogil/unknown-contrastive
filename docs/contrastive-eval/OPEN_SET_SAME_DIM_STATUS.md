@@ -745,7 +745,8 @@ ARI, but `lr_backbone=2e-6` reached the current best at epoch 3:
 Projection-head LR was then lowered while keeping `lr_backbone=2e-6`. The
 `lr_head=5e-4` run reached the current paper-primary best at epoch 5:
 `0.5143` ARI / `0.4671` NMI / `0.4664` AMI. Lowering further to `2e-4` was
-weaker. The selected final embedding is
+weaker, and a nearby higher value (`7e-4`) also stayed below the selected model
+(`0.4860` best ARI). The selected final embedding is
 `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head5e4_ep5.npy`.
 
 Longer last-stage training was also tested with a CUDA 10-epoch run. Training
