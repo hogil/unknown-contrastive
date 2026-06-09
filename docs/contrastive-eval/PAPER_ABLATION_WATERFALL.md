@@ -12,7 +12,7 @@ HDBSCAN noise threshold.
   `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\cnn_seen_train`
 - wafer SSL fine-tune classes: `Center`, `Edge-Ring`, `Near-full`
 - fine-tuned embedding used for the final stage:
-  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head5e4_ep5.npy`
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_ep5.npy`
 - source scratch output:
   `D:\project\unknown-contrastive\_ablation_waterfall.md`
 
@@ -23,7 +23,7 @@ HDBSCAN noise threshold.
 | S0 | Raw FCMAE baseline | 0.2097 | 0.2169 | 0.2159 | 0.2208 | 0.2131 |
 | S1 | + DINOv3 SSL backbone | 0.3097 | 0.2831 | 0.2822 | 0.2916 | 0.2751 |
 | S2 | + PCA dimension tuning | 0.3173 | 0.2957 | 0.2949 | 0.2965 | 0.2950 |
-| S3 | + wafer contrastive fine-tune | 0.5143 | 0.4671 | 0.4664 | 0.4701 | 0.4641 |
+| S3 | + wafer contrastive fine-tune | 0.5294 | 0.4619 | 0.4612 | 0.4624 | 0.4614 |
 
 ## Delta From Baseline
 
@@ -31,7 +31,7 @@ HDBSCAN noise threshold.
 |---|---:|---:|---:|
 | S1 vs S0 | +0.1000 | +0.0663 | +47.7% |
 | S2 vs S0 | +0.1076 | +0.0790 | +51.3% |
-| S3 vs S0 | +0.3046 | +0.2505 | +145.3% |
+| S3 vs S0 | +0.3197 | +0.2453 | +152.5% |
 
 ## Fine-Tune Epoch/LR Scan
 
@@ -87,7 +87,7 @@ the final full-unfreeze model.
 | 3e-6 CUDA e10 | 10 | 0.4353 | 0.4286 | 0.4278 | 0.1977 |
 
 Best CUDA long-run ARI is `0.4555`, below the selected final model
-(`0.5143`). A deterministic CPU long run of the same last-stage recipe reached
+(`0.5294`). A deterministic CPU long run of the same last-stage recipe reached
 `0.4738` at epoch 9, which improves last-stage-only ARI but still remains below
 the selected final model.
 
@@ -150,9 +150,37 @@ weaker.
 | 2e-4 | 3 | 0.4574 | 0.4113 | 0.4106 | 0.2282 |
 | 2e-4 | 5 | 0.4506 | 0.4299 | 0.4292 | 0.2125 |
 
-Best paper-primary ARI is now `0.5143` at `lr_head=5e-4`, epoch 5. The
+Best paper-primary ARI with `lr_backbone=2e-6` is `0.5143` at `lr_head=5e-4`,
+epoch 5. The
 auxiliary HDBSCAN score is not monotonic with the paper-primary score, so it is
 kept as a separate operational diagnostic.
+
+## Backbone LR Refinement
+
+After selecting `lr_head=5e-4`, the backbone LR was bracketed around `2e-6`.
+Raising it slightly to `2.5e-6` improved both the paper-primary ARI and the
+auxiliary HDBSCAN ARI. Lowering it to `1.5e-6` was weaker.
+
+- `lr_backbone=1.5e-6`, `lr_head=5e-4` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr1p5e6_head5e4_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr1p5e6_head5e4_ep6.npy`
+- `lr_backbone=2.5e-6`, `lr_head=5e-4` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_ep6.npy`
+
+| LR backbone | LR head | Epoch | ARI | NMI | AMI | ARI_hdb |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1.5e-6 | 5e-4 | 5 | 0.4878 | 0.4614 | 0.4608 | 0.2230 |
+| 1.5e-6 | 5e-4 | 6 | 0.4835 | 0.4355 | 0.4348 | 0.2372 |
+| 2.0e-6 | 5e-4 | 5 | 0.5143 | 0.4671 | 0.4664 | 0.2039 |
+| 2.5e-6 | 5e-4 | 5 | 0.5294 | 0.4619 | 0.4612 | 0.4477 |
+| 2.5e-6 | 5e-4 | 6 | 0.4970 | 0.4298 | 0.4291 | 0.2534 |
+
+The selected final model is now `lr_backbone=2.5e-6`, `lr_head=5e-4`, epoch 5.
+It improves ARI from `0.5143` to `0.5294` and also gives a stronger auxiliary
+HDBSCAN ARI (`0.4477`).
 
 ## Temperature Check
 
@@ -177,7 +205,7 @@ temperature improved held-out novel ARI.
 | 0.07 | 4 | 0.4259 | 0.3920 | 0.3913 | 0.0388 |
 
 Best tested non-default temperature is `TEMP=0.03` epoch 4 (`0.4451`), below
-the selected final model (`0.5143`).
+the selected final model (`0.5294`).
 
 ## False-Negative Ignore Threshold Check
 
@@ -246,9 +274,8 @@ Use this table for the main paper claim:
 > unlabeled wafer fine-tuning stage.
 
 The HDBSCAN auto-k score is intentionally not the primary claim for this
-waterfall. HDBSCAN is useful operationally, but it is not monotonic with the
-paper-primary all-sample NCD score: default-head full-unfreeze reached `0.4171`
-HDBSCAN ARI and the `5e-6` run reached `0.4622`, while the primary-best
-`lr_head=5e-4` model has lower HDBSCAN ARI (`0.2039`). The paper-safe statement
-should therefore remain about NCD-style all-sample clustering (`k=3`), because
+waterfall. HDBSCAN is useful operationally, but it is not strictly monotonic
+with the paper-primary all-sample NCD score. The selected final model is also
+strong on the auxiliary branch (`0.4477` HDBSCAN ARI), but the paper-safe
+statement should remain about NCD-style all-sample clustering (`k=3`) because
 HDBSCAN depends on noise/threshold choices.

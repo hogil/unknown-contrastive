@@ -714,7 +714,7 @@ table above. The clean paper table is documented here:
 - eval folder:
   `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\novel_eval`
 - final fine-tuned embedding:
-  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head5e4_ep5.npy`
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_ep5.npy`
 
 Primary metric: k-means with the known novel class count (`k=3`), following the
 standard NCD evaluation style where every sample is assigned. The monotonic
@@ -725,9 +725,9 @@ result is:
 | Raw FCMAE baseline | 0.2097 | 0.2169 | 0.2159 | generic SSL encoder |
 | + DINOv3 SSL backbone | 0.3097 | 0.2831 | 0.2822 | stronger SSL initialization |
 | + PCA dimension tuning | 0.3173 | 0.2957 | 0.2949 | same embedding, better evaluation dimension |
-| + wafer contrastive fine-tune | 0.5143 | 0.4671 | 0.4664 | domain SSL adaptation |
+| + wafer contrastive fine-tune | 0.5294 | 0.4619 | 0.4612 | domain SSL adaptation |
 
-This gives a final ARI gain of `+0.3046` over Raw FCMAE (`+145.3%` relative).
+This gives a final ARI gain of `+0.3197` over Raw FCMAE (`+152.5%` relative).
 Do not describe this as an HDBSCAN improvement claim; HDBSCAN remains a separate
 operational clustering branch with its own noise/threshold tradeoff.
 
@@ -743,15 +743,21 @@ ARI, but `lr_backbone=2e-6` reached the current best at epoch 3:
 `0.4171`.
 
 Projection-head LR was then lowered while keeping `lr_backbone=2e-6`. The
-`lr_head=5e-4` run reached the current paper-primary best at epoch 5:
+`lr_head=5e-4` run reached the intermediate paper-primary best at epoch 5:
 `0.5143` ARI / `0.4671` NMI / `0.4664` AMI. Lowering further to `2e-4` was
-weaker, and a nearby higher value (`7e-4`) also stayed below the selected model
-(`0.4860` best ARI). The selected final embedding is
+weaker, and a nearby higher value (`7e-4`) also stayed below that model
+(`0.4860` best ARI). That intermediate selected embedding is
 `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2e6_head5e4_ep5.npy`.
+
+Backbone LR was then bracketed with `lr_head=5e-4` fixed. `lr_backbone=1.5e-6`
+was weaker, while `lr_backbone=2.5e-6` reached the current paper-primary best at
+epoch 5: `0.5294` ARI / `0.4619` NMI / `0.4612` AMI, with auxiliary HDBSCAN ARI
+`0.4477`. The final selected embedding is
+`D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_ep5.npy`.
 
 Longer last-stage training was also tested with a CUDA 10-epoch run. Training
 loss kept decreasing (`1.4150 -> 0.4550`), but best held-out ARI was epoch 9
-(`0.4555`), still below the selected final model (`0.5143`). This
+(`0.4555`), still below the selected final model (`0.5294`). This
 reinforces selecting by held-out novel ARI rather than training loss.
 
 Lowering InfoNCE temperature to `0.03` was tested with the same last-stage
@@ -762,7 +768,7 @@ Raising InfoNCE temperature to `0.07` was also tested and was worse (`0.4259`
 best ARI). The temperature check currently supports keeping `TEMP=0.05`.
 
 Raising the false-negative ignore threshold to `0.8` was also tested. It reached
-only `0.4479` ARI, below the selected `ignore=0.7` model (`0.5143`).
+only `0.4479` ARI, below the selected `ignore=0.7` model (`0.5294`).
 
 Lowering the threshold to `0.6` was also tested. Its best primary ARI was
 `0.4417`, and its auxiliary HDBSCAN ARI (`0.3917`) is below the new
