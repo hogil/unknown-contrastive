@@ -657,6 +657,7 @@ Same-128 paper candidate eval:
 | TPAT retrieval | Raw FCMAE | 82.25% | 79.84% | 78.17% | 0.3294 | no wafer training |
 | TPAT retrieval | + A-CNN supervised TPAT | 87.55% | 85.23% | 83.46% | 0.3927 | strongest top1 |
 | TPAT retrieval | + B contrastive `lr=5e-6` ep6 | 87.38% | 85.55% | 83.69% | 0.4104 | k3/k5 improve, top1 flat |
+| TPAT retrieval | + B contrastive + pseudo-positive `0.05` | 87.55% | 85.32% | 83.62% | 0.4040 | top1 recovers to A-CNN, k5 remains above A-CNN |
 
 Fast same-128 HDBSCAN sweep:
 
@@ -674,9 +675,28 @@ Fast same-128 HDBSCAN sweep:
 | DINOv3 + B contrastive | 0.2689/0.3990 | 76.50% | 0.2089/0.3434 | 43.69% | best strict ARI/AMI, high noise |
 | TPAT A-CNN | 0.2218/0.3486 | 28.46% | 0.2218/0.3486 | 28.46% | best low-noise clustering in sweep |
 | TPAT A-CNN + B contrastive `lr=5e-6` ep6 | 0.2100/0.3449 | 34.55% | 0.2100/0.3449 | 34.55% | kNN improves, clustering does not beat A-CNN |
+| TPAT A-CNN + B contrastive + pseudo-positive `0.05` | 0.2063/0.3359 | 33.94% | 0.2063/0.3359 | 33.94% | top1 recovers, clustering still below A-CNN |
 
 Paper-safe conclusion: use DINOv3+B to support the claim that domain SSL
 adaptation improves raw DINOv3 novel embedding, and use TPAT A-CNN / TPAT+B to
 support the practical retrieval/grouping branch. Do not claim that B
 contrastive improves every metric after TPAT; in same-128 it mainly improves
 k3/k5, while clustering ARI is best for TPAT A-CNN alone.
+
+Pseudo-positive TPAT+B check:
+
+- training run:
+  `D:\project\unknown-contrastive\runs\260609_233255_wm811k_novel_v2_tpatA_B_moco_laststage_lrb5e6_pseudo005_img384_ep4`
+- checkpoint:
+  `D:\project\unknown-contrastive\runs\260609_233255_wm811k_novel_v2_tpatA_B_moco_laststage_lrb5e6_pseudo005_img384_ep4\contrastive\best_model.pt`
+- same-128 eval:
+  `D:\project\unknown-contrastive\result_grouping\260609_234048_wm811k_novel_v2_tpat_pseudo005_same128`
+- HDBSCAN sweep:
+  `D:\project\unknown-contrastive\result_grouping\260609_2344_wm811k_novel_v2_tpat_pseudo005_fast_hdbscan_same128`
+
+This ablation changes the previous TPAT+B setup from false-negative removal only
+to false-negative removal plus weak pseudo-positive attraction. In same-128
+retrieval it recovers top1 to the A-CNN level (`87.55%`) and keeps k5 above the
+A-CNN baseline (`83.62%` vs `83.46%`). It does not solve the clustering branch:
+best fast-sweep ARI/AMI is `0.2063/0.3359`, still below TPAT A-CNN
+`0.2218/0.3486`.
