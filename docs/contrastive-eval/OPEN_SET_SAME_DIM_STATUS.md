@@ -737,6 +737,11 @@ with `0.5976` ARI / `0.5258` NMI / `0.5252` AMI. Its auxiliary HDBSCAN ARI is
 low (`0.0582`), so operational HDBSCAN grouping remains a separate tuning
 branch.
 
+BYOL collapsed on the same split (`0.0190` ARI by epoch 5). SimSiam is weaker
+for paper-primary NCD (`0.4307` best ARI among checked epochs so far), but its
+epoch-2 HDBSCAN ARI is strong (`0.5143`), making it a candidate for the
+operational grouping branch rather than the paper-primary all-sample NCD table.
+
 Follow-up last-stage LR scan: `lr_backbone=5e-6` was also tested on the same
 setup with CUDA. It converged (`loss 1.4233 -> 0.8184`) but did not beat either
 the last-stage `3e-6` epoch-4 model (`0.4681`) or the final full-unfreeze

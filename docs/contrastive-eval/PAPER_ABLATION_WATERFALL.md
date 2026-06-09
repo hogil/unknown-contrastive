@@ -266,11 +266,18 @@ score, although its HDBSCAN branch is weaker.
 | SimCLR | 3 | 0.5935 | 0.5227 | 0.5222 | 0.0011 |
 | SimCLR | 4 | 0.5217 | 0.4730 | 0.4723 | 0.0994 |
 | SimCLR | 5 | 0.5976 | 0.5258 | 0.5252 | 0.0582 |
+| BYOL | 1 | 0.0671 | 0.1054 | 0.1041 | 0.3587 |
+| BYOL | 5 | 0.0190 | 0.0551 | 0.0536 | 0.3407 |
+| SimSiam | 1 | 0.4146 | 0.3732 | 0.3725 | 0.4151 |
+| SimSiam | 2 | 0.3956 | 0.3656 | 0.3648 | 0.5143 |
+| SimSiam | 5 | 0.4307 | 0.4412 | 0.4405 | 0.4022 |
 
 This is the current best paper-primary result. It changes the method family, so
 the paper should present it as a method-level improvement rather than as a
 minor hyperparameter refinement. HDBSCAN remains weaker for SimCLR, so the
-operational grouping branch still needs separate tuning.
+operational grouping branch still needs separate tuning. SimSiam is weaker for
+paper-primary NCD, but its epoch-2 HDBSCAN ARI (`0.5143`) is currently the best
+operational HDBSCAN result in this SSL-method sweep.
 
 ## False-Negative Ignore Threshold Check
 
