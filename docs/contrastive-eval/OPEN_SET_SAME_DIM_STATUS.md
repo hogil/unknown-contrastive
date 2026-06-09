@@ -714,7 +714,7 @@ table above. The clean paper table is documented here:
 - eval folder:
   `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\novel_eval`
 - final fine-tuned embedding:
-  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_ep3.npy`
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_ep4.npy`
 
 Primary metric: k-means with the known novel class count (`k=3`), following the
 standard NCD evaluation style where every sample is assigned. The monotonic
@@ -725,8 +725,8 @@ result is:
 | Raw FCMAE baseline | 0.2097 | 0.2169 | 0.2159 | generic SSL encoder |
 | + DINOv3 SSL backbone | 0.3097 | 0.2831 | 0.2822 | stronger SSL initialization |
 | + PCA dimension tuning | 0.3173 | 0.2957 | 0.2949 | same embedding, better evaluation dimension |
-| + wafer contrastive fine-tune | 0.4493 | 0.4100 | 0.4093 | domain SSL adaptation |
+| + wafer contrastive fine-tune | 0.4681 | 0.4328 | 0.4321 | domain SSL adaptation |
 
-This gives a final ARI gain of `+0.2396` over Raw FCMAE (`+114.3%` relative).
+This gives a final ARI gain of `+0.2584` over Raw FCMAE (`+123.2%` relative).
 Do not describe this as an HDBSCAN improvement claim; HDBSCAN remains a separate
 operational clustering branch with its own noise/threshold tradeoff.
