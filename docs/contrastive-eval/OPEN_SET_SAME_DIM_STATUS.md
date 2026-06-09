@@ -398,6 +398,8 @@ Same C novel eval, same 128-dimensional comparison:
 | DINOv3 B-contrastive 3e-6 backbone | 93.73% | 92.98% | 92.45% | 91.85% | 91.36% | 53.67% | 0.2210 | 0.3716 | backbone better than projection |
 | DINOv3 B-contrastive 5e-6 weighted | 94.27% | 93.76% | 93.11% | 92.64% | 92.10% | 43.20% | 0.2973 | 0.4252 | strong top-k balance |
 | DINOv3 B-contrastive 5e-6 backbone | 94.20% | 93.80% | 93.15% | 92.67% | 92.13% | 42.93% | 0.3004 | 0.4283 | best k3/k5 balance |
+| DINOv3 B-contrastive 7e-6 ep6 weighted | 94.33% | 93.38% | 92.65% | 92.30% | 91.90% | 49.73% | 0.2823 | 0.4379 | shorter train below ep8 |
+| DINOv3 B-contrastive 7e-6 ep6 backbone | 94.27% | 93.36% | 92.73% | 92.15% | 91.95% | 49.60% | 0.2805 | 0.4360 | shorter train below ep8 |
 | DINOv3 B-contrastive 7e-6 weighted | 95.27% | 93.64% | 92.83% | 92.50% | 92.26% | 50.40% | 0.2815 | 0.4550 | best weighted top1 |
 | DINOv3 B-contrastive 7e-6 backbone | 95.33% | 93.53% | 92.83% | 92.53% | 92.32% | 53.87% | 0.2706 | 0.4350 | best top1 |
 | DINOv3 B-contrastive 1e-5 weighted | 94.53% | 93.51% | 93.27% | 93.12% | 92.85% | 54.87% | 0.2729 | 0.4346 | best weighted k5/k7/k9 |
@@ -417,6 +419,10 @@ Key artifacts:
   `D:\project\unknown-contrastive\result_grouping\260609_170031_wm811k_novel_v1_baseline_vs_dinov3_B_moco_lrb5e6_weighted`
 - DINOv3 5e-6 backbone result:
   `D:\project\unknown-contrastive\result_grouping\260609_170034_wm811k_novel_v1_dinov3_B_moco_lrb5e6_backbone`
+- DINOv3 7e-6 ep6 weighted result:
+  `D:\project\unknown-contrastive\result_grouping\260609_184122_wm811k_novel_v1_baseline_vs_dinov3_B_moco_lrb7e6_ep6_weighted`
+- DINOv3 7e-6 ep6 backbone result:
+  `D:\project\unknown-contrastive\result_grouping\260609_184253_wm811k_novel_v1_dinov3_B_moco_lrb7e6_ep6_backbone`
 - DINOv3 7e-6 weighted result:
   `D:\project\unknown-contrastive\result_grouping\260609_171504_wm811k_novel_v1_baseline_vs_dinov3_B_moco_lrb7e6_weighted`
 - DINOv3 7e-6 backbone result:
@@ -448,4 +454,6 @@ regressed, so the LR response is not monotonic. Last-stage-only unfreeze with
 so the useful DINOv3 adaptation path remains low-LR full-backbone unfreeze.
 Extending the strongest `1e-5` recipe from 8 to 12 epochs lowered NCE further
 but reduced novel-C kNN, which is evidence of overfitting to B rather than better
-open-set transfer. Projection-only remains the wrong deployment embedding.
+open-set transfer. Shortening the `7e-6` top1 recipe from 8 to 6 epochs also
+reduced top1, so the current top1 sweet spot remains `7e-6` at 8 epochs.
+Projection-only remains the wrong deployment embedding.
