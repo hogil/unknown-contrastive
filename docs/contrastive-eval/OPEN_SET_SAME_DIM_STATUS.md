@@ -483,6 +483,8 @@ Same C novel eval, same 128-dimensional comparison:
 | Raw FCMAE | 82.25% | 79.84% | 78.17% | 77.22% | 76.68% | 55.70% | 0.1453 | 0.2817 | baseline |
 | DINOv3 B-contrastive 7e-6 ep8 weighted | 84.25% | 81.64% | 80.87% | 80.16% | 79.56% | 81.90% | 0.1755 | 0.2736 | repeats v1 kNN gain |
 | DINOv3 B-contrastive 7e-6 ep8 backbone | 84.33% | 82.22% | 81.04% | 80.29% | 79.74% | 81.20% | 0.1785 | 0.2757 | first v2 gain |
+| DINOv3 B-contrastive 9e-6 ep8 weighted | 83.81% | 82.59% | 81.17% | 80.48% | 79.70% | 72.67% | 0.2156 | 0.3287 | improves Raw but below 1e-5 |
+| DINOv3 B-contrastive 9e-6 ep8 backbone | 84.33% | 82.54% | 81.43% | 80.67% | 80.17% | 60.84% | 0.1804 | 0.3007 | improves Raw but below 1e-5 |
 | DINOv3 B-contrastive 1e-5 ep8 weighted | 86.16% | 83.72% | 82.98% | 82.16% | 81.55% | 71.54% | 0.2465 | 0.3650 | best v2 top1 |
 | DINOv3 B-contrastive 1e-5 ep8 backbone | 85.64% | 84.28% | 83.34% | 82.61% | 81.93% | 70.58% | 0.2374 | 0.3503 | best v2 k3/k5/k7/k9 |
 | DINOv3 B-contrastive 1.2e-5 ep8 weighted | 81.03% | 78.74% | 77.28% | 76.50% | 75.93% | 55.00% | 0.1944 | 0.3216 | higher LR regresses below Raw |
@@ -498,6 +500,12 @@ Key artifacts:
   `D:\project\unknown-contrastive\result_grouping\260609_190025_wm811k_novel_v2_baseline_vs_dinov3_B_moco_lrb7e6_ep8_weighted`
 - v2 backbone result:
   `D:\project\unknown-contrastive\result_grouping\260609_190141_wm811k_novel_v2_dinov3_B_moco_lrb7e6_ep8_backbone`
+- DINOv3 9e-6 ep8 training run:
+  `D:\project\unknown-contrastive\runs\260609_195007_wm811k_novel_v2_dinov3_B_moco_q1024_ep8_lrb9e6`
+- v2 9e-6 weighted result:
+  `D:\project\unknown-contrastive\result_grouping\260609_200041_wm811k_novel_v2_baseline_vs_dinov3_B_moco_lrb9e6_ep8_weighted`
+- v2 9e-6 backbone result:
+  `D:\project\unknown-contrastive\result_grouping\260609_200153_wm811k_novel_v2_dinov3_B_moco_lrb9e6_ep8_backbone`
 - DINOv3 1e-5 ep8 training run:
   `D:\project\unknown-contrastive\runs\260609_190717_wm811k_novel_v2_dinov3_B_moco_q1024_ep8_lrb1e5`
 - v2 1e-5 weighted result:
@@ -527,5 +535,6 @@ best ARI setting in the tested grid, improving ARI/AMI to `0.2689/0.3990` with
 four clusters but still high noise (`76.50%`). Raising `lr_backbone` to
 `1.2e-5` reduced training NCE further (`0.3400` at epoch 8) but hurt novel-C
 top-k below Raw FCMAE, so NCE decrease alone is not a sufficient selection
-criterion. The current v2 sweet spot remains full-backbone DINOv3 at `1e-5`
-for 8 epochs.
+criterion. Lowering to `9e-6` still improves over Raw FCMAE but does not match
+`1e-5`. The current v2 sweet spot remains full-backbone DINOv3 at `1e-5` for
+8 epochs.
