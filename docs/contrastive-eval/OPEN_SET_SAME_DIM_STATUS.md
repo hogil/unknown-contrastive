@@ -730,3 +730,9 @@ result is:
 This gives a final ARI gain of `+0.2584` over Raw FCMAE (`+123.2%` relative).
 Do not describe this as an HDBSCAN improvement claim; HDBSCAN remains a separate
 operational clustering branch with its own noise/threshold tradeoff.
+
+Follow-up LR scan: `lr_backbone=5e-6` was also tested on the same setup with
+CUDA. It converged (`loss 1.4233 -> 0.8184`) but did not beat the selected
+`3e-6` epoch-4 model. Its best primary ARI was epoch 3 (`0.4575`), below
+`3e-6` epoch 4 (`0.4681`). Details are in
+`D:\project\unknown-contrastive\docs\contrastive-eval\PAPER_ABLATION_WATERFALL.md`.

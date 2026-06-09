@@ -33,6 +33,33 @@ HDBSCAN noise threshold.
 | S2 vs S0 | +0.1076 | +0.0790 | +51.3% |
 | S3 vs S0 | +0.2584 | +0.2162 | +123.2% |
 
+## Fine-Tune Epoch/LR Scan
+
+The final stage is selected by held-out novel ARI, not by the training loss
+alone.
+
+- `3e-6` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_ep4.npy`
+- `5e-6` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr5e6_cuda_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr5e6_cuda_ep4.npy`
+
+| LR backbone | Epoch | ARI | NMI | AMI | ARI_hdb |
+|---:|---:|---:|---:|---:|---:|
+| 3e-6 | 1 | 0.3618 | 0.3397 | 0.3389 | 0.3552 |
+| 3e-6 | 2 | 0.4357 | 0.4014 | 0.4007 | 0.1624 |
+| 3e-6 | 3 | 0.4493 | 0.4100 | 0.4093 | 0.1837 |
+| 3e-6 | 4 | 0.4681 | 0.4328 | 0.4321 | 0.3717 |
+| 5e-6 | 1 | 0.3501 | 0.3239 | 0.3231 | 0.1670 |
+| 5e-6 | 2 | 0.3731 | 0.3519 | 0.3511 | 0.1701 |
+| 5e-6 | 3 | 0.4575 | 0.4193 | 0.4186 | 0.2046 |
+| 5e-6 | 4 | 0.4479 | 0.4305 | 0.4298 | 0.1741 |
+
+Best by primary ARI is `3e-6`, epoch 4.
+
 ## Interpretation
 
 Use this table for the main paper claim:
