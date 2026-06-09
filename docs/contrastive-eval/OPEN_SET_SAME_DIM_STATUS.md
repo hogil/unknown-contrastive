@@ -481,6 +481,8 @@ Same C novel eval, same 128-dimensional comparison:
 | embedding | top1 | k3 | k5 | k7 | k9 | HDBSCAN noise | ARI | AMI | result |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | Raw FCMAE | 82.25% | 79.84% | 78.17% | 77.22% | 76.68% | 55.70% | 0.1453 | 0.2817 | baseline |
+| Raw DINOv3 frozen | 75.20% | 74.04% | 73.07% | 72.04% | 70.98% | 58.05% | 0.1028 | 0.1936 | frozen DINOv3 alone is weaker on v2 |
+| TPAT ConvNeXtV2 A-CNN backbone | 87.55% | 85.23% | 83.46% | 82.95% | 82.43% | 29.85% | 0.1729 | 0.2580 | best v2 top-k baseline |
 | DINOv3 B-contrastive 7e-6 ep8 weighted | 84.25% | 81.64% | 80.87% | 80.16% | 79.56% | 81.90% | 0.1755 | 0.2736 | repeats v1 kNN gain |
 | DINOv3 B-contrastive 7e-6 ep8 backbone | 84.33% | 82.22% | 81.04% | 80.29% | 79.74% | 81.20% | 0.1785 | 0.2757 | first v2 gain |
 | DINOv3 B-contrastive 9e-6 ep8 weighted | 83.81% | 82.59% | 81.17% | 80.48% | 79.70% | 72.67% | 0.2156 | 0.3287 | improves Raw but below 1e-5 |
@@ -496,6 +498,12 @@ Key artifacts:
 
 - v2 split summary:
   `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v2\summary.json`
+- Raw FCMAE + Raw DINOv3 + TPAT ConvNeXtV2 baseline result:
+  `D:\project\unknown-contrastive\result_grouping\260609_204642_wm811k_novel_v2_rawfcmae_dinov3_tpat_convnextv2_baselines`
+- TPAT ConvNeXtV2 A-CNN training run:
+  `D:\project\unknown-contrastive\runs\260609_203204_cnn_ddp`
+- TPAT ConvNeXtV2 A-CNN checkpoint:
+  `D:\project\unknown-contrastive\runs\260609_203204_cnn_ddp\cnn\best_model.pth`
 - DINOv3 7e-6 ep8 training run:
   `D:\project\unknown-contrastive\runs\260609_184928_wm811k_novel_v2_dinov3_B_moco_q1024_ep8_lrb7e6`
 - v2 weighted result:
@@ -529,21 +537,20 @@ Key artifacts:
 - v2 1.2e-5 backbone result:
   `D:\project\unknown-contrastive\result_grouping\260609_194427_wm811k_novel_v2_dinov3_B_moco_lrb1p2e5_ep8_backbone`
 
-Interpretation: the DINOv3 contrastive improvement is not unique to the v1
-class split. On v2, Raw FCMAE is weaker because the novel set is harder
-(`Loc`, `Scratch`, `Near-full`), and DINOv3 B-contrastive still improves same-dim
-kNN by up to +3.9 top1 points and +5.2 k5 points. The `1e-5` recipe is now the
-strongest v2 setting. HDBSCAN noise is still higher than Raw FCMAE under the
-same clustering parameters, but ARI/AMI also improve versus Raw FCMAE, so this
-is no longer just a top-k-only gain; the embedding quality is moving in the
-right direction, while deployment HDBSCAN thresholds still need a separate
-tuning pass. A first HDBSCAN sweep on the `1e-5` weighted embedding found
-`cluster_selection_method=leaf`, `min_cluster_size=20`, `min_samples=5` as the
-best ARI setting in the tested grid, improving ARI/AMI to `0.2689/0.3990` with
-four clusters but still high noise (`76.50%`). Raising `lr_backbone` to
-`1.2e-5` reduced training NCE further (`0.3400` at epoch 8) but hurt novel-C
-top-k below Raw FCMAE, so NCE decrease alone is not a sufficient selection
-criterion. Lowering to `9e-6` still improves over Raw FCMAE but does not match
-`1e-5`. A narrow test just above the peak (`1.05e-5`) lowers HDBSCAN noise but
-also lowers top-k, so the current v2 embedding sweet spot remains full-backbone
-DINOv3 at `1e-5` for 8 epochs.
+Interpretation: the v2 improvement is not simply "DINOv3 is stronger". Frozen
+DINOv3 alone is worse than Raw FCMAE on this split. The DINOv3 gain appears only
+after low-LR full-backbone contrastive adaptation on B (`Donut`, `Edge-Ring`),
+where the `1e-5` recipe improves same-dim kNN by up to +3.9 top1 points and +5.2
+k5 points over Raw FCMAE. However, the fair A-class TPAT ConvNeXtV2 baseline is
+currently the strongest v2 top-k embedding, improving Raw FCMAE by +5.3 top1
+points and +5.3 k5 points on C (`Loc`, `Scratch`, `Near-full`) without seeing
+those C classes. HDBSCAN interpretation is more mixed: TPAT top-k is best
+but produces only two clusters under the fixed eom parameters, while DINOv3
+contrastive gives better ARI/AMI than Raw FCMAE and should still be evaluated
+with a separate HDBSCAN threshold sweep. A first HDBSCAN sweep on the DINOv3
+`1e-5` weighted embedding found `cluster_selection_method=leaf`,
+`min_cluster_size=20`, `min_samples=5` as the best ARI setting in the tested
+grid, improving ARI/AMI to `0.2689/0.3990` with four clusters but still high
+noise (`76.50%`). Raising `lr_backbone` to `1.2e-5` reduced training NCE further
+(`0.3400` at epoch 8) but hurt novel-C top-k below Raw FCMAE, so NCE decrease
+alone is not a sufficient selection criterion.
