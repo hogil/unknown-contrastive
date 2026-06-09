@@ -406,6 +406,8 @@ Same C novel eval, same 128-dimensional comparison:
 | DINOv3 B-contrastive 8.5e-6 backbone | 93.73% | 92.76% | 92.49% | 92.04% | 91.72% | 51.00% | 0.2671 | 0.4384 | midpoint regresses |
 | DINOv3 B-contrastive last-stage 3e-5 weighted | 89.40% | 88.60% | 87.61% | 86.82% | 86.24% | 44.40% | 0.3223 | 0.4463 | last-stage only hurts kNN |
 | DINOv3 B-contrastive last-stage 3e-5 backbone | 91.07% | 90.11% | 89.15% | 88.49% | 88.15% | 34.13% | 0.2785 | 0.3024 | last-stage only hurts kNN |
+| DINOv3 B-contrastive 1e-5 ep12 weighted | 93.67% | 92.44% | 92.11% | 91.62% | 91.38% | 46.40% | 0.2624 | 0.3340 | longer train overfits C novel |
+| DINOv3 B-contrastive 1e-5 ep12 backbone | 93.53% | 92.53% | 92.07% | 91.70% | 91.45% | 65.07% | 0.1776 | 0.3487 | longer train overfits C novel |
 
 Key artifacts:
 
@@ -431,6 +433,10 @@ Key artifacts:
   `D:\project\unknown-contrastive\result_grouping\260609_180206_wm811k_novel_v1_baseline_vs_dinov3_B_moco_laststage_lrb3e5_weighted`
 - DINOv3 last-stage 3e-5 backbone result:
   `D:\project\unknown-contrastive\result_grouping\260609_180331_wm811k_novel_v1_dinov3_B_moco_laststage_lrb3e5_backbone`
+- DINOv3 1e-5 ep12 weighted result:
+  `D:\project\unknown-contrastive\result_grouping\260609_182532_wm811k_novel_v1_baseline_vs_dinov3_B_moco_lrb1e5_ep12_weighted`
+- DINOv3 1e-5 ep12 backbone result:
+  `D:\project\unknown-contrastive\result_grouping\260609_182658_wm811k_novel_v1_dinov3_B_moco_lrb1e5_ep12_backbone`
 
 Interpretation: DINOv3 is useful on this split. Frozen DINOv3 does not beat Raw
 FCMAE top1, but it gives much denser HDBSCAN clusters. With B-contrastive
@@ -440,4 +446,6 @@ setting is `lr_backbone=1e-5` with backbone embedding. The `8.5e-6` midpoint
 regressed, so the LR response is not monotonic. Last-stage-only unfreeze with
 `lr_backbone=3e-5` also regressed strongly on kNN despite a normal NCE decrease,
 so the useful DINOv3 adaptation path remains low-LR full-backbone unfreeze.
-Projection-only remains the wrong deployment embedding.
+Extending the strongest `1e-5` recipe from 8 to 12 epochs lowered NCE further
+but reduced novel-C kNN, which is evidence of overfitting to B rather than better
+open-set transfer. Projection-only remains the wrong deployment embedding.
