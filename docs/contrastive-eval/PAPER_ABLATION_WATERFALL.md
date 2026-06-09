@@ -159,7 +159,8 @@ kept as a separate operational diagnostic.
 
 After selecting `lr_head=5e-4`, the backbone LR was bracketed around `2e-6`.
 Raising it slightly to `2.5e-6` improved both the paper-primary ARI and the
-auxiliary HDBSCAN ARI. Lowering it to `1.5e-6` was weaker.
+auxiliary HDBSCAN ARI. Lowering it to `1.5e-6` was weaker, and raising it
+further to `3e-6` also dropped below the selected model.
 
 - `lr_backbone=1.5e-6`, `lr_head=5e-4` embeddings:
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr1p5e6_head5e4_ep1.npy`
@@ -169,6 +170,10 @@ auxiliary HDBSCAN ARI. Lowering it to `1.5e-6` was weaker.
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_ep1.npy`
   through
   `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_ep6.npy`
+- `lr_backbone=3e-6`, `lr_head=5e-4` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr3e6_head5e4_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr3e6_head5e4_ep6.npy`
 
 | LR backbone | LR head | Epoch | ARI | NMI | AMI | ARI_hdb |
 |---:|---:|---:|---:|---:|---:|---:|
@@ -177,6 +182,8 @@ auxiliary HDBSCAN ARI. Lowering it to `1.5e-6` was weaker.
 | 2.0e-6 | 5e-4 | 5 | 0.5143 | 0.4671 | 0.4664 | 0.2039 |
 | 2.5e-6 | 5e-4 | 5 | 0.5294 | 0.4619 | 0.4612 | 0.4477 |
 | 2.5e-6 | 5e-4 | 6 | 0.4970 | 0.4298 | 0.4291 | 0.2534 |
+| 3.0e-6 | 5e-4 | 5 | 0.5024 | 0.4618 | 0.4611 | 0.2128 |
+| 3.0e-6 | 5e-4 | 6 | 0.4661 | 0.3991 | 0.3984 | 0.3691 |
 
 The selected final model is now `lr_backbone=2.5e-6`, `lr_head=5e-4`, epoch 5.
 It improves ARI from `0.5143` to `0.5294` and also gives a stronger auxiliary
