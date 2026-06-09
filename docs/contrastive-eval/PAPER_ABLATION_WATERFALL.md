@@ -221,6 +221,23 @@ temperature improved held-out novel ARI.
 Best tested non-default temperature is `TEMP=0.03` epoch 4 (`0.4451`), below
 the selected final model (`0.5294`).
 
+The selected full-unfreeze recipe was also retested with a closer lower
+temperature, `TEMP=0.04`, while keeping `lr_backbone=2.5e-6` and
+`lr_head=5e-4`.
+
+- `TEMP=0.04` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_temp004_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_all_lr2p5e6_head5e4_temp004_ep6.npy`
+
+| Temp | LR backbone | LR head | Epoch | ARI | NMI | AMI | ARI_hdb |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.05 | 2.5e-6 | 5e-4 | 5 | 0.5294 | 0.4619 | 0.4612 | 0.4477 |
+| 0.04 | 2.5e-6 | 5e-4 | 5 | 0.4969 | 0.4622 | 0.4616 | 0.2010 |
+| 0.04 | 2.5e-6 | 5e-4 | 6 | 0.4851 | 0.4193 | 0.4186 | 0.1948 |
+
+This keeps `TEMP=0.05` for the selected recipe.
+
 ## False-Negative Ignore Threshold Check
 
 Changing the false-negative ignore threshold was tested in both directions.

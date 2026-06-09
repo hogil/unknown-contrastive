@@ -769,6 +769,10 @@ recipe keeps `TEMP=0.05`.
 Raising InfoNCE temperature to `0.07` was also tested and was worse (`0.4259`
 best ARI). The temperature check currently supports keeping `TEMP=0.05`.
 
+The current selected recipe was also retested at `TEMP=0.04` with
+`lr_backbone=2.5e-6` and `lr_head=5e-4`; its best ARI was `0.4969`, below the
+selected `TEMP=0.05` model (`0.5294`).
+
 Raising the false-negative ignore threshold to `0.8` was also tested. It reached
 only `0.4479` ARI, below the selected `ignore=0.7` model (`0.5294`).
 
