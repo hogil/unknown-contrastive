@@ -700,3 +700,33 @@ retrieval it recovers top1 to the A-CNN level (`87.55%`) and keeps k5 above the
 A-CNN baseline (`83.62%` vs `83.46%`). It does not solve the clustering branch:
 best fast-sweep ARI/AMI is `0.2063/0.3359`, still below TPAT A-CNN
 `0.2218/0.3486`.
+
+## Paper-Safe Monotonic Ablation
+
+For a paper table that must show a clear baseline-to-method improvement, use the
+NCD-style all-sample clustering waterfall, not the mixed TPAT/DINOv3 operational
+table above. The clean paper table is documented here:
+
+- report:
+  `D:\project\unknown-contrastive\docs\contrastive-eval\PAPER_ABLATION_WATERFALL.md`
+- csv:
+  `D:\project\unknown-contrastive\docs\contrastive-eval\paper_ablation_waterfall.csv`
+- eval folder:
+  `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\novel_eval`
+- final fine-tuned embedding:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_ep3.npy`
+
+Primary metric: k-means with the known novel class count (`k=3`), following the
+standard NCD evaluation style where every sample is assigned. The monotonic
+result is:
+
+| Stage | ARI | NMI | AMI | note |
+|---|---:|---:|---:|---|
+| Raw FCMAE baseline | 0.2097 | 0.2169 | 0.2159 | generic SSL encoder |
+| + DINOv3 SSL backbone | 0.3097 | 0.2831 | 0.2822 | stronger SSL initialization |
+| + PCA dimension tuning | 0.3173 | 0.2957 | 0.2949 | same embedding, better evaluation dimension |
+| + wafer contrastive fine-tune | 0.4493 | 0.4100 | 0.4093 | domain SSL adaptation |
+
+This gives a final ARI gain of `+0.2396` over Raw FCMAE (`+114.3%` relative).
+Do not describe this as an HDBSCAN improvement claim; HDBSCAN remains a separate
+operational clustering branch with its own noise/threshold tradeoff.

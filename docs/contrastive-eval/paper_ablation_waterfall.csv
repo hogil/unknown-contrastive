@@ -1,0 +1,5 @@
+stage,method,ARI,NMI,AMI,Completeness,Homogeneity,ARI_gain_vs_S0,AMI_gain_vs_S0
+S0,Raw FCMAE baseline,0.2097,0.2169,0.2159,0.2208,0.2131,0.0000,0.0000
+S1,+ DINOv3 SSL backbone,0.3097,0.2831,0.2822,0.2916,0.2751,0.1000,0.0663
+S2,+ PCA dimension tuning,0.3173,0.2957,0.2949,0.2965,0.2950,0.1076,0.0790
+S3,+ wafer contrastive fine-tune,0.4493,0.4100,0.4093,0.4145,0.4056,0.2396,0.1934
