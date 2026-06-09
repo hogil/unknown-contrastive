@@ -133,6 +133,27 @@ temperature improved held-out novel ARI.
 Best tested non-default temperature is `TEMP=0.03` epoch 4 (`0.4451`), below
 the selected `TEMP=0.05` model (`0.4681`).
 
+## False-Negative Ignore Threshold Check
+
+Raising the false-negative ignore threshold from `0.7` to `0.8` was tested. This
+ignores fewer similar negatives and therefore applies a stronger repulsion to
+nearby samples, but it did not improve held-out novel ARI.
+
+- `ignore=0.8` embeddings:
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_ignore080_cuda_ep1.npy`
+  through
+  `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\ft_embeddings\ft_laststage_lr3e6_ignore080_cuda_ep4.npy`
+
+| Ignore threshold | Epoch | ARI | NMI | AMI | ARI_hdb |
+|---:|---:|---:|---:|---:|---:|
+| 0.8 | 1 | 0.3389 | 0.3111 | 0.3103 | 0.0397 |
+| 0.8 | 2 | 0.3857 | 0.3608 | 0.3600 | 0.1691 |
+| 0.8 | 3 | 0.4395 | 0.4016 | 0.4008 | 0.1969 |
+| 0.8 | 4 | 0.4479 | 0.4175 | 0.4168 | 0.0263 |
+
+Best `ignore=0.8` ARI is `0.4479`, below the selected `ignore=0.7` model
+(`0.4681`).
+
 ## Interpretation
 
 Use this table for the main paper claim:
