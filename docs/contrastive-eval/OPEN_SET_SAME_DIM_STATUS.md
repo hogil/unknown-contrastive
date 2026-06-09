@@ -402,6 +402,10 @@ Same C novel eval, same 128-dimensional comparison:
 | DINOv3 B-contrastive 7e-6 backbone | 95.33% | 93.53% | 92.83% | 92.53% | 92.32% | 53.87% | 0.2706 | 0.4350 | best top1 |
 | DINOv3 B-contrastive 1e-5 weighted | 94.53% | 93.51% | 93.27% | 93.12% | 92.85% | 54.87% | 0.2729 | 0.4346 | best weighted k5/k7/k9 |
 | DINOv3 B-contrastive 1e-5 backbone | 94.33% | 93.42% | 93.31% | 93.13% | 92.97% | 57.87% | 0.2390 | 0.4134 | best k5/k7/k9 |
+| DINOv3 B-contrastive 8.5e-6 weighted | 93.60% | 92.91% | 92.37% | 91.96% | 91.56% | 50.73% | 0.2766 | 0.4434 | midpoint regresses |
+| DINOv3 B-contrastive 8.5e-6 backbone | 93.73% | 92.76% | 92.49% | 92.04% | 91.72% | 51.00% | 0.2671 | 0.4384 | midpoint regresses |
+| DINOv3 B-contrastive last-stage 3e-5 weighted | 89.40% | 88.60% | 87.61% | 86.82% | 86.24% | 44.40% | 0.3223 | 0.4463 | last-stage only hurts kNN |
+| DINOv3 B-contrastive last-stage 3e-5 backbone | 91.07% | 90.11% | 89.15% | 88.49% | 88.15% | 34.13% | 0.2785 | 0.3024 | last-stage only hurts kNN |
 
 Key artifacts:
 
@@ -419,10 +423,21 @@ Key artifacts:
   `D:\project\unknown-contrastive\result_grouping\260609_173010_wm811k_novel_v1_baseline_vs_dinov3_B_moco_lrb1e5_weighted`
 - DINOv3 1e-5 backbone result:
   `D:\project\unknown-contrastive\result_grouping\260609_173014_wm811k_novel_v1_dinov3_B_moco_lrb1e5_backbone`
+- DINOv3 8.5e-6 weighted result:
+  `D:\project\unknown-contrastive\result_grouping\260609_175058_wm811k_novel_v1_baseline_vs_dinov3_B_moco_lrb8p5e6_weighted`
+- DINOv3 8.5e-6 backbone result:
+  `D:\project\unknown-contrastive\result_grouping\260609_175103_wm811k_novel_v1_dinov3_B_moco_lrb8p5e6_backbone`
+- DINOv3 last-stage 3e-5 weighted result:
+  `D:\project\unknown-contrastive\result_grouping\260609_180206_wm811k_novel_v1_baseline_vs_dinov3_B_moco_laststage_lrb3e5_weighted`
+- DINOv3 last-stage 3e-5 backbone result:
+  `D:\project\unknown-contrastive\result_grouping\260609_180331_wm811k_novel_v1_dinov3_B_moco_laststage_lrb3e5_backbone`
 
 Interpretation: DINOv3 is useful on this split. Frozen DINOv3 does not beat Raw
 FCMAE top1, but it gives much denser HDBSCAN clusters. With B-contrastive
 fine-tuning, DINOv3 beats Raw FCMAE on same-dim kNN. The best single-neighbor
 setting is `lr_backbone=7e-6` with backbone embedding. The best broader top-k
-setting is `lr_backbone=1e-5` with backbone embedding. Projection-only remains
-the wrong deployment embedding.
+setting is `lr_backbone=1e-5` with backbone embedding. The `8.5e-6` midpoint
+regressed, so the LR response is not monotonic. Last-stage-only unfreeze with
+`lr_backbone=3e-5` also regressed strongly on kNN despite a normal NCE decrease,
+so the useful DINOv3 adaptation path remains low-LR full-backbone unfreeze.
+Projection-only remains the wrong deployment embedding.
