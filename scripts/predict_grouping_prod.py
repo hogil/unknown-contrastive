@@ -62,6 +62,7 @@ MIN_CLUSTER_SIZE    = 12
 MIN_SAMPLES         = 15
 CLUSTER_SELECTION_METHOD = "leaf"
 CLUSTER_SELECTION_EPSILON = 0.06
+NOISE_REASSIGN     = "none"       # none / nearest_q80 / nearest_q90 / assign_all
 
 # Backbone (같은 architecture 가정)
 BACKBONE            = "convnextv2_base.fcmae_ft_in22k_in1k_384"
@@ -381,6 +382,56 @@ def save_reference_composites(reference_dir: Path, label: str, cluster_size: int
     return rows
 
 
+def reassign_noise_to_nearest_cluster(embeddings: np.ndarray, pred: np.ndarray,
+                                      mode: str) -> tuple[np.ndarray, dict]:
+    """HDBSCAN noise(-1)를 seed cluster centroid에 붙인다.
+
+    HDBSCAN은 seed cluster를 자르는 데 쓰고, noise는 nearest centroid로 후처리한다.
+    """
+    mode = str(mode or "none").lower()
+    info = {
+        "mode": mode,
+        "seed_n_noise": int((pred == -1).sum()),
+        "n_reassigned": 0,
+        "assign_quantile": None,
+    }
+    if mode == "none":
+        return pred, info
+    quantile = {"nearest_q80": 0.80, "nearest_q90": 0.90, "assign_all": None}.get(mode)
+    if mode not in {"nearest_q80", "nearest_q90", "assign_all"}:
+        raise ValueError(f"unknown NOISE_REASSIGN: {mode}")
+
+    out = np.asarray(pred, dtype=int).copy()
+    cluster_ids = sorted(int(c) for c in set(out.tolist()) if int(c) >= 0)
+    noise_idx = np.where(out == -1)[0]
+    if not cluster_ids or len(noise_idx) == 0:
+        return out, info
+
+    emb = embeddings.astype(np.float32, copy=False)
+    emb = emb / np.maximum(np.linalg.norm(emb, axis=1, keepdims=True), 1e-12)
+    centers = []
+    for cid in cluster_ids:
+        center = emb[out == cid].mean(axis=0)
+        center = center / max(float(np.linalg.norm(center)), 1e-12)
+        centers.append(center)
+    centers = np.stack(centers, axis=0).astype(np.float32, copy=False)
+
+    dist = 1.0 - (emb[noise_idx] @ centers.T)
+    best_j = dist.argmin(axis=1)
+    best_d = dist[np.arange(len(noise_idx)), best_j]
+    if quantile is None:
+        keep = np.ones(len(noise_idx), dtype=bool)
+    else:
+        threshold = float(np.quantile(best_d, quantile))
+        keep = best_d <= threshold
+        info["assign_quantile"] = float(quantile)
+
+    for idx, j in zip(noise_idx[keep], best_j[keep]):
+        out[int(idx)] = cluster_ids[int(j)]
+    info["n_reassigned"] = int(keep.sum())
+    return out, info
+
+
 def save_grouping_representatives(output_subdir: Path, embeddings: np.ndarray,
                                   pred: np.ndarray, paths: list[str],
                                   per_cluster: int) -> int:
@@ -660,6 +711,20 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
         metric="euclidean",
     )
     pred = clusterer.fit_predict(embeddings)
+    seed_pred = pred.copy()
+    reassign_info = {
+        "mode": str(NOISE_REASSIGN),
+        "seed_n_noise": int((seed_pred == -1).sum()),
+        "n_reassigned": 0,
+        "assign_quantile": None,
+    }
+    if str(NOISE_REASSIGN).lower() != "none":
+        pred, reassign_info = reassign_noise_to_nearest_cluster(
+            embeddings, pred, NOISE_REASSIGN)
+        print(f"[cluster] noise_reassign={reassign_info['mode']} "
+              f"seed_noise={reassign_info['seed_n_noise']} "
+              f"reassigned={reassign_info['n_reassigned']} "
+              f"final_noise={int((pred == -1).sum())}", flush=True)
     n_clusters = len(set(p for p in pred if p >= 0))
     n_noise = int((pred == -1).sum())
     from collections import Counter
@@ -684,6 +749,7 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
         df = pd.DataFrame({
             "path": all_path,
             "group_id": pred.astype(int),
+            "seed_group_id": seed_pred.astype(int),
             "product": [product] * len(all_path),
             "line": [line] * len(all_path),
             "date": [date] * len(all_path),
@@ -710,6 +776,9 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
         "n_clusters": n_clusters,
         "n_noise": n_noise,
         "noise_pct": round(n_noise / len(pred) * 100, 2),
+        "noise_reassign": reassign_info,
+        "seed_n_noise": int(reassign_info["seed_n_noise"]),
+        "seed_noise_pct": round(int(reassign_info["seed_n_noise"]) / len(seed_pred) * 100, 2),
         "largest_group_size": int(largest_group),
         "largest_group_pct": round(largest_group_pct, 2),
         "top_groups": [
@@ -779,7 +848,7 @@ def _apply_args():
     global MODEL_PATH, IMAGE_ROOT, IMAGE_BASE, IMAGE_ROOTS, POOL, POOL_NAME
     global OUTPUT_DIR, COPY_PNG_TO_GROUPS, SAVE_REPRESENTATIVES, REPS_PER_CLUSTER
     global SAVE_REFERENCE_COMPOSITES, REFERENCE_COMPOSITE_MAX_PX
-    global REPRESENTATIVES_ONLY, MIN_CLUSTER_SIZE, MIN_SAMPLES
+    global REPRESENTATIVES_ONLY, MIN_CLUSTER_SIZE, MIN_SAMPLES, NOISE_REASSIGN
     global CLUSTER_SELECTION_METHOD, CLUSTER_SELECTION_EPSILON
     global IMG_SIZE, BATCH, NUM_WORKERS, PREFETCH_FACTOR, PROGRESS_EVERY
     global INFER_EMBED_MODE, INFER_BACKBONE_WEIGHT, INFER_PROJ_WEIGHT
@@ -821,6 +890,9 @@ def _apply_args():
     ap.add_argument("--cluster-selection-method", type=str, default=None,
                     choices=["eom", "leaf"])
     ap.add_argument("--cluster-selection-epsilon", type=float, default=None)
+    ap.add_argument("--noise-reassign", type=str, default=None,
+                    choices=["none", "nearest_q80", "nearest_q90", "assign_all"],
+                    help="HDBSCAN noise(-1)를 seed cluster centroid에 재배정. 기본 none.")
     a = ap.parse_args()
     if a.model:            MODEL_PATH = a.model
     if a.image_roots:      IMAGE_ROOTS = [x.strip() for x in a.image_roots.split(",") if x.strip()]
@@ -850,6 +922,8 @@ def _apply_args():
         CLUSTER_SELECTION_METHOD = a.cluster_selection_method
     if a.cluster_selection_epsilon is not None:
         CLUSTER_SELECTION_EPSILON = a.cluster_selection_epsilon
+    if a.noise_reassign is not None:
+        NOISE_REASSIGN = a.noise_reassign
 
 
 def _pipeline_summary_model(run_dir: Path) -> Path | None:

@@ -3,7 +3,7 @@
 
 This is an eval-only script:
 - labels are used only for metrics, not for training;
-- Normal is excluded from metrics by default;
+- Normal/Random are excluded from metrics by default;
 - raw FCMAE, CNN backbone, and contrastive checkpoints are compared after
   reducing all embeddings to the same PCA dimension.
 """
@@ -92,7 +92,7 @@ def parse_args():
     p.add_argument("--batch", type=int, default=16)
     p.add_argument("--pca-dim", type=int, default=128)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--ignore-class", action="append", default=["Normal"])
+    p.add_argument("--ignore-class", action="append", default=["Normal", "Random", "R"])
     p.add_argument(
         "--contrastive-embed-mode",
         default="projection",
@@ -105,6 +105,12 @@ def parse_args():
         "--cluster-selection-method", default="eom", choices=["eom", "leaf"]
     )
     p.add_argument("--cluster-selection-epsilon", type=float, default=0.0)
+    p.add_argument(
+        "--noise-reassign",
+        default="none",
+        choices=["none", "nearest_q80", "nearest_q90", "assign_all"],
+        help="HDBSCAN noise(-1)를 seed cluster centroid에 재배정.",
+    )
     p.add_argument("--no-tsne", action="store_true")
     p.add_argument("--tsne-max", type=int, default=2000)
     return p.parse_args()
@@ -441,6 +447,51 @@ def purity_score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(score / total)
 
 
+def reassign_noise_to_nearest_cluster(emb: np.ndarray, pred: np.ndarray, mode: str):
+    """HDBSCAN seed cluster 기준으로 noise(-1)를 nearest centroid에 붙인다."""
+    mode = str(mode or "none").lower()
+    info = {
+        "mode": mode,
+        "seed_noise": int(np.sum(pred == -1)),
+        "noise_reassigned": 0,
+        "assign_quantile": None,
+    }
+    if mode == "none":
+        return pred, info
+    quantile = {"nearest_q80": 0.80, "nearest_q90": 0.90, "assign_all": None}.get(mode)
+    if mode not in {"nearest_q80", "nearest_q90", "assign_all"}:
+        raise ValueError(f"unknown noise reassign mode: {mode}")
+
+    out = np.asarray(pred, dtype=int).copy()
+    clusters = sorted(int(x) for x in np.unique(out) if int(x) >= 0)
+    noise_idx = np.where(out == -1)[0]
+    if not clusters or len(noise_idx) == 0:
+        return out, info
+
+    z = emb.astype(np.float32, copy=False)
+    z = z / (np.linalg.norm(z, axis=1, keepdims=True) + 1e-12)
+    centers = []
+    for c in clusters:
+        ctr = z[out == c].mean(axis=0)
+        ctr = ctr / (np.linalg.norm(ctr) + 1e-12)
+        centers.append(ctr)
+    centers = np.stack(centers, axis=0).astype(np.float32, copy=False)
+
+    dist = 1.0 - (z[noise_idx] @ centers.T)
+    best_j = dist.argmin(axis=1)
+    best_d = dist[np.arange(len(noise_idx)), best_j]
+    if quantile is None:
+        keep = np.ones(len(noise_idx), dtype=bool)
+    else:
+        threshold = float(np.quantile(best_d, quantile))
+        keep = best_d <= threshold
+        info["assign_quantile"] = float(quantile)
+    for idx, j in zip(noise_idx[keep], best_j[keep]):
+        out[int(idx)] = clusters[int(j)]
+    info["noise_reassigned"] = int(keep.sum())
+    return out, info
+
+
 def hdbscan_metrics(emb: np.ndarray, y: np.ndarray, args) -> dict[str, Any]:
     try:
         import hdbscan
@@ -454,10 +505,31 @@ def hdbscan_metrics(emb: np.ndarray, y: np.ndarray, args) -> dict[str, Any]:
         cluster_selection_epsilon=args.cluster_selection_epsilon,
         allow_single_cluster=False,
     )
-    pred = clusterer.fit_predict(emb)
+    seed_pred = clusterer.fit_predict(emb)
+    pred, reassign_info = reassign_noise_to_nearest_cluster(
+        emb, seed_pred, args.noise_reassign)
     noise = int(np.sum(pred == -1))
     clusters = sorted(int(x) for x in np.unique(pred) if int(x) >= 0)
     counts = {str(c): int(np.sum(pred == c)) for c in clusters}
+    class_capture = []
+    class_image_capture = []
+    for cls in sorted(set(int(v) for v in y)):
+        cls_idx = np.where(y == cls)[0]
+        cls_total = int(len(cls_idx))
+        best = 0
+        found = 0
+        for c in clusters:
+            idx = np.where(pred == c)[0]
+            if len(idx) == 0:
+                continue
+            vals, cnts = np.unique(y[idx], return_counts=True)
+            dominant = int(vals[int(np.argmax(cnts))])
+            cls_count = int(np.sum(y[idx] == cls))
+            best = max(best, cls_count)
+            if dominant == cls and cls_count > 0:
+                found = 1
+        class_capture.append(found)
+        class_image_capture.append(best / max(1, cls_total))
     return {
         "skipped": False,
         "params": {
@@ -467,11 +539,19 @@ def hdbscan_metrics(emb: np.ndarray, y: np.ndarray, args) -> dict[str, Any]:
             "cluster_selection_method": args.cluster_selection_method,
             "cluster_selection_epsilon": args.cluster_selection_epsilon,
             "allow_single_cluster": False,
+            "noise_reassign": args.noise_reassign,
         },
+        "seed_noise": int(reassign_info["seed_noise"]),
+        "seed_noise_pct": float(reassign_info["seed_noise"] / max(1, len(seed_pred))),
+        "noise_reassigned": int(reassign_info["noise_reassigned"]),
+        "noise_reassign_mode": reassign_info["mode"],
+        "noise_reassign_quantile": reassign_info["assign_quantile"],
         "n_clusters": len(clusters),
         "noise": noise,
         "noise_pct": float(noise / max(1, len(pred))),
         "cluster_counts": counts,
+        "class_capture_rate": float(np.mean(class_capture)) if class_capture else 0.0,
+        "class_image_capture_rate": float(np.mean(class_image_capture)) if class_image_capture else 0.0,
         "ari": float(adjusted_rand_score(y, pred)),
         "ami": float(adjusted_mutual_info_score(y, pred)),
         "homogeneity": float(homogeneity_score(y, pred)),
@@ -542,8 +622,8 @@ def write_summary(out_dir: Path, diagnostics: dict[str, Any]):
         f"- ignored_classes: {diagnostics['ignore_classes']}",
         f"- same_vector_dim: {diagnostics['same_vector_dim']}",
         "",
-        "| stage | input dim | same dim | top1 | k3 | k5 | k7 | k9 | dist ratio | HDBSCAN clusters | noise | ARI | AMI |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| stage | input dim | same dim | top1 | k3 | k5 | k7 | k9 | dist ratio | capture | image cap | HDBSCAN clusters | seed noise | final noise | ARI | AMI |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for s in diagnostics["stages"]:
         r = s["knn_same_rate"]
@@ -553,7 +633,9 @@ def write_summary(out_dir: Path, diagnostics: dict[str, Any]):
             f"| {s['label']} | {s['pca']['input_dim']} | {s['embedding_dim']} | "
             f"{r['1']:.4f} | {r['3']:.4f} | {r['5']:.4f} | {r['7']:.4f} | {r['9']:.4f} | "
             f"{dm.get('nearest_other_over_intra_mean', 0.0):.4f} | "
-            f"{h.get('n_clusters', '-')} | {h.get('noise_pct', 0.0):.4f} | "
+            f"{h.get('class_capture_rate', 0.0):.4f} | {h.get('class_image_capture_rate', 0.0):.4f} | "
+            f"{h.get('n_clusters', '-')} | {h.get('seed_noise_pct', h.get('noise_pct', 0.0)):.4f} | "
+            f"{h.get('noise_pct', 0.0):.4f} | "
             f"{h.get('ari', 0.0):.4f} | {h.get('ami', 0.0):.4f} |"
         )
     lines.extend([
