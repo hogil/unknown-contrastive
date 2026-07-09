@@ -206,6 +206,57 @@ SupCon-style filter (positive-aware) 는 SSL 에서도 augmentation positive 활
 
 ---
 
+## D-15. Data anchor — defect avg 30 (분포) + Normal 전체
+
+**시점**: 사용자 정정 (2026-05-05). Iter 0 subset 사라짐 + Iter 0' dispatch wrong-data fail 후 새 anchor 정의.
+
+**사용자 명시**: "class별로 평균 30개 하고 class 별 분포 있게하자 그리고 normal은 전부 다 쓰고 전제로 새겨놓자".
+
+**채택 (★ 전제)**:
+- defect class 38개 — per-class 평균 ≈ 30, random 분포 (uniform 등 — 첫 dispatch 시 사용자 confirm)
+- `Normal_bank_boundary` — source 전체 사용
+- 모든 method ablation Iter 0/1/2... 의 same-data anchor
+- 첫 build 시 file_list.parquet 자동 저장 → 재현 보장
+- 이후 method ablation 도중 data spec 변경 금지 (D-13 atomic 정책 + feedback_atomic_method_iteration.md 와 호환)
+
+**거부 / 폐기**:
+- defect class 일률 200 / 100 / 30 (분포 손상)
+- Normal 1000 sub-sampling (이전 Iter 0 spec) — 폐기
+- Iter 0 (overall) 의 Normal 1000 + per-class 200 spec 은 historical reference 로만 보존
+
+**rationale**: production class imbalance 흉내 (Normal 우세 + defect 변동 많음) + sample efficiency 검증 (avg 30 → method 효과가 sample size 가 아니라 진짜 method 차이로 드러남).
+
+---
+
+## D-16. (260610) P1 정의 정합화 — capture 우선 + Random 채점 제외
+
+**발견**: D-3 의 P1 문구("모든 defect class 가 ≥1 group" = 이진)와 구현
+(`scripts/train_contrastive.py` `class_capture_rate` = 클래스별 최대 단일 그룹 점유율 평균 = 연속값)
+불일치 — 사용자 지적 "대표 그룹이 있는 클래스 들의 합 / 전체 클래스 가 맞지 않나".
+
+**채택 (★ 사용자 최종 확정, 260610)**: capture 는 표준 용어가 아닌 우리 정의 — 사용자 정의로 고정.
+- **capture** (P1 본체, 이진 비율): **메인(다수) 클래스로 등장한 클래스 수 / 전체 클래스 수**.
+  예: 클래스 10종인데 클러스터들의 메인 클래스가 2종류뿐 → capture = 2/10.
+  "각 불량 유형의 대표 그룹이 존재해서 발견 가능한가" 그 자체.
+- **image_capture** (보조, 연속): 자기가 메인인 클러스터에 회수된 이미지 비율의 클래스 평균.
+  발견된 유형들이 이미지를 얼마나 충실히 모았는지 — capture 동률 시 tiebreak.
+
+**rationale**: P1 = 발견 가능성 (사용자 "대표 그룹이 있는 클래스들의 합 / 전체 클래스").
+둘 다 잡탕 그룹 셋방살이(자기가 메인이 아닌 cluster 의 샘플)에는 점수 안 줌 —
+거대 잡탕 1덩어리면 capture = 1/N 으로 정직하게 바닥.
+
+**추가 (같은 날)**: **Random 클래스 채점 제외** — "특정 모양이 아니라서 성능 측정에 들어가면 안 된다".
+클러스터링/학습엔 포함, GT=Random 만 metric drop (none-class 정책과 동일 패턴).
+novel_eval → Donut/Edge-Loc 1000장 k=2 / field cca → 7 class 채점.
+구현: `_field_pipeline.py`, `_sweep_supervisor.py`.
+
+**추가 2 (같은 날, 사용자)**: **"Random 과 Normal 은 noise 다"** — 두 클래스의 정답 배치 = HDBSCAN noise(-1).
+→ 채점 제외에 더해 전용 지표 `nzcls_to_noise` 신설: Random/Normal 이 올바르게 noise 로 빠진 비율
+(높을수록 좋음). defect 의 noise% (낮을수록 좋음) 와 방향이 반대인 별도 컬럼.
+MixedWM38 풀에서는 {R, Normal} 적용.
+
+---
+
 ## 참고
 
 - 모든 metric 정의 → `METRICS.md`

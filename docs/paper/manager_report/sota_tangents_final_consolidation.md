@@ -115,8 +115,8 @@ Oracle ceiling: NEW + Agglo Ward K=42 → **0.901 ± 0.022**.
 **우리 baseline 과 직접 비교**:
 - 우리 NEW + HDBSCAN(eom mcs=12) ARI = **0.859** ≫ DECOR ARI 0.296 (MixedWM38).
 - 단 **dataset 다름** — MixedWM38 = 38 mixed-pattern class (multi-label), 우리 = 43 single-label synthetic. 직접 비교 부정확.
-- DECOR 의 R2Conv equivariance 는 우리 합성 데이터에 적합하지 않음 (우리는 회전 augment 자체를 금기 — scratch_21deg 등 angle = class identity).
-- 권고: **related work 인용** + "우리 도메인의 angle-aware class (e.g. scratch_21deg) 때문에 D4 equivariance 부적합" 한 줄 contrast. 우리 ARI 0.859 가 압도적으로 보이지만 dataset 차이 강조 (paper integrity).
+- DECOR 의 R2Conv equivariance 는 우리 합성 데이터에 적합하지 않음 (우리는 회전 augment 자체를 금기 — scratch_rot 등 angle = class identity).
+- 권고: **related work 인용** + "우리 도메인의 angle-aware class (e.g. scratch_rot) 때문에 D4 equivariance 부적합" 한 줄 contrast. 우리 ARI 0.859 가 압도적으로 보이지만 dataset 차이 강조 (paper integrity).
 
 ### 3.2 ViT-Tiny (지도학습 SOTA, MixedWM38)
 

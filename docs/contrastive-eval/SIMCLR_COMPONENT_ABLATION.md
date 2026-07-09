@@ -1,42 +1,22 @@
-# SimCLR Component Ablation With Baselines
+# SimCLR Component Ablation
 
 - train folder: `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\cnn_seen_train`
 - eval folder: `D:\project\unknown-contrastive\data\images\wm811k_novel_disjoint_v1\novel_eval`
-- eval classes: `Donut, Edge-Loc`
-- ignored eval classes: `Normal, Random`
-- data: WM-811K class-disjoint v1, not generated synthetic wafer
-- eval embedding: full 1024-dim backbone feature, L2-normalized
-- primary metric: k-means(k=#eval classes) ARI on held-out shape classes
-- P1 capture: fraction of eval classes that own at least one dominant-class cluster
-- image cap: auxiliary dominant-class image coverage
-- fixed HDBSCAN: min_cluster_size=12, min_samples=15, leaf, epsilon=0.06
+- backbone: `hf_hub:timm/convnext_base.dinov3_lvd1689m`
+- eval embedding: backbone feature
+- primary metric: k-means(k=3) ARI on held-out novel classes
 
-| Stage | Method | ARI | NMI | AMI | P1 capture | image cap | P2 noise | P3 comp | P4 homog | top1 | k5 | k9 | dist ratio | HDB ARI |
-|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| B0 | Raw FCMAE baseline | 0.0668 | 0.0569 | 0.0561 | 1.0000 | 0.1390 | 86.10% | 0.4872 | 1.0000 | 96.80% | 94.74% | 93.59% | 0.3571 | 0.4779 |
-| B1 | Raw CNN A-supervised baseline | 0.0520 | 0.0427 | 0.0420 | 1.0000 | 0.3640 | 43.90% | 0.2208 | 0.0451 | 96.60% | 93.98% | 92.92% | 0.3050 | 0.0409 |
-| B2 | Raw DINOv3 baseline | 0.0090 | 0.0074 | 0.0066 | 0.0000 | 0.0000 | 100.00% | 0.0000 | 0.0000 | 95.50% | 94.14% | 92.68% | 0.2670 | 0.0000 |
-| C0 | Base SimCLR | 0.4979 | 0.3978 | 0.3974 | 1.0000 | 0.1660 | 80.90% | 0.3308 | 0.5778 | 96.40% | 94.50% | 93.77% | 0.4592 | 0.2893 |
-| C1 | + MoCo EMA queue | 0.2220 | 0.1727 | 0.1721 | 1.0000 | 0.2140 | 72.70% | 0.2806 | 0.2524 | 95.90% | 93.36% | 92.39% | 0.5068 | 0.2811 |
-| C2 | + neg-ignore | 0.3838 | 0.3121 | 0.3116 | 1.0000 | 0.1830 | 76.60% | 0.3325 | 0.5055 | 96.00% | 94.08% | 92.89% | 0.4989 | 0.3114 |
-| C3 | + local grid | 0.4403 | 0.3546 | 0.3541 | 1.0000 | 0.2970 | 62.20% | 0.4299 | 0.3426 | 95.80% | 94.86% | 94.06% | 0.5788 | 0.3236 |
-| C4 | + NeCo | 0.4619 | 0.3843 | 0.3838 | 1.0000 | 0.2980 | 65.60% | 0.4482 | 0.3951 | 97.00% | 94.40% | 93.74% | 0.5494 | 0.4785 |
-| C5 | + local grid + NeCo | 0.5122 | 0.4153 | 0.4149 | 1.0000 | 0.1560 | 82.10% | 0.2831 | 0.5860 | 96.50% | 94.68% | 94.06% | 0.5760 | 0.2561 |
+| Stage | Method | ARI | NMI | AMI | top1 | k5 | k9 | dist ratio | HDB ARI | noise |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| C0 | Base SimCLR | 0.4340 | 0.4354 | 0.4347 | 94.13% | 91.97% | 91.11% | 0.4106 | 0.4297 | 63.40% |
+| C1 | + MoCo EMA queue | 0.5000 | 0.4671 | 0.4664 | 92.67% | 90.25% | 89.22% | 0.4615 | 0.1670 | 56.13% |
+| C2 | + neg-ignore | 0.4693 | 0.4229 | 0.4222 | 93.53% | 91.41% | 89.98% | 0.4615 | 0.4745 | 56.07% |
+| C3 | + local grid | 0.5160 | 0.4803 | 0.4797 | 93.53% | 91.79% | 90.93% | 0.5262 | 0.9053 | 90.60% |
+| C4 | + NeCo | 0.5583 | 0.4884 | 0.4878 | 94.87% | 91.99% | 91.28% | 0.4992 | 0.1420 | 48.07% |
+| C5 | + local grid + NeCo | 0.5360 | 0.4841 | 0.4834 | 93.53% | 91.57% | 90.93% | 0.5192 | 0.5324 | 60.40% |
 
 ## Artifacts
 
-- B0 Raw FCMAE baseline
-  - run: `D:\project\unknown-contrastive\result_grouping\260609_142348_wm811k_novel_v1_raw_vs_Acnn`
-  - model: `D:\project\unknown-contrastive\weights\convnextv2_base.fcmae_ft_in22k_in1k_384.pth`
-  - embedding: `D:\project\unknown-contrastive\result_grouping\260609_142348_wm811k_novel_v1_raw_vs_Acnn\embeddings\01_Raw_FCMAE_raw.npy`
-- B1 Raw CNN A-supervised baseline
-  - run: `D:\project\unknown-contrastive\result_grouping\260609_142348_wm811k_novel_v1_raw_vs_Acnn`
-  - model: `D:\project\unknown-contrastive\runs\260609_141113_cnn_ddp\cnn\best_model.pth`
-  - embedding: `D:\project\unknown-contrastive\result_grouping\260609_142348_wm811k_novel_v1_raw_vs_Acnn\embeddings\02_CNN_backbone_raw.npy`
-- B2 Raw DINOv3 baseline
-  - run: `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop`
-  - model: `hf_hub:timm/convnext_base.dinov3_lvd1689m`
-  - embedding: `D:\project\unknown-contrastive\result_grouping\_dinov3_ncd_autoloop\embeddings\dinov3_convnext_base.npy`
 - C0 Base SimCLR
   - run: `D:\project\unknown-contrastive\runs\260610_071520_simclr_component_c0_base_simclr`
   - model: `D:\project\unknown-contrastive\runs\260610_071520_simclr_component_c0_base_simclr\contrastive\best_model.pt`

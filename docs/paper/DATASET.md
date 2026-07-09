@@ -20,14 +20,9 @@
 총 39 GT class:
 - 38 **defect class** = 8 distribution × 5 chip-object (일부 조합)
   - distribution: `Center`, `Donut`, `Edge-Bottom`, `Edge-Top`, `Edge-Ring`, `Full`, `Thick-Edge`, plus 9 wafer-canvas
-  - chip-object: `bank_boundary`, `fork`, `scratch`, `scratch_rot`, `invalid_main` (round-26 spec)
+  - chip-object: `bank_boundary`, `fork`, `scratch`, `scratch_rot`, `invalid_main`
   - 명명: `<distribution>_<object>` (e.g., `Edge-Top_scratch_rot`)
 - 1 **Normal class** = `Normal_bank_boundary` (no defect)
-
-Round 26 명명 변경:
-- 이전 `particle_blast` → `fork`
-- 이전 `scratch_21deg` → `scratch_rot`
-- 사유: 더 일반화된 의미 (각도 21° hardcode 안 함)
 
 ### 2.3 Wafer-canvas (9 patterns)
 정규 distribution 외 추가:

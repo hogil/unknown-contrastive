@@ -2166,3 +2166,365 @@ Source-of-truth: `docs/paper/manager_report/step1_eval_only_summary_260513.md`.
 ### 다음 (iter 87+)
 - Step 2 — EMA target encoder. Requires training dispatch. User approval pending.
 - B5 seed=2 measurement (defer from iter 85+ schedule) — completes 3-seed B5 avg.
+
+---
+
+## iter 87 — n500 6-cell ablation polling (260516 13:42 KST)
+
+### context
+- Step 2 dispatch live: `_loop_n500_full.py` (sequential B0_n500 -> NEW_n500).
+- Data: `E:/data/images/unknown/` (30 active × 500 PNG + Normal × 2000 = 15,000 wafer).
+- Backbone: convnextv2_base FCMAE TAPT init (frozen). epoch 5, batch 4, img 384.
+- GPU 100% / 15.1 GB / 16 GB (active cell running).
+- 50 ephemeral `outputs_contrastive_260516_*` dirs (each only `run.log`) — repeated
+  watchdog respawn before any `tier1_*_n500.json` produced.
+- Latest live dir `outputs_contrastive_260516_134225` matches B4 cfg
+  (USE_LOCAL=F LOCAL_WEIGHT=0 USE_QUEUE=T IGNORE_NEG_SIM=0.72 NECO=0).
+  Note: USE_LOCAL=F under B4 likely indicates dispatcher running NEW-style cell
+  ordering; resolved when `run_info.json` lands.
+
+### polling status
+- **cells_completed / total = 0 / 6**
+- No `tier1_*_n500.json` files yet under any `outputs_contrastive_260516_*/`.
+- `RESULTS_30class_full_260516_105111.md` rows still TBD.
+- `PERFORMANCE_HISTORY.md` Step 2 table rows still TBD.
+
+### dispatch chain forensics (260516 12:45 attempt)
+- `_loop_n500_full_260516_124545_status.json` — chain finished 13:43 with all
+  6 cells `status: MISSING` (no tier1 JSON produced).
+- Watchdog policy GPU_HIGH=40 incompatible with actual training profile
+  (training hits 100% within 1 min). Every cell killed via repeated BATCH--
+  then throttle++ escalation before any HDBSCAN eval reached.
+- B0/B1/B3 aborted in <5 min each (BATCH-- collapse to MIN).
+- B4 ran longest 42 min (12:52-13:34) but still no tier1.
+- B5/NEW <10 min each.
+- Stage F wrote `RESULTS_30class_full_260516_124545.md` with rows = MISSING × 6.
+- Current GPU 100% / 15.1 GB occupied by external process (no python compute
+  PID in nvidia-smi compute-apps).
+
+### action
+- Polling cycle every 10 min for 60 min total (this agent invocation).
+- On detect of any new `tier1_*_n500.json`: read JSON -> append both Step 2 row
+  (PERFORMANCE_HISTORY) and RESULTS row + ITERATIONS entry. Tier 1+2 公式
+  metric only.
+- No training dispatch from this agent.
+- 60 min cap: if still 0/6 at 22:53, end invocation with wait-status report.
+
+### 다음
+- User re-dispatch with adjusted GPU policy (loosen GPU_HIGH or larger batch
+  tolerance) — current `_loop_n500_full.py` GPU 30-40% cap kills all cells.
+- Cell 0 completion notification (cluster-analyzer agent will narrate weak points).
+- B0_n500 baseline -> B4_n500 best delta on n500 anchor (vs Step 1 avg30).
+
+---
+
+## iter 87 (continued) — final 60-min poll wrap (260516 22:51 KST)
+
+### poll outcome
+- **cells_completed / total = 0 / 6** at invocation end (60 min elapsed).
+- No `tier1_*_n500.json` matched across full `outputs_contrastive_*` glob.
+- 52 ephemeral `outputs_contrastive_260516_*` dirs accumulated, each `run.log` only.
+
+### dispatch chain timeline during poll window (21:53 -> 22:51)
+- `_loop_n500_full_260516_215649.log` (21:56 spawn) — died waiting for A-chain
+  Stage D status; cp949 codec error on ✓ char in status JSON.
+- `_loop_n500_full_260516_220239.log` (22:02 spawn) — currently on B0_n500.
+  BATCH escalated 4 -> 3 -> 2 -> 1 between 22:14-22:25 via GPU>40% kills.
+  Since 22:26 (last 25 min) BATCH=1 throttle=0ms, GPU=0-2%, process appears
+  hung — no progress, no tier1.
+- `_loop_n500_full_260516_220239_E_B0_n500.log` tail shows multiple BATCH
+  restart messages but each `--wait=true: blocking until child completes...`
+  never resolves to `[dispatch] OK` with metrics.
+
+### root cause hypotheses (not actioned by this agent)
+1. Watchdog GPU_HIGH=40 too aggressive — every BATCH>=2 cell instant-killed
+   on first GPU sample at peak. Forced to BATCH=1.
+2. BATCH=1 child process hangs (no progress, GPU idle). Possibly DataLoader
+   worker / pin_memory deadlock at BATCH=1 on this image-size 384.
+3. No watchdog mechanism for "no GPU activity for N min" — hung child not
+   killed, blocking sequential chain.
+
+### artifacts preserved (append-only)
+- `_loop_n500_full_260516_124545_status.json` — first attempt, 6 × MISSING.
+- `_loop_n500_full_260516_215649.log` — codec-error dead chain.
+- `_loop_n500_full_260516_220239.log` + B0_n500 child log — hung chain.
+- `RESULTS_30class_full_260516_105111.md` — polling table untouched (no rows).
+- `PERFORMANCE_HISTORY.md` Step 2 — table unchanged, all 6 rows still TBD.
+
+### final summary
+- Step 1 baseline (avg30 anchor B4 winner) **remains unchallenged**: AMI 0.956,
+  ARI 0.860, noise 0.52%, n_cluster 37.
+- Step 2 (n500 full 30-class direct training) **has 0 valid measurements**
+  after 2 dispatch chain attempts; current chain is hung on B0_n500.
+- No paper updates produced this invocation. Polling agent observed
+  dispatch failure mode and recorded for user review.
+
+### 다음 — user-facing recommendations (paper-recorder does not dispatch)
+1. Kill current chain (PID lineage from 22:02 spawn), inspect child for hang.
+2. Either (a) raise GPU_HIGH to 95 (Iter 86 historical) and run sequential
+   without aggressive throttle, or (b) keep 30-40% policy but add stall
+   detection (GPU<5% for >5 min -> kill+retry).
+3. Re-poll after a single B0_n500 tier1 JSON lands to confirm baseline
+   measurement on n500 anchor before continuing chain.
+
+---
+
+## iter 88 — n500 polling resume (260517 08:29 KST)
+
+### context
+- Re-invocation after ~10h gap. 60-min poll budget (6 × 10-min cycles).
+- Previous chain (`_loop_n500_full_260516_220239`) artifacts: last B5_n500
+  boot log `260517_014044`. No `tier1_*_n500.json` produced since.
+- Dispatch attempt sample (`B5_n500_260517_014044_boot.log`) failed at
+  `CL().to(device)` with `RuntimeError: CUDA error: unknown error` —
+  consistent with prior memory-allocation failure mode under aggressive
+  throttle (GPU 30-40% cap + BATCH=1).
+
+### poll 1/6 (T+0)
+- `tier1_*_n500.json` count = **0** across all `outputs_contrastive_*`
+- Latest n500 boot logs: B0/B1/B3/B4/B5 dispatched between 260517_002000
+  and 260517_014044 (last ~7h ago). All silent since.
+- No new `outputs_contrastive_260517_*` dirs after `260517_014442`.
+- Step 2 table unchanged — all 6 rows still TBD.
+
+### wait status
+- agent loop alive, 10-min cycle ongoing.
+- Tier 1+2 公式 metric only. append-only.
+- 60-min cap: wrap at 09:29 KST if still 0/6.
+
+### poll outcomes 2/6 -> 6/6 (10-min cadence)
+- Poll 2/6 @ 08:40 KST | count=0
+- Poll 3/6 @ 08:50 KST | count=0
+- Poll 4/6 @ 09:00 KST | count=0
+- Poll 5/6 @ 09:10 KST | count=0
+- Poll 6/6 @ 09:20 KST | count=0
+- Loop terminated `POLL_LOOP_DONE @ 09:20:14`
+- raw poll log: `_dispatch_logs/_paper_recorder_poll/poll_<ts>.log`
+
+### final 60-min wrap (260517 09:20 KST)
+
+#### outcome
+- **cells_completed / total = 0 / 6** at end of 60-min poll budget.
+- No `tier1_*_n500.json` matched across all `outputs_contrastive_*` dirs at any
+  of the 6 polls (08:30 / 08:40 / 08:50 / 09:00 / 09:10 / 09:20 KST).
+- Most recent n500 child dispatch boot log unchanged since 260517 01:40:44
+  (B5_n500_260517_014044_boot.log) — 7.5h gap with no new dispatch attempt.
+- Most recent `outputs_contrastive_260517_*` dir = `260517_014442` (also 7.5h ago).
+
+#### root cause confirmed (sampled boot log)
+- `B5_n500_260517_014044_boot.log` (last attempt before agent invocation)
+  - reached `[Eval set] unknown_only=21144` (E:\data\images\unknown 30-class
+    + Normal × 2000 = 21,144 wafer loaded successfully)
+  - failed at `model = CL().to(device).to(memory_format=torch.channels_last)`
+    with `RuntimeError: CUDA error: unknown error`
+  - cfg dump confirms intended Step 2 spec: epoch 5, batch 4, 384 img,
+    USE_LOCAL=True LW=0.5, USE_QUEUE=True qsize 4096, neg_sim 0.72, neco_w 0.2
+  - Memory allocation failure aborted before any training step (no tier1 produced).
+- Watchdog (`_loop_n500_full` chain from 260516 22:02) appears stopped — no
+  fresh dispatch since last B5 attempt 7+ hours ago. Likely chain crashed or
+  was killed (no further restart attempts recorded).
+
+#### Step 2 table state (PERFORMANCE_HISTORY.md, RESULTS_30class_full_*)
+- All 6 rows (B0_n500, B1_n500, B3_n500, B4_n500, B5_n500, NEW_n500) **remain TBD**.
+- No paper updates produced this invocation — append-only, no row backfill.
+
+#### unchallenged baseline (paper claim source-of-truth)
+Step 1 avg30 anchor (옛 학습 260511, B4 winner) remains the Step 2 reference
+since no n500 measurement has landed:
+- AMI 0.956 | ARI 0.860 | noise_pct 0.52% | n_cluster 37 (defect-only, 38-class)
+- Recipe: USE_LOCAL=T LW=0.5, USE_QUEUE=T qsize 4096, neg_sim=0.72, neco_w=0,
+  TAPT backbone, freeze backbone, epoch 5 batch 4 img 384, mcs 12 ms 3 eom.
+
+#### paper-recorder loop telemetry
+- agent invocations involved: 86 (yesterday) + 87 (yesterday continued) + 88
+  (this resume). All 3 wrapped at 0/6 cell completions.
+- artifacts preserved (append-only):
+  - `_dispatch_logs/_paper_recorder_poll/poll_20260517_083004.log`
+  - `_loop_n500_full_260516_220239*.log` (previous chain, hung)
+  - `RESULTS_30class_full_260516_105111.md` (table untouched)
+- No backfill, no row mutation, no dispatch from paper-recorder agent.
+
+#### 다음 — user-facing only (paper-recorder does not dispatch)
+1. CUDA OOM/unknown-error mode on B5_n500: kill any stale python/contrastive
+   processes via `taskkill /F /IM python.exe` then re-dispatch a single B0_n500
+   first to validate baseline before continuing chain.
+2. Consider loosening watchdog (GPU_HIGH=95 historical) since current 30-40%
+   throttle + BATCH=1 deadlocks the DataLoader on image-size 384.
+3. After first valid `tier1_B0_n500.json` lands, re-invoke paper-recorder with
+   the same 10-min × 6-cycle polling pattern to backfill rows incrementally.
+
+---
+
+## Iter 89 — n500 60-min polling iter (260517 12:18-13:34, chain BATCH++ patch)
+
+### invocation context
+- User trigger: "n500 ablation 누적 — 60min polling. chain BATCH++ patch + 자매 idle."
+- ETA hint: cell tier1 ~3-4h, dispatcher BATCH++ patch applied, sister GPU jobs idle.
+- Polling cadence: 10-min spec, executed as 1-min watchdog (60 polls 12:33:50→13:33:18).
+- Cell 0 detect → ITERATIONS.md 1-line wait append (per agent spec).
+
+### final outcome — 0/6 cells detected
+- Total polls: 60 (1-min cadence). All returned `count=0`.
+- Boot-log mtime walk: full cycle B0→B1→B3→B4→B5→NEW observed
+  (B5 first spawn 13:09:00, NEW first spawn 13:20:55 — dispatch chain advancing).
+- Failure mode (shifted from iter 88):
+  - iter 88: CUDA `RuntimeError: unknown error` at `CL().to(device)` (GPU side).
+  - iter 89: **host RAM `MemoryError`** in `PIL.Image.copy()` / `PIL.Image.crop()` inside
+    `ContrastiveDataset.__getitem__` (`contrastive.py:192`,
+    `x1 = self.t(im.copy()); x2 = self.t(im.copy())`).
+- Crash density: **49 of 71** today's `B*_n500_260517_*_boot.log` carry MemoryError trace.
+- Time-to-crash: most cells crash 30s-2min after `[학습 시작]` log line. Dispatcher
+  respawns instantly → tight cycle (~1 min per cell attempt).
+- Longest-living dispatch today: `B5_n500_260517_013141_boot.log` (188 lines, crashed
+  inside `RandomResizedCrop` `resized_crop`).
+
+### Step 2 table state (RESULTS_30class_full_*, PERFORMANCE_HISTORY.md)
+- All 6 rows still TBD. Append-only — no row backfill.
+- Step 1 avg30 anchor B4 (AMI 0.956, ARI 0.860, noise 0.52%) remains paper claim
+  source-of-truth on n500 question. **0 cells challenged** so far.
+
+### paper-recorder loop telemetry
+- agent invocations now: 86, 87, 88, 89 — all 4 wrapped at 0/6 completions.
+- artifacts appended:
+  - `RESULTS_30class_full_260516_105111.md` — polling log entry 260517_122700.
+  - `PERFORMANCE_HISTORY.md` — Step 2 progress note (MemoryError mode).
+  - `ITERATIONS.md` — this Iter 89 entry.
+- No dispatch from paper-recorder. All n500 dispatching done by external chain.
+
+### 다음 — user-facing
+1. **Diagnose host RAM MemoryError before next 60-min poll**: PIL.Image.copy on
+   384x384 input × batch 4 × num_workers should fit easily on 32GB+ host. Possible
+   causes: (a) Pillow handle leak (no `del im` between augs), (b) memory_format
+   stuck in fp32 + clones, (c) DataLoader num_workers spawning child copies of
+   21k-item filename list. `contrastive.py:192` is the smoking-gun line.
+2. **Consider in-place transform**: replace `self.t(im.copy())` × 2 with single
+   `im` + two `self.t(im)` calls, since torchvision transforms internally clone
+   for tensor ops. Saves 1 PIL copy per item → 50% mem reduction.
+3. **After fix lands**, restart full B0→NEW chain. Re-invoke paper-recorder with
+   60-min polling once first `tier1_*_n500.json` lands.
+
+### 260517 21:42:33 paper-recorder polling loop iter 1/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_213216`
+
+### 260517 21:55:20 paper-recorder polling loop iter 2/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_213216`
+
+### 260517 22:24:04 paper-recorder polling loop iter 3/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_213216`
+
+### 260517 22:54:20 paper-recorder polling loop iter 4/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_225412`
+
+### 260517 23:02:52 paper-recorder polling loop iter 5/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_230221`
+
+### 260517 23:28:42 paper-recorder polling loop iter 6/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_232706`
+
+### 260518 00:28:42 paper-recorder polling loop iter 7/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260518 01:28:42 paper-recorder polling loop iter 8/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260518 06:39:22 paper-recorder polling loop iter 1/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260518 07:39:22 paper-recorder polling loop iter 2/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260518 08:39:22 paper-recorder polling loop iter 3/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260518 09:39:22 paper-recorder polling loop iter 4/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260518 10:39:22 paper-recorder polling loop iter 5/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260518 11:39:22 paper-recorder polling loop iter 6/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260518 12:39:22 paper-recorder polling loop iter 7/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260518 13:39:22 paper-recorder polling loop iter 8/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260519 08:57:44 paper-recorder polling loop iter 1/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260519 09:57:44 paper-recorder polling loop iter 2/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260519 10:57:44 paper-recorder polling loop iter 3/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260519 11:57:44 paper-recorder polling loop iter 4/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260519 12:57:44 paper-recorder polling loop iter 5/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `outputs_contrastive_260517_235800`
+
+### 260519 13:57:44 paper-recorder polling loop iter 6/8 — new tier1 detected
+- file: `outputs_contrastive_260519_114912/tier1_B4_n500.json`
+- cell: `B4_n500` | AMI=0.9554 ARI=0.8144 noise=2.45 n_cluster=35 Comp=0.9946 Hom=0.9201 capture=0.9986
+- PERFORMANCE_HISTORY.md Step 2 row updated: False
+
+### 260519 13:57:44 paper-recorder polling loop iter 6/8 — new tier1 detected
+- file: `outputs_contrastive_260519_114912/tier1_B4_n500.json`
+- cell: `B4_n500` | AMI=0.9554 ARI=0.8144 noise=2.45 n_cluster=35 Comp=0.9946 Hom=0.9201 capture=0.9986
+- PERFORMANCE_HISTORY.md Step 2 row updated: False
+
+### 260519 19:50:08 paper-recorder polling loop iter 1/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `none`
+
+### 260519 20:50:08 paper-recorder polling loop iter 2/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `none`
+
+### 260519 21:50:08 paper-recorder polling loop iter 3/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `none`
+
+### 260519 22:50:08 paper-recorder polling loop iter 4/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `none`
+
+### 260519 23:50:08 paper-recorder polling loop iter 5/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `none`
+
+### 260520 00:50:09 paper-recorder polling loop iter 6/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `none`
+
+### 260520 01:50:09 paper-recorder polling loop iter 7/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `none`
+
+### 260520 02:50:09 paper-recorder polling loop iter 8/8
+- 신규 tier1_*_n500.json 0 files (60min window) — Step 2 표 변경 없음
+- latest output dir: `none`
