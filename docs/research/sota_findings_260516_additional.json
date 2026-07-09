@@ -1,0 +1,210 @@
+{
+  "generated_at": "2026-05-16",
+  "scope": "보강 (sota_findings_260516.md 의 9 paper + 5 repo 보강)",
+  "diagnosis": {
+    "baseline_AMI": 0.956,
+    "baseline_ARI": 0.860,
+    "baseline_noise_pct": 0.52,
+    "baseline_capture": "38/38",
+    "weak_points": [
+      "W1: hard negative quality",
+      "W2: HDBSCAN noise 0.52% -> 0.1%",
+      "W3: NeCo regression on B5",
+      "W4: cluster fragmentation jail",
+      "W5: wafer 2025-Q4 SOTA"
+    ]
+  },
+  "queries": [
+    "site:arxiv.org contrastive learning hard negative mining InfoNCE 2025",
+    "site:arxiv.org HDBSCAN OPTICS DBSCAN++ GPU acceleration cuML 2024..2026",
+    "site:arxiv.org BarlowTwins VICReg DINOv2 contrastive collapse prevention 2024..2026",
+    "site:arxiv.org wafer map defect clustering self-supervised 2025",
+    "site:arxiv.org cluster fragmentation regularization deep clustering 2025",
+    "site:arxiv.org HDBSCAN noise outlier reduction parameter tuning automatic 2024..2026",
+    "site:arxiv.org wafer defect semiconductor anomaly detection contrastive 2025",
+    "site:arxiv.org self-supervised representation learning cluster coherence intra-cluster 2025",
+    "site:arxiv.org cluster purity intra-cluster compactness contrastive embedding 2025",
+    "site:arxiv.org wafer mixed-type defect contrastive global local representation 2025",
+    "site:arxiv.org dense feature consistency wafer defect novel class discovery 2025",
+    "site:github.com hard negative mining contrastive learning pytorch stars:>100",
+    "site:github.com cuml HDBSCAN GPU clustering pytorch stars:>100",
+    "site:github.com VICReg BarlowTwins pytorch implementation stars:>100"
+  ],
+  "papers": [
+    {
+      "code": "N1",
+      "title": "IC-DefectNCD: Image-Intrinsic Priors for Integrated Circuit Defect Detection and Novel Class Discovery via Self-Supervised Learning",
+      "arxiv_id": "2511.03120",
+      "abs_url": "https://arxiv.org/abs/2511.03120",
+      "authors": ["Botong Zhao", "Xubin Wang", "Shujing Lyu", "Yue Lu"],
+      "submission_date": "2025-11-05",
+      "summary": "Self-Normal/Self-Defect Information Guided two-stage SSL for IC SEM image defect detection + NCD. semi-supervised k-means estimates unknown class count, teacher logits forced to zero on known classes for unlabeled inputs, teacher/student temperature mismatch for cross-view consistency.",
+      "applicability": 3,
+      "target_priority": ["P1", "P4"],
+      "weak_point": "W5",
+      "patch_candidate": "_unknown_ncd.py wrapper (encoder unchanged)"
+    },
+    {
+      "code": "N2",
+      "title": "Breaking the Batch Barrier (B3) of Contrastive Learning via Smart Batch Mining",
+      "arxiv_id": "2505.11293",
+      "abs_url": "https://arxiv.org/abs/2505.11293",
+      "authors": ["Thirukovalluru", "Meng", "Liu", "Karthikeyan", "Su", "Nie", "Yavuz", "Zhou", "Chen", "Dhingra"],
+      "submission_date": "2025-05-16",
+      "summary": "Teacher model ranks examples + builds similarity graph, community detection identifies strong-negative clusters, batches constructed across clusters. +1.3 / +2.9 points on MMEB, batch size 64 outperforms larger batches.",
+      "applicability": 3,
+      "target_priority": ["P1", "P3"],
+      "weak_point": "W1",
+      "patch_candidate": "_smart_batch_b3.py wrapper, BATCH unchanged"
+    },
+    {
+      "code": "N3",
+      "title": "Locality-Sensitive Hashing for Efficient Hard Negative Sampling in Contrastive Learning",
+      "arxiv_id": "2505.17844",
+      "abs_url": "https://arxiv.org/abs/2505.17844",
+      "authors": "not-fetched",
+      "submission_date": "2025-05",
+      "summary": "Binarize 1024-d float32 embeddings via random orthonormal projection -> Hamming distance for fast hard-neg search. 32x storage reduction, GPU-friendly. Outperforms full-precision cosine on MS MARCO.",
+      "applicability": 3,
+      "target_priority": ["P1", "P2"],
+      "weak_point": "W1",
+      "patch_candidate": "_lsh_hard_neg.py (MoCo queue wrapper); paper code availability not confirmed (fetch partial)"
+    },
+    {
+      "code": "N4",
+      "title": "Clustering Properties of Self-Supervised Learning (ReSA)",
+      "arxiv_id": "2501.18452",
+      "abs_url": "https://arxiv.org/abs/2501.18452",
+      "authors": "not-fetched",
+      "submission_date": "2025-01-30",
+      "summary": "Encoder output has superior clustering vs embeddings/projector. ReSA uses Sinkhorn-Knopp soft assignment on encoder representations -> CE loss across augmented views. Single Sinkhorn execution regardless of aug count.",
+      "applicability": 2,
+      "target_priority": ["P3", "P4"],
+      "weak_point": "W4",
+      "patch_candidate": "_contrastive_n50.py --use-resa-aux-loss flag (alpha=0.1)"
+    },
+    {
+      "code": "N5",
+      "title": "Deep Modularity Networks with Diversity-Preserving Regularization (DMoN-DPR)",
+      "arxiv_id": "2501.13451",
+      "abs_url": "https://arxiv.org/abs/2501.13451",
+      "authors": ["Yasmin Salehi", "Dennis Giannacopoulos"],
+      "submission_date": "2025-01-23",
+      "summary": "3 reg terms for graph clustering: inter-cluster distance, per-cluster variance, assignment-entropy penalty. Statistical significance on benchmarks.",
+      "applicability": 2,
+      "target_priority": ["P4"],
+      "weak_point": "W4",
+      "patch_candidate": "eval_contrastive.py metric only (no training change)"
+    },
+    {
+      "code": "N6",
+      "title": "Stable Cluster Discrimination for Deep Clustering (SeCu)",
+      "arxiv_id": "2311.14310",
+      "abs_url": "https://arxiv.org/abs/2311.14310",
+      "authors": "not-fetched",
+      "submission_date": "2023-11 (active 2025)",
+      "summary": "Modifies CE: (1) stop negative-instance gradient on cluster centers, (2) hardness-aware weighting (low pred score -> higher weight), (3) global entropy constraint. Optimal cluster center is weighted average proportional to (1 - p).",
+      "applicability": 2,
+      "target_priority": ["P3", "P4"],
+      "weak_point": "W4",
+      "patch_candidate": "_contrastive_n50.py SeCu loss term (alpha small)"
+    },
+    {
+      "code": "N7",
+      "title": "DECOR: Deep Embedding Clustering with Orientation Robustness (update)",
+      "arxiv_id": "2510.03328",
+      "abs_url": "https://arxiv.org/abs/2510.03328",
+      "summary": "MixedWM38 orientation-invariant manual-tuning-free deep clustering. (already in sota_findings_260516.md #2 — supplementary)",
+      "applicability": 2,
+      "target_priority": ["P4"],
+      "weak_point": "W4"
+    }
+  ],
+  "fetch_failures": [
+    "arxiv 2505.07576 (Modern VAD): abstract fetched but method list not available",
+    "arxiv 2502.14884 (SEM-CLIP): abstract fetched, few-shot quantitative detail missing",
+    "arxiv 2512.11977 (DeiT Wafer): supervised-only, excluded by relevance",
+    "arxiv 2504.02494 (Tiny ViT Wafer): supervised-only, excluded",
+    "arxiv 2506.11777 (DISCOVR): video domain mismatch, excluded"
+  ],
+  "repos": [
+    {
+      "code": "R1",
+      "name": "rapidsai/cuml",
+      "url": "https://github.com/rapidsai/cuml",
+      "stars": 5200,
+      "last_commit": "actively maintained (cuML 25.02 open beta)",
+      "technique": "GPU HDBSCAN + UMAP, sklearn-compatible API. 175x speedup on NVIDIA GPUs.",
+      "pytorch_compat": "yes (numpy frontend, 1-line tensor->numpy)",
+      "code_path": "cuml.cluster.HDBSCAN",
+      "applicability": 3,
+      "note": "1-line swap for eval_contrastive.py HDBSCAN.fit_predict. encoder learning unaffected."
+    },
+    {
+      "code": "R2",
+      "name": "facebookresearch/vicreg",
+      "url": "https://github.com/facebookresearch/vicreg",
+      "stars": 570,
+      "last_commit": "not_visible",
+      "technique": "variance + invariance + covariance regularization, negative-free collapse prevention. ResNet-50 73.2% top1.",
+      "pytorch_compat": "yes (official)",
+      "code_path": "main_vicreg.py",
+      "applicability": 2,
+      "note": "aux loss term candidate to stabilize NeCo regression (B5)"
+    },
+    {
+      "code": "R3",
+      "name": "facebookresearch/barlowtwins",
+      "url": "https://github.com/facebookresearch/barlowtwins",
+      "stars": 1000,
+      "last_commit": "not_visible",
+      "technique": "cross-correlation matrix -> identity (redundancy reduction). negative-free.",
+      "pytorch_compat": "yes (official)",
+      "code_path": "main.py",
+      "applicability": 2,
+      "note": "alternative to VICReg, no_supcon policy unaffected"
+    },
+    {
+      "code": "R4",
+      "name": "davidsvy/hard-negative-mixing",
+      "url": "https://github.com/davidsvy/hard-negative-mixing",
+      "stars": 20,
+      "last_commit": "not_visible",
+      "technique": "MoCo with synthetic negative mixing (NeurIPS 2020 base of SynCo)",
+      "pytorch_compat": "yes (PyTorch 1.12)",
+      "code_path": "train_contrastive.py",
+      "applicability": 2,
+      "note": "stars<100 exception (NeurIPS 2020 foundational)"
+    }
+  ],
+  "action_items": [
+    {"code": "A1", "target_file": "(new) _unknown_ncd.py", "technique": "IC-DefectNCD teacher-student SSL postprocess", "source": "N1", "automatic": false, "priority": "highest", "encoder_change": false},
+    {"code": "A2", "target_file": "(new) _smart_batch_b3.py", "technique": "B3 community-detection batch", "source": "N2", "automatic": false, "priority": "high"},
+    {"code": "A3", "target_file": "(new) _lsh_hard_neg.py", "technique": "LSH-binary hard neg for MoCo queue", "source": "N3", "automatic": false, "priority": "high"},
+    {"code": "A4", "target_file": "eval_contrastive.py", "technique": "cuml.cluster.HDBSCAN swap", "source": "R1", "automatic": false, "priority": "medium", "note": "1-line, numeric-neutral, GPU-only speedup"},
+    {"code": "A5", "target_file": "_contrastive_n50.py", "technique": "VICReg / Barlow Twins aux loss term", "source": "R2, R3", "automatic": false, "priority": "medium", "note": "NeCo B5 regression recovery candidate"},
+    {"code": "A6", "target_file": "_contrastive_n50.py", "technique": "ReSA + SeCu cluster cohesion aux loss", "source": "N4, N6", "automatic": false, "priority": "medium"},
+    {"code": "A7", "target_file": "eval_contrastive.py", "technique": "DMoN-DPR cohesion metric (eval-only)", "source": "N5", "automatic": false, "priority": "low"}
+  ],
+  "step4_proposal": [
+    {"step": "4-A", "action": "A1 IC-DefectNCD wrapper", "risk": "low", "reason": "encoder unchanged, postprocess only, direct domain match"},
+    {"step": "4-B", "action": "A4 cuml HDBSCAN swap", "risk": "low", "reason": "1-line, numeric-neutral verification first"},
+    {"step": "4-C", "action": "A5 VICReg aux term", "risk": "medium", "reason": "NeCo B5 regression candidate"},
+    {"step": "4-D", "action": "A2 + A3 hard-neg 3-way ablation", "risk": "medium", "reason": "optional deep-dive when budget available"}
+  ],
+  "policy_check": {
+    "no_multicrop": "N1 uses teacher-student cross-view (not multicrop) - safe with TAPT teacher fixed",
+    "no_supcon": "all N1-N7 are SSL/unsupervised - safe",
+    "batch_same_condition": "N2 batch adjust within Iter-chain - safe",
+    "single_gpu_process": "all recs sequential - safe",
+    "gpu_share_30_40": "cuml HDBSCAN VRAM spike at fit_predict - monitor"
+  },
+  "summary": {
+    "new_papers": 7,
+    "new_repos": 4,
+    "fetch_failures": 5,
+    "estimation_used": 0,
+    "top3_papers": ["N1 IC-DefectNCD", "N2 B3 Smart Batch", "N3 LSH-HNS"],
+    "top3_repos": ["R1 cuml", "R3 barlowtwins", "R2 vicreg"]
+  }
+}
