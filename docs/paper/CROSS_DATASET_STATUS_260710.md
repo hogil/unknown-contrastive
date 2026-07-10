@@ -50,6 +50,20 @@ WM's trained ARI is `0.313 +/- 0.020` across the two available ep8 seeds (`0.293
 5. Run FCMAE initialization as a separate backbone row.
 6. Add a multi-option combo only when its individual options beat the same frozen/base references on FINCH and Louvain.
 
+## Defect-aware interim results
+
+The target is the 32 unseen classes after excluding every defect class used for training.
+
+| recipe | epoch | capture | recov | Comp | Hom | ARI | Sil | fragment | Louvain ARI |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| frozen DINOv3 | 0 | 0.9688 | 0.8506 | 0.8302 | 0.8918 | 0.7090 | 0.3045 | 1.81 | 0.7850 |
+| defect-aware SimCLR base | 3 | 1.0000 | 0.7241 | 0.7585 | 0.8126 | 0.5380 | 0.3041 | 1.69 | 0.6281 |
+| defect-aware SimCLR base | 10 | 0.8438 | 0.6041 | 0.7141 | 0.7360 | 0.5026 | 0.2499 | 1.38 | 0.5587 |
+| + NV 0.90 | 3 | 0.8125 | 0.6553 | 0.7242 | 0.7519 | 0.4555 | 0.2615 | 1.53 | 0.5503 |
+| + NV 0.90 | 5 | 0.8750 | 0.5706 | 0.6787 | 0.7176 | 0.4316 | 0.2323 | 1.56 | 0.4571 |
+
+`NV 0.90` is rejected at the interim gate because both FINCH and Louvain are below the base. This configuration does not use a queue; `--nv-filter` only masks in-batch negatives. The remaining `0.95` and `0.98` runs test whether more conservative masking reduces the regression.
+
 ## Artifacts
 
 - Active log: `D:\project\unknown-contrastive\_unknown_mixed_queue_260710.log`

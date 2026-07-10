@@ -303,8 +303,11 @@ def main():
                     "target": target.state_dict() if target is not None else None},
                    ckpt_path)
 
+    nv_masked = 0
+    nv_candidates = 0
+
     def loss_fn(f1, z1, f2, z2, tz1=None, tz2=None):
-        nonlocal qptr, center
+        nonlocal qptr, center, nv_masked, nv_candidates
         t = args.temp
         if meth == "simclr":
             zc = F.normalize(torch.cat([z1, z2]), dim=1); B = z1.size(0)
@@ -321,6 +324,8 @@ def main():
                     nv_thr = args.nv_filter * (zc * zc[pos]).sum(1, keepdim=True)  # [2B,1]
                 fn = (sim * t) > nv_thr
                 fn[torch.arange(2 * B, device=zc.device), pos] = False
+                nv_masked += int(fn.sum().item())
+                nv_candidates += int(2 * B * max(0, 2 * B - 2))
                 sim = sim.masked_fill(fn, -1e9)
             if args.use_queue:
                 qsnap = queue.detach().clone()  # clone: 이후 inplace 업데이트가 graph 안 건드림
@@ -328,7 +333,10 @@ def main():
                 if args.ignore < 1.0:
                     qneg = qneg.masked_fill(qneg * t > args.ignore, -1e9)
                 if nv_thr is not None:
-                    qneg = qneg.masked_fill((qneg * t) > nv_thr, -1e9)
+                    qmask = (qneg * t) > nv_thr
+                    nv_masked += int(qmask.sum().item())
+                    nv_candidates += int(qmask.numel())
+                    qneg = qneg.masked_fill(qmask, -1e9)
                 logits = torch.cat([sim, qneg], 1)
                 with torch.no_grad():
                     k = F.normalize(z2, dim=1); end = qptr + k.size(0)
@@ -468,6 +476,7 @@ def main():
     for ep in range(start_ep, args.epochs + 1):
         # 재개 시 위치 skip 안 함 — 재셔플로 즉시 계속 (SSL 은 순서 무관, skip 은 PIL 비용만 큼)
         t0 = time.time(); run = 0.0; n = 0
+        nv_masked = 0; nv_candidates = 0
         if args.dino_head_warmup > 0:  # v2: LP-FT — warmup 동안 backbone lr=0
             opt.param_groups[0]["lr"] = 0.0 if ep <= args.dino_head_warmup else args.lr_bb
         ep_target = ep * steps_per_ep
@@ -513,6 +522,8 @@ def main():
                 save_ckpt()
             run += float(loss); n += 1
         print(f"[{meth} ep{ep}] loss={run/max(1,n):.4f} ({time.time()-t0:.0f}s)", flush=True)
+        if args.nv_filter > 0 and nv_candidates > 0:
+            print(f"[{meth} ep{ep}] nv_mask={nv_masked/nv_candidates:.4f} ({nv_masked}/{nv_candidates})", flush=True)
         save_ckpt()
         online.eval()
         # 무라벨 모니터링 (D-11): alignment(두 뷰 h 거리) + uniformity — epoch 선택 기준 (260611 검증됨)
