@@ -57,3 +57,4 @@ WM's trained ARI is `0.313 +/- 0.020` across the two available ep8 seeds (`0.293
 - Queue definition: `D:\project\unknown-contrastive\_unknown_mixed_queue_260710.sh`
 - Queue report: `D:\project\unknown-contrastive\docs\paper\UNKNOWN_MIXED_QUEUE_260710.md`
 - Historical full metrics: `D:\project\unknown-contrastive\docs\paper\ROBUSTNESS_SEEDS.md`
+- Archived completed checkpoints: `E:\unknown-contrastive-archive\260710_field_robust_ckpts` (57 files, 56.83 GB; moved from D: without deletion)
