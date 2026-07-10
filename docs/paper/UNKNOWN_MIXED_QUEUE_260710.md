@@ -10,8 +10,10 @@ Queue order:
 
 1. `unkda_base`: train `D:\project\unknown-contrastive\data\images\unknown_train_defectaware_260710`, score strict novel by excluding the train defect classes.
 2. `unkda_nv090`, `unkda_nv095`, `unkda_nv098`: same split, one NV threshold per 10-epoch run.
-3. `unkall_base`: train `D:\project\unknown-contrastive\data\images\unknown_train_all`, score field-mixed.
-4. `unkda_fcmae`: same defect-aware split with FCMAE initialization; no NV/queue/local combination.
+3. `unkda_q4k`: queue4096 only; this is the queue-axis univariate control missing from the first queue.
+4. `unkda_adapter_frozen`: residual adapter only with backbone LR fixed at zero.
+5. `unkda_fcmae`: same defect-aware split with FCMAE initialization; no NV/queue/local combination.
+6. `unkall_base`: train `D:\project\unknown-contrastive\data\images\unknown_train_all`, score field-mixed.
 
 Acceptance rule: do not add queue+NV or another multi-option recipe until its individual options beat `unkda_base` on the same strict-novel split.
 

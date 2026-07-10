@@ -46,9 +46,10 @@ WM's trained ARI is `0.313 +/- 0.020` across the two available ep8 seeds (`0.293
 1. Keep `grade_only`: background retention reduced strict-novel FINCH-p2 ARI from `0.709` to `0.646` and Louvain ARI from `0.785` to `0.752`.
 2. Complete the defect-aware base for 10 epochs, saving every epoch rather than using only the final epoch.
 3. Run the same split with one NV threshold at a time: `0.90`, `0.95`, `0.98`.
-4. Run field-mixed all-unlabeled adaptation as a separate production protocol.
+4. Run queue4096-only and frozen-backbone adapter-only as separate univariate controls.
 5. Run FCMAE initialization as a separate backbone row.
-6. Add a multi-option combo only when its individual options beat the same frozen/base references on FINCH and Louvain.
+6. Run field-mixed all-unlabeled adaptation as a separate production protocol.
+7. Add a multi-option combo only when its individual options beat the same frozen/base references on FINCH and Louvain.
 
 ## Defect-aware interim results
 

@@ -26,8 +26,10 @@ CONFIGS=(
   "unkda_nv090|--method simclr --nv-filter 0.90|$DA_TR|$DA_EXCL|defect-aware strict novel + NV 0.90|8"
   "unkda_nv095|--method simclr --nv-filter 0.95|$DA_TR|$DA_EXCL|defect-aware strict novel + NV|8"
   "unkda_nv098|--method simclr --nv-filter 0.98|$DA_TR|$DA_EXCL|defect-aware strict novel + NV 0.98|8"
-  "unkall_base|--method simclr|$ALL_TR|$FIELD_EXCL|field mixed all-unlabeled|8"
+  "unkda_q4k|--method simclr --use-queue --queue-size 4096|$DA_TR|$DA_EXCL|defect-aware strict novel + queue4096|8"
+  "unkda_adapter_frozen|--method simclr --head adapter --lr-bb 0|$DA_TR|$DA_EXCL|defect-aware strict novel + adapter-only|8"
   "unkda_fcmae|--method simclr --timm convnextv2_base.fcmae_ft_in22k_in1k_384|$DA_TR|$DA_EXCL|defect-aware strict novel, FCMAE init|8"
+  "unkall_base|--method simclr|$ALL_TR|$FIELD_EXCL|field mixed all-unlabeled|8"
 )
 
 score_tag(){
