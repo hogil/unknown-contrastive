@@ -89,9 +89,13 @@ say "=== unknown mixed queue start (${#CONFIGS[@]} configs x ${EPOCHS} epochs) =
 for c in "${CONFIGS[@]}"; do
   IFS='|' read -r tag flags tr excl note batch <<< "$c"
   if [ -f "$EMB/${tag}_ep${EPOCHS}.npy" ]; then
-    say "skip $tag (ep${EPOCHS} exists) — scoring/grouping"
-    score_tag "$tag" "$excl"
-    group_ep "$tag" 10
+    if grep -q "^#### ${tag} ep${EPOCHS} backbone" "$RES" 2>/dev/null; then
+      say "skip $tag (ep${EPOCHS} and score rows exist)"
+    else
+      say "skip training $tag (ep${EPOCHS} exists) — scoring/grouping only"
+      score_tag "$tag" "$excl"
+      group_ep "$tag" 10
+    fi
     continue
   fi
   say ">>> $tag : $flags train=$tr ($note, batch=$batch)"
