@@ -9,7 +9,7 @@
 Queue order:
 
 1. `unkda_base`: train `D:\project\unknown-contrastive\data\images\unknown_train_defectaware_260710`, score strict novel by excluding the train defect classes.
-2. NV threshold sweep: `0.50`, `0.60`, `0.70`, `0.80`, `0.85`, `0.90`, `0.93`, `0.95`, `0.97`, `0.98`, `0.99`; same split, one threshold per 10-epoch run. Together with `unkda_base` (`NV=0`), this yields twelve curve points. The low range was added after NV0.90 masked only `0.03%` of in-batch candidates at ep6.
+2. NV threshold sweep: `0.50`, `0.60`, `0.70`, `0.75`, `0.80`, `0.85`, `0.90`, `0.93`, `0.95`, `0.97`, `0.98`, `0.99`; same split, one threshold per 10-epoch run. Together with `unkda_base` (`NV=0`), this yields thirteen curve points. `0.70/0.75/0.80` form the local three-point sweep around the expected useful range. The low range was added after NV0.90 masked only `0.03%` of in-batch candidates at ep6.
 3. `unkda_q4k`: queue4096 only; this is the queue-axis univariate control missing from the first queue.
 4. `unkda_adapter_frozen`: residual adapter only with backbone LR fixed at zero.
 5. `unkda_fcmae`: same defect-aware split with FCMAE initialization; no NV/queue/local combination.
@@ -92,6 +92,7 @@ unkda_base ep10 Z finch_p2(k54) | 0.8438 | 0.5247 | 0.0 | 0.6037 | 0.6453 | 0.31
 unkda_base ep10 Z louvain_res6 | 0.9375 | 0.5672 | 0.0 | 0.5934 | 0.6848 | 0.3864 | 0.2646 | 62/32/6 | 1.94
 unkda_base ep10 Z hdbscan_raw(옛다이얼) | 0.4062 | 0.2516 | 67.07 | 0.8314 | 0.8172 | 0.587 | 0.6472 | 23/32/3 | 0.72
 
+### unkda_nv090 (defect-aware strict novel + NV 0.90)
 ### unkda_nv090 (defect-aware strict novel + NV 0.90)
 ### unkda_nv090 (defect-aware strict novel + NV 0.90)
 ### unkda_nv090 (defect-aware strict novel + NV 0.90)

@@ -27,6 +27,7 @@ CONFIGS=(
   "unkda_nv050|--method simclr --nv-filter 0.50|$DA_TR|$DA_EXCL|defect-aware strict novel + NV 0.50|8"
   "unkda_nv060|--method simclr --nv-filter 0.60|$DA_TR|$DA_EXCL|defect-aware strict novel + NV 0.60|8"
   "unkda_nv070|--method simclr --nv-filter 0.70|$DA_TR|$DA_EXCL|defect-aware strict novel + NV 0.70|8"
+  "unkda_nv075|--method simclr --nv-filter 0.75|$DA_TR|$DA_EXCL|defect-aware strict novel + NV 0.75|8"
   "unkda_nv080|--method simclr --nv-filter 0.80|$DA_TR|$DA_EXCL|defect-aware strict novel + NV 0.80|8"
   "unkda_nv093|--method simclr --nv-filter 0.93|$DA_TR|$DA_EXCL|defect-aware strict novel + NV 0.93|8"
   "unkda_nv095|--method simclr --nv-filter 0.95|$DA_TR|$DA_EXCL|defect-aware strict novel + NV|8"
