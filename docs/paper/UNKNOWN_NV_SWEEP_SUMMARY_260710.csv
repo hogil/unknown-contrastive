@@ -1,0 +1,5 @@
+recipe,label,nv_threshold,method,epochs_available,best_epoch,best_ARI,best_capture,best_recov,best_completeness,best_homogeneity,best_silhouette,best_fragment_ratio,latest_epoch,latest_ARI,latest_capture,frozen_ARI
+unkda_base,SimCLR base,off,finch_p2,"1,2,3,4,5,6,7,8,9,10",2,0.5959,0.875,0.7847,0.8021,0.8491,0.2954,1.81,10,0.5026,0.8438,0.709
+unkda_nv090,NV 0.90,0.9,finch_p2,"1,2,3,4,5,6,7",1,0.5418,0.875,0.68,0.7803,0.7969,0.2822,1.56,7,0.4814,0.875,0.709
+unkda_base,SimCLR base,off,louvain_res6,"1,2,3,4,5,6,7,8,9,10",2,0.6878,0.9375,0.8091,0.8056,0.8696,0.3349,1.78,10,0.5587,0.9375,0.785
+unkda_nv090,NV 0.90,0.9,louvain_res6,"1,2,3,4,5,6,7",1,0.6747,0.9375,0.7853,0.8078,0.855,0.3266,1.66,7,0.5022,0.9375,0.785

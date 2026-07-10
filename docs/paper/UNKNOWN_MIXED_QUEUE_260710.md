@@ -17,6 +17,15 @@ Queue order:
 
 Acceptance rule: do not add queue+NV or another multi-option recipe until its individual options beat `unkda_base` on the same strict-novel split.
 
+## NV sweep performance plot
+
+- plot: `D:\project\unknown-contrastive\docs\paper\figs_unknown_nv_sweep_260710.png`
+- machine-readable scores: `D:\project\unknown-contrastive\docs\paper\UNKNOWN_NV_SWEEP_SCORES_260710.csv`
+- per-recipe summary: `D:\project\unknown-contrastive\docs\paper\UNKNOWN_NV_SWEEP_SUMMARY_260710.csv`
+- update command: `python D:\project\unknown-contrastive\scripts\plot_unknown_nv_sweep.py`
+
+The plot shows FINCH-p2 and Louvain epoch trajectories, frozen baselines, and both the best-observed and latest available epoch. Best-observed values are exploratory only; they are not accepted results until the seed gate is satisfied.
+
 Frozen strict-novel baseline (32 unseen classes, `grade_only`, 2026-07-10 rescore):
 
 | clusterer | capture | recov | noise% | Comp | Hom | ARI | Sil | fragment |
