@@ -45,7 +45,7 @@ WM's trained ARI is `0.313 +/- 0.020` across the two available ep8 seeds (`0.293
 
 1. Keep `grade_only`: background retention reduced strict-novel FINCH-p2 ARI from `0.709` to `0.646` and Louvain ARI from `0.785` to `0.752`.
 2. Complete the defect-aware base for 10 epochs, saving every epoch rather than using only the final epoch.
-3. Run the same split with one NV threshold at a time: `0.90`, `0.95`, `0.98`.
+3. Run the same split with one NV threshold at a time: `0.50`, `0.60`, `0.70`, `0.80`, `0.85`, `0.90`, `0.93`, `0.95`, `0.97`, `0.98`, `0.99`; include the base (`NV=0`) as the twelfth curve point. NV0.90 masked only `0.03%` at ep6, so lower thresholds are required to observe an active regime.
 4. Run queue4096-only and frozen-backbone adapter-only as separate univariate controls.
 5. Run FCMAE initialization as a separate backbone row.
 6. Run field-mixed all-unlabeled adaptation as a separate production protocol.
