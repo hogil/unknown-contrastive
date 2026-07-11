@@ -11,12 +11,13 @@ RES="docs/paper/UNKNOWN_MIXED_QUEUE_260710.md"
 EV="data/images/unknown_eval100"
 DA_TR="data/images/unknown_train_defectaware_260710"
 ALL_TR="data/images/unknown_train_all"
+REVIEW_ROOT="E:/unknown-contrastive-archive/260710_production_review"
 EPOCHS=10
 
 DA_EXCL="Normal,Random,R,Center_bank_boundary,Center_scratch,Donut_bank_boundary,Donut_fork,Edge-Ring_bank_boundary,Edge-Ring_scratch,Edge-Top_fork,Full_scratch,ParallelScratches,RingDots"
 FIELD_EXCL="Normal,Random,R"
 
-mkdir -p "$EMB" "$(dirname "$RES")"
+mkdir -p "$EMB" "$(dirname "$RES")" "$REVIEW_ROOT"
 export PYTHONIOENCODING=utf-8 TF_ENABLE_ONEDNN_OPTS=0 HF_HUB_OFFLINE=1
 
 say(){ echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
@@ -68,7 +69,7 @@ group_ep(){
   local ep="$2"
   local p="$EMB/${tag}_ep${ep}.npy"
   [ -f "$p" ] || return 0
-  local out="result_grouping/_production_review_260710/${tag}_ep${ep}_finch_p2"
+  local out="$REVIEW_ROOT/${tag}_ep${ep}_finch_p2"
   python scripts/group_saved_embeddings.py \
     --embedding "$p" \
     --pool "$EV" \
