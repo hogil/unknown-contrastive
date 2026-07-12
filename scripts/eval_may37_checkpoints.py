@@ -101,6 +101,14 @@ def calculate_metrics(emb: np.ndarray, labels: list[str], ignored: set[str]) -> 
         label: any(cluster_label == label for cluster_label in dominant.values())
         for label in all_classes
     }
+    class_totals = Counter(measured_labels.tolist())
+    coverage = {}
+    for label, total in class_totals.items():
+        max_in_cluster = max(
+            (counts.get(label, 0) for counts in cluster_classes.values()),
+            default=0,
+        )
+        coverage[label] = max_in_cluster / total
     n_clusters = len(dominant)
     can_score = len(clustered_labels) > 1 and len(set(clustered_pred.tolist())) > 1
     if can_score:
@@ -114,7 +122,12 @@ def calculate_metrics(emb: np.ndarray, labels: list[str], ignored: set[str]) -> 
     n_measured = int(measured.sum())
     noise = int((pred == -1).sum())
     return {
-        "P1_cap": round(float(np.mean(list(found.values()))), 4) if found else 0.0,
+        # Historical P1/capture: each class's largest retained cluster share.
+        # It is coverage, not class-discovery count; report both explicitly.
+        "P1_cap": round(float(np.mean(list(coverage.values()))), 4) if coverage else 0.0,
+        "class_found_rate": round(float(np.mean(list(found.values()))), 4) if found else 0.0,
+        "class_found_count": int(sum(found.values())),
+        "target_class_count": int(len(all_classes)),
         "P2_noise_pct": round(100.0 * noise / max(1, n_measured), 2),
         "P3_completeness": round(p3, 4),
         "P4_homogeneity": round(p4, 4),
