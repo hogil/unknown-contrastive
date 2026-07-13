@@ -17,19 +17,23 @@ Core gate: P1 does not regress, P2 does not increase, and P3/P4/ARI do not regre
 
 ## Hard-Unknown Strict-Novel
 
-NV 0.50 blend086 ep6 passes the full hard-unknown 32-class core gate at the same epoch for both clusterers. It is selected by FINCH ARI among dual-gate rows and remains provisional until the fixed recipe is reproduced on an independent contrastive seed and holdout.
+FCMAE frozen ep0 passes both clusterer gates against DINOv3 frozen and needs only the image-disjoint holdout check.
+NV 0.50 blend086 ep6 is the strongest learned dual-gate candidate and remains provisional until fixed-seed and holdout validation.
 
 | Method | Row | Recipe / epoch | P1 capture | P2 noise% | P3 Comp | P4 Hom | ARI | Sil | k | Fragment | Core gate vs frozen |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | FINCH-p2 | reference | DINOv3 frozen | 30/32 (0.938) | 0.0 | 0.830 | 0.892 | 0.709 | 0.304 | 58 | 1.81 | pass |
-| FINCH-p2 | exploratory | NV 0.50 blend086 ep6 | 30/32 (0.938) | 0.0 | 0.859 | 0.902 | 0.739 | 0.348 | 51 | 1.59 | pass |
 | Louvain | reference | DINOv3 frozen | 31/32 (0.969) | 0.0 | 0.868 | 0.907 | 0.785 | 0.378 | 52 | 1.62 | pass |
-| Louvain | exploratory | NV 0.50 blend086 ep6 | 31/32 (0.969) | 0.0 | 0.901 | 0.924 | 0.831 | 0.429 | 47 | 1.47 | pass |
+| FINCH-p2 | backbone candidate | FCMAE frozen ep0 | 32/32 (1.000) | 0.0 | 0.891 | 0.958 | 0.805 | 0.381 | 62 | 1.94 | pass |
+| Louvain | backbone candidate | FCMAE frozen ep0 | 31/32 (0.969) | 0.0 | 0.931 | 0.968 | 0.871 | 0.472 | 53 | 1.66 | pass |
+| FINCH-p2 | learned candidate | NV 0.50 blend086 ep6 | 30/32 (0.938) | 0.0 | 0.859 | 0.902 | 0.739 | 0.348 | 51 | 1.59 | pass |
+| Louvain | learned candidate | NV 0.50 blend086 ep6 | 31/32 (0.969) | 0.0 | 0.901 | 0.924 | 0.831 | 0.429 | 47 | 1.47 | pass |
 
 ## Current Deployment Decision
 
 - WM-811K, RESISC45, and DTD: use the accepted learned candidate shown above; retain the frozen embedding as fallback.
-- Hard unknown: NV 0.50 blend086 ep6 is the current provisional candidate; retain DINOv3 frozen as the fallback until independent seed and holdout confirmation.
+- Hard unknown: FCMAE frozen ep0 is the current provisional backbone candidate; retain DINOv3 frozen as the fallback until the image-disjoint holdout check completes.
+- Learned hard-unknown candidate: NV 0.50 blend086 ep6; retain it separately until fixed-seed and holdout validation complete.
 - Therefore this is a robust model family with an acceptance/fallback policy, not yet one universal learned checkpoint.
 
 

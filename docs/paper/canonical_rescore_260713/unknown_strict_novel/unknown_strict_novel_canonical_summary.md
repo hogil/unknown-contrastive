@@ -5,6 +5,7 @@ P1 is unique dominant/main-class capture. Normal and train-known classes remain 
 
 | Recipe | Diagnostic best epoch by FINCH-p2 ARI | P1 capture | P2 noise% | P3 Comp | P4 Hom | ARI | Sil | k | Fragment | Gate vs frozen |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| FCMAE frozen | 0 | 32/32 (1.000) | 0.0 | 0.891 | 0.958 | 0.805 | 0.381 | 62 | 1.94 | pass |
 | Frozen | 0 | 30/32 (0.938) | 0.0 | 0.830 | 0.892 | 0.709 | 0.304 | 58 | 1.81 | pass |
 | SimCLR base | 2 | 26/32 (0.812) | 0.0 | 0.802 | 0.849 | 0.596 | 0.295 | 58 | 1.81 | fail |
 | NV 0.50 | 6 | 31/32 (0.969) | 0.0 | 0.831 | 0.889 | 0.674 | 0.312 | 57 | 1.78 | fail |

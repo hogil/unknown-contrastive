@@ -48,6 +48,8 @@ def unknown_recipe_label(recipe: str) -> str:
         return "SimCLR base" if not suffix else f"SimCLR base {suffix}"
     match = re.match(r"^unkda_nv(\d{3})(?:_(.*))?$", recipe, re.IGNORECASE)
     if match is None:
+        if recipe.startswith("unkda_"):
+            return recipe.removeprefix("unkda_").replace("_", " ")
         return recipe
     suffix = (match.group(2) or "").replace("_", " ")
     label = f"NV {int(match.group(1)) / 100:.2f}"
@@ -88,9 +90,19 @@ def main() -> None:
 
     unknown = pd.read_csv(unknown_path)
     frozen = unknown[(unknown["recipe"] == "frozen") & (unknown["method"] == "finch_p2")].iloc[0]
-    learned_finch = unknown[(unknown["recipe"] != "frozen") & (unknown["method"] == "finch_p2")]
+    learned_finch = unknown[
+        (~unknown["recipe"].isin(["frozen", "fcmae_frozen"]))
+        & (unknown["method"] == "finch_p2")
+    ]
     unknown_louvain = unknown[unknown["method"] == "louvain_res6"]
     unknown_frozen_lv = unknown_louvain[unknown_louvain["recipe"] == "frozen"].iloc[0]
+    fcmae_finch_rows = unknown[(unknown["recipe"] == "fcmae_frozen") & (unknown["method"] == "finch_p2")]
+    fcmae_louvain_rows = unknown[(unknown["recipe"] == "fcmae_frozen") & (unknown["method"] == "louvain_res6")]
+    fcmae_finch = fcmae_finch_rows.iloc[0] if not fcmae_finch_rows.empty else None
+    fcmae_louvain = fcmae_louvain_rows.iloc[0] if not fcmae_louvain_rows.empty else None
+    fcmae_core_finch = fcmae_finch is not None and core_gate(fcmae_finch, frozen)
+    fcmae_core_louvain = fcmae_louvain is not None and core_gate(fcmae_louvain, unknown_frozen_lv)
+    fcmae_dual_gate = bool(fcmae_core_finch and fcmae_core_louvain)
     dual_gate_rows: list[tuple[pd.Series, pd.Series]] = []
     for _, finch_row in learned_finch.iterrows():
         matching_louvain = unknown_louvain[
@@ -104,16 +116,23 @@ def main() -> None:
             dual_gate_rows.append((finch_row, louvain_row))
     if dual_gate_rows:
         exploratory, exploratory_lv = max(dual_gate_rows, key=lambda pair: float(pair[0].ARI))
-    else:
+    elif not learned_finch.empty:
         exploratory = learned_finch.loc[learned_finch["ARI"].idxmax()]
         exploratory_lv = unknown_louvain[
             (unknown_louvain["recipe"] == exploratory.recipe)
             & (unknown_louvain["epoch"] == exploratory.epoch)
         ].iloc[0]
-    unknown_core_finch = core_gate(exploratory, frozen)
-    unknown_core_louvain = core_gate(exploratory_lv, unknown_frozen_lv)
-    unknown_dual_gate = unknown_core_finch and unknown_core_louvain
-    unknown_label = f"{unknown_recipe_label(str(exploratory.recipe))} ep{int(exploratory.epoch)}"
+    else:
+        exploratory = None
+        exploratory_lv = None
+    unknown_core_finch = exploratory is not None and core_gate(exploratory, frozen)
+    unknown_core_louvain = exploratory_lv is not None and core_gate(exploratory_lv, unknown_frozen_lv)
+    unknown_dual_gate = bool(unknown_core_finch and unknown_core_louvain)
+    unknown_label = (
+        f"{unknown_recipe_label(str(exploratory.recipe))} ep{int(exploratory.epoch)}"
+        if exploratory is not None
+        else None
+    )
 
     lines = [
         "# Robust Grouping Model Status",
@@ -140,25 +159,41 @@ def main() -> None:
             "## Hard-Unknown Strict-Novel",
             "",
             (
-                f"{unknown_label} passes the full hard-unknown 32-class core gate at the same epoch for both clusterers. "
-                "It is selected by FINCH ARI among dual-gate rows and remains provisional until the fixed recipe is reproduced on an independent contrastive seed and holdout."
+                "FCMAE frozen ep0 passes both clusterer gates against DINOv3 frozen and needs only the image-disjoint holdout check."
+                if fcmae_dual_gate
+                else "No alternate frozen backbone currently passes both hard-unknown clusterer gates."
+            ),
+            (
+                f"{unknown_label} is the strongest learned dual-gate candidate and remains provisional until fixed-seed and holdout validation."
                 if unknown_dual_gate
-                else "The full hard-unknown 32-class strict-novel gate has not accepted any learned candidate yet. "
-                "The strongest retained trade-off is listed at the same epoch for both clusterers, for diagnosis only."
+                else "No learned hard-unknown candidate currently passes both clusterer gates."
             ),
             "",
             "| Method | Row | Recipe / epoch | P1 capture | P2 noise% | P3 Comp | P4 Hom | ARI | Sil | k | Fragment | Core gate vs frozen |",
             "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         ]
     )
-    for method, row, label, gate in (
-        ("FINCH-p2", frozen, unknown_recipe_label("frozen"), True),
-        ("FINCH-p2", exploratory, unknown_label, unknown_core_finch),
-        ("Louvain", unknown_frozen_lv, unknown_recipe_label("frozen"), True),
-        ("Louvain", exploratory_lv, unknown_label, unknown_core_louvain),
-    ):
+    hard_rows = [
+        ("FINCH-p2", frozen, "reference", unknown_recipe_label("frozen"), True),
+        ("Louvain", unknown_frozen_lv, "reference", unknown_recipe_label("frozen"), True),
+    ]
+    if fcmae_finch is not None and fcmae_louvain is not None:
+        hard_rows.extend(
+            [
+                ("FINCH-p2", fcmae_finch, "backbone candidate", "FCMAE frozen ep0", fcmae_core_finch),
+                ("Louvain", fcmae_louvain, "backbone candidate", "FCMAE frozen ep0", fcmae_core_louvain),
+            ]
+        )
+    if exploratory is not None and exploratory_lv is not None and unknown_label is not None:
+        hard_rows.extend(
+            [
+                ("FINCH-p2", exploratory, "learned candidate", unknown_label, unknown_core_finch),
+                ("Louvain", exploratory_lv, "learned candidate", unknown_label, unknown_core_louvain),
+            ]
+        )
+    for method, row, role, label, gate in hard_rows:
         lines.append(
-            f"| {method} | {'reference' if 'frozen' in label else 'exploratory'} | {label} | {p1_text(row)} | "
+            f"| {method} | {role} | {label} | {p1_text(row)} | "
             f"{float(row.P2_noise_pct):.1f} | {float(row.P3_completeness):.3f} | {float(row.P4_homogeneity):.3f} | "
             f"{float(row.ARI):.3f} | {float(row.Sil):.3f} | {int(row.k_total)} | {float(row.fragment_ratio):.2f} | "
             f"{'pass' if gate else 'fail'} |"
@@ -170,9 +205,14 @@ def main() -> None:
             "",
             "- WM-811K, RESISC45, and DTD: use the accepted learned candidate shown above; retain the frozen embedding as fallback.",
             (
-                f"- Hard unknown: {unknown_label} is the current provisional candidate; retain DINOv3 frozen as the fallback until independent seed and holdout confirmation."
+                "- Hard unknown: FCMAE frozen ep0 is the current provisional backbone candidate; retain DINOv3 frozen as the fallback until the image-disjoint holdout check completes."
+                if fcmae_dual_gate
+                else "- Hard unknown: deploy DINOv3 frozen grouping until an alternate backbone passes both clusterer gates."
+            ),
+            (
+                f"- Learned hard-unknown candidate: {unknown_label}; retain it separately until fixed-seed and holdout validation complete."
                 if unknown_dual_gate
-                else "- Hard unknown: deploy DINOv3 frozen grouping until a learned candidate passes the core gate under both FINCH-p2 and Louvain."
+                else "- Learned hard-unknown candidate: none accepted yet under both clusterers."
             ),
             "- Therefore this is a robust model family with an acceptance/fallback policy, not yet one universal learned checkpoint.",
             "",

@@ -35,7 +35,7 @@ EXCLUDED = (
     "Donut_fork,Edge-Ring_bank_boundary,Edge-Ring_scratch,Edge-Top_fork,"
     "Full_scratch,ParallelScratches,RingDots"
 )
-NAME_RE = re.compile(r"^(?P<recipe>unkda_(?:base|nv(?P<threshold>\d{3}))(?:_[a-z0-9]+)*)_ep(?P<epoch>\d+)$", re.IGNORECASE)
+NAME_RE = re.compile(r"^(?P<recipe>unkda_[a-z0-9_]+)_ep(?P<epoch>\d+)$", re.IGNORECASE)
 METHODS = ("finch_p2", "louvain_res6")
 
 
@@ -114,10 +114,12 @@ def discover(root: Path, frozen: Path, extra_frozen: list[tuple[str, Path]]) -> 
         match = NAME_RE.fullmatch(path.stem)
         if match is None:
             continue
-        threshold = match.group("threshold")
+        recipe = match.group("recipe")
+        threshold_match = re.match(r"^unkda_nv(?P<threshold>\d{3})(?:_|$)", recipe, re.IGNORECASE)
+        threshold = threshold_match.group("threshold") if threshold_match else None
         specs.append(
             {
-                "recipe": match.group("recipe"),
+                "recipe": recipe,
                 "epoch": int(match.group("epoch")),
                 "threshold": float(threshold) / 100.0 if threshold else np.nan,
                 "embedding": path.resolve(),
@@ -212,6 +214,8 @@ def display_recipe(recipe: str) -> str:
         return "SimCLR base" if not suffix else f"SimCLR base {suffix}"
     match = re.match(r"^unkda_nv(\d{3})(?:_(.*))?$", recipe, re.IGNORECASE)
     if match is None:
+        if recipe.startswith("unkda_"):
+            return recipe.removeprefix("unkda_").replace("_", " ")
         return recipe
     suffix = (match.group(2) or "").replace("_", " ")
     label = f"NV {int(match.group(1)) / 100:.2f}"
