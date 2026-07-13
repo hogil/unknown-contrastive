@@ -11,6 +11,12 @@ function Write-QueueLog([string]$Message) {
     $line | Tee-Object -FilePath $Log -Append
 }
 
+trap {
+    Write-QueueLog "FAIL: $($_.Exception.Message)"
+    Write-QueueLog "STACK: $($_.ScriptStackTrace)"
+    exit 1
+}
+
 function Wait-ForGpu {
     while ($true) {
         $known = Get-CimInstance Win32_Process |
@@ -19,7 +25,10 @@ function Wait-ForGpu {
         if ($line -match "(\d+)\s*%.*?(\d+)\s*MiB") {
             $util = [int]$Matches[1]
             $mem = [int]$Matches[2]
-            $available = (-not $known) -and $util -le 10 -and $mem -le 1200
+            # WDDM desktop compositing holds the RTX 4060 Ti at roughly 15-20%
+            # even when no compute job is running. The explicit known-CNN guard
+            # and low memory ceiling still prevent a training collision.
+            $available = (-not $known) -and $util -le 30 -and $mem -le 1200
             Write-QueueLog "GPU check util=$util% mem=${mem}MiB known_cnn=$($null -ne $known) available=$available"
             if ($available) { return }
         }

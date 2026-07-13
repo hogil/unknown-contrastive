@@ -34,7 +34,7 @@ EXCLUDED = (
     "Donut_fork,Edge-Ring_bank_boundary,Edge-Ring_scratch,Edge-Top_fork,"
     "Full_scratch,ParallelScratches,RingDots"
 )
-NAME_RE = re.compile(r"^(?P<recipe>unkda_(?:base|nv(?P<threshold>\d{3})))_ep(?P<epoch>\d+)$")
+NAME_RE = re.compile(r"^(?P<recipe>unkda_(?:base|nv(?P<threshold>\d{3}))(?:_[a-z0-9]+)*)_ep(?P<epoch>\d+)$", re.IGNORECASE)
 METHODS = ("finch_p2", "louvain_res6")
 
 
@@ -82,7 +82,7 @@ def discover(root: Path, frozen: Path) -> list[dict[str, object]]:
                 "epoch": int(match.group("epoch")),
                 "threshold": float(threshold) / 100.0 if threshold else np.nan,
                 "embedding": path.resolve(),
-                "label": "SimCLR base" if match.group("recipe") == "unkda_base" else f"NV {int(threshold) / 100:.2f}",
+                "label": display_recipe(match.group("recipe")),
             }
         )
     return specs
@@ -166,9 +166,22 @@ def save_cache(frame: pd.DataFrame, path: Path) -> None:
 def display_recipe(recipe: str) -> str:
     if recipe == "frozen":
         return "Frozen"
-    if recipe == "unkda_base":
-        return "SimCLR base"
-    return f"NV {int(recipe.rsplit('nv', 1)[1]) / 100:.2f}"
+    if recipe.startswith("unkda_base"):
+        suffix = recipe.removeprefix("unkda_base").strip("_").replace("_", " ")
+        return "SimCLR base" if not suffix else f"SimCLR base {suffix}"
+    match = re.match(r"^unkda_nv(\d{3})(?:_(.*))?$", recipe, re.IGNORECASE)
+    if match is None:
+        return recipe
+    suffix = (match.group(2) or "").replace("_", " ")
+    label = f"NV {int(match.group(1)) / 100:.2f}"
+    return label if not suffix else f"{label} {suffix}"
+
+
+def recipe_sort_key(recipe: str) -> tuple[float, str]:
+    if recipe.startswith("unkda_base"):
+        return -1.0, recipe
+    match = re.match(r"^unkda_nv(\d{3})", recipe, re.IGNORECASE)
+    return (float(match.group(1)) / 100.0 if match else float("inf"), recipe)
 
 
 def add_gates(frame: pd.DataFrame) -> pd.DataFrame:
@@ -230,7 +243,7 @@ def plot_method(frame: pd.DataFrame, method: str, output: Path) -> None:
     current = frame[frame["method"] == method].copy()
     baseline = current[current["recipe"] == "frozen"].iloc[0]
     recipes = [recipe for recipe in current["recipe"].unique() if recipe != "frozen"]
-    recipes.sort(key=lambda recipe: -1.0 if recipe == "unkda_base" else float(recipe.rsplit("nv", 1)[1]) / 100)
+    recipes.sort(key=recipe_sort_key)
     metrics = [
         ("P1_capture", "P1 dominant capture", (0.0, 1.05)),
         ("P2_noise_pct", "P2 noise %", (0.0, 100.0)),

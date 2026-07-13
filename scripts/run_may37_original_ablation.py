@@ -169,6 +169,11 @@ def make_frozen_run(source_dir: Path, output_root: Path, backbone: str) -> Path:
     cfg = archive_cfg(init_path, "FROZEN")
     module = load_archived_module(source_dir, f"may_exact_frozen_{backbone}_{stamp}")
     module.CFG.update(cfg)
+    # The archived evaluator clusters model(x), i.e. the projection z. Freeze
+    # the head initialization as well so the diagnostic reference is repeatable.
+    torch.manual_seed(int(cfg["SEED"]))
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(int(cfg["SEED"]))
     model = module.CL()
     checkpoints = run_dir / "checkpoints"
     checkpoints.mkdir(parents=True, exist_ok=True)
@@ -325,7 +330,7 @@ def main() -> None:
     print(f"[START] backbone={args.backbone} cell={args.cell} anchor={ANCHOR}", flush=True)
     if args.cell == "FROZEN":
         run_dir = make_frozen_run(source_dir, output_root, args.backbone)
-        mode = "backbone"
+        mode = "projection"
     else:
         run_dir = run_archived_training(source_dir, output_root, args.backbone, args.cell)
         mode = "projection"
