@@ -27,6 +27,7 @@ from sklearn.metrics import silhouette_score
 ROOT = Path(__file__).resolve().parents[1]
 EMBEDDINGS = ROOT / "result_grouping" / "_unknown_mixed260710" / "embeddings"
 FROZEN = ROOT / "result_grouping" / "_field_robust" / "embeddings" / "frozen_unknown_dinov3_grade_only_260709.npy"
+FCMAE_FROZEN = EMBEDDINGS / "frozen_unknown_fcmae.npy"
 POOL = ROOT / "data" / "images" / "unknown_eval100"
 OUTPUT = ROOT / "docs" / "paper" / "canonical_rescore_260713" / "unknown_strict_novel"
 EXCLUDED = (
@@ -69,6 +70,17 @@ def discover(root: Path, frozen: Path) -> list[dict[str, object]]:
             "label": "DINOv3 frozen",
         }
     ]
+    fcmae_frozen = root / FCMAE_FROZEN.name
+    if fcmae_frozen.exists():
+        specs.append(
+            {
+                "recipe": "fcmae_frozen",
+                "epoch": 0,
+                "threshold": np.nan,
+                "embedding": fcmae_frozen.resolve(),
+                "label": "FCMAE frozen",
+            }
+        )
     for path in sorted(root.glob("unkda_*_ep*.npy")):
         if path.stem.endswith("_proj"):
             continue
@@ -166,6 +178,8 @@ def save_cache(frame: pd.DataFrame, path: Path) -> None:
 def display_recipe(recipe: str) -> str:
     if recipe == "frozen":
         return "Frozen"
+    if recipe == "fcmae_frozen":
+        return "FCMAE frozen"
     if recipe.startswith("unkda_base"):
         suffix = recipe.removeprefix("unkda_base").strip("_").replace("_", " ")
         return "SimCLR base" if not suffix else f"SimCLR base {suffix}"
@@ -178,6 +192,8 @@ def display_recipe(recipe: str) -> str:
 
 
 def recipe_sort_key(recipe: str) -> tuple[float, str]:
+    if recipe == "fcmae_frozen":
+        return -2.0, recipe
     if recipe.startswith("unkda_base"):
         return -1.0, recipe
     match = re.match(r"^unkda_nv(\d{3})", recipe, re.IGNORECASE)

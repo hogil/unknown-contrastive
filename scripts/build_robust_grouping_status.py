@@ -41,6 +41,8 @@ def core_gate(candidate: pd.Series, frozen: pd.Series) -> bool:
 def unknown_recipe_label(recipe: str) -> str:
     if recipe == "frozen":
         return "DINOv3 frozen"
+    if recipe == "fcmae_frozen":
+        return "FCMAE frozen"
     if recipe.startswith("unkda_base"):
         suffix = recipe.removeprefix("unkda_base").strip("_").replace("_", " ")
         return "SimCLR base" if not suffix else f"SimCLR base {suffix}"
