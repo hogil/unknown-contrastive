@@ -5,6 +5,9 @@ $Root = "D:\project\unknown-contrastive"
 $Runner = Join-Path $Root "scripts\run_may37_original_ablation.py"
 $ResultsRoot = Join-Path $Root "runs\may37_original_reproduction"
 $Log = Join-Path $ResultsRoot "may37_original_queue.log"
+$Hard42StateDir = Join-Path $Root "docs\paper\canonical_rescore_260713\unknown_strict_novel"
+$Hard42Completion = Join-Path $Hard42StateDir "hard42_seed_validation.complete"
+$Hard42Failure = Join-Path $Hard42StateDir "hard42_seed_validation.failed"
 
 function Write-QueueLog([string]$Message) {
     $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
@@ -15,6 +18,21 @@ trap {
     Write-QueueLog "FAIL: $($_.Exception.Message)"
     Write-QueueLog "STACK: $($_.ScriptStackTrace)"
     exit 1
+}
+
+function Wait-ForHard42SeedValidation {
+    while ($true) {
+        if (Test-Path -LiteralPath $Hard42Completion) {
+            Write-QueueLog "hard-42 fixed-recipe seed validation complete; starting May source reproduction"
+            return
+        }
+        if (Test-Path -LiteralPath $Hard42Failure) {
+            Write-QueueLog "hard-42 seed validation failed; preserving May reproduction by continuing"
+            return
+        }
+        Write-QueueLog "waiting for higher-priority hard-42 fixed-recipe seed validation"
+        Start-Sleep -Seconds 60
+    }
 }
 
 function Wait-ForGpu {
@@ -54,6 +72,7 @@ $env:CUDA_VISIBLE_DEVICES = "0"
 
 New-Item -ItemType Directory -Force -Path $ResultsRoot | Out-Null
 Write-QueueLog "May source-faithful B0-B5 queue started. source=b796ecbe5f70"
+Wait-ForHard42SeedValidation
 Wait-ForGpu
 
 $cells = @("FROZEN", "B0", "B1", "B2", "B3", "B4", "B5")

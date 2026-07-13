@@ -54,13 +54,30 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--embeddings", type=Path, default=EMBEDDINGS)
     parser.add_argument("--frozen", type=Path, default=FROZEN)
+    parser.add_argument(
+        "--extra-frozen",
+        action="append",
+        default=[],
+        metavar="RECIPE=PATH",
+        help="Additional frozen backbone row, for example fcmae_frozen=D:\\...\\fcmae.npy.",
+    )
     parser.add_argument("--pool", type=Path, default=POOL)
     parser.add_argument("--output-dir", type=Path, default=OUTPUT)
     parser.add_argument("--refresh", action="store_true", help="ignore cached rows")
     return parser.parse_args()
 
 
-def discover(root: Path, frozen: Path) -> list[dict[str, object]]:
+def parse_extra_frozen(entries: list[str]) -> list[tuple[str, Path]]:
+    parsed: list[tuple[str, Path]] = []
+    for entry in entries:
+        recipe, separator, raw_path = entry.partition("=")
+        if not separator or not recipe or not raw_path:
+            raise ValueError(f"--extra-frozen must be RECIPE=PATH, got: {entry}")
+        parsed.append((recipe, Path(raw_path).expanduser().resolve()))
+    return parsed
+
+
+def discover(root: Path, frozen: Path, extra_frozen: list[tuple[str, Path]]) -> list[dict[str, object]]:
     specs = [
         {
             "recipe": "frozen",
@@ -70,8 +87,18 @@ def discover(root: Path, frozen: Path) -> list[dict[str, object]]:
             "label": "DINOv3 frozen",
         }
     ]
+    for recipe, embedding in extra_frozen:
+        specs.append(
+            {
+                "recipe": recipe,
+                "epoch": 0,
+                "threshold": np.nan,
+                "embedding": embedding,
+                "label": display_recipe(recipe),
+            }
+        )
     fcmae_frozen = root / FCMAE_FROZEN.name
-    if fcmae_frozen.exists():
+    if not extra_frozen and fcmae_frozen.exists():
         specs.append(
             {
                 "recipe": "fcmae_frozen",
@@ -308,7 +335,11 @@ def main() -> None:
     scorelib = load_score_module()
     labels = scorelib.labels_pool(args.pool.resolve())
     excluded = {value.strip() for value in EXCLUDED.split(",") if value.strip()}
-    specs = discover(args.embeddings.resolve(), args.frozen.resolve())
+    specs = discover(
+        args.embeddings.resolve(),
+        args.frozen.resolve(),
+        parse_extra_frozen(args.extra_frozen),
+    )
     if not specs:
         raise RuntimeError("No hard-unknown embeddings discovered")
     cache = pd.DataFrame() if args.refresh else load_cache(cache_path)

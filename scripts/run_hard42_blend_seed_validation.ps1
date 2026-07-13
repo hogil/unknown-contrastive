@@ -5,11 +5,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = "D:\project\unknown-contrastive"
-$MayTask = "unknown_contrastive_may37_source_repro"
 $Train = Join-Path $Root "data\images\unknown_train_defectaware_260710"
 $Eval = Join-Path $Root "data\images\unknown_eval100"
 $Embeddings = Join-Path $Root "result_grouping\_unknown_mixed260710\embeddings"
-$Log = Join-Path $Root "docs\paper\canonical_rescore_260713\unknown_strict_novel\hard42_seed_validation_queue.log"
+$StateDir = Join-Path $Root "docs\paper\canonical_rescore_260713\unknown_strict_novel"
+$Log = Join-Path $StateDir "hard42_seed_validation_queue.log"
+$Completion = Join-Path $StateDir "hard42_seed_validation.complete"
+$Failure = Join-Path $StateDir "hard42_seed_validation.failed"
 
 function Write-QueueLog([string]$Message) {
     $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
@@ -19,23 +21,9 @@ function Write-QueueLog([string]$Message) {
 trap {
     Write-QueueLog "FAIL: $($_.Exception.Message)"
     Write-QueueLog "STACK: $($_.ScriptStackTrace)"
+    New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
+    Set-Content -LiteralPath $Failure -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
     exit 1
-}
-
-function Wait-ForMayReproduction {
-    while ($true) {
-        $task = Get-ScheduledTask -TaskName $MayTask
-        if ($task.State -eq "Running") {
-            Write-QueueLog "waiting for May CNN/no-CNN source reproduction"
-            Start-Sleep -Seconds $PollSeconds
-            continue
-        }
-        $info = Get-ScheduledTaskInfo -TaskName $MayTask
-        if ($info.LastTaskResult -ne 0) {
-            throw "May source reproduction ended with task result $($info.LastTaskResult)"
-        }
-        return
-    }
 }
 
 function Wait-ForGpu {
@@ -57,14 +45,14 @@ function Wait-ForGpu {
 }
 
 Set-Location -LiteralPath $Root
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Log) | Out-Null
+New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
+Remove-Item -LiteralPath $Completion, $Failure -Force -ErrorAction SilentlyContinue
 $env:PYTHONIOENCODING = "utf-8"
 $env:HF_HUB_OFFLINE = "1"
 $env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
 $env:CUDA_VISIBLE_DEVICES = "0"
 
-Write-QueueLog "hard-42 blend validation queue started; seeds=$($Seeds -join ',')"
-Wait-ForMayReproduction
+Write-QueueLog "hard-42 blend validation queue started before May reproduction; seeds=$($Seeds -join ',')"
 foreach ($seed in $Seeds) {
     Wait-ForGpu
     $tag = "unkda_nv050_s$seed"
@@ -86,4 +74,5 @@ foreach ($seed in $Seeds) {
     $env:CUDA_VISIBLE_DEVICES = "0"
     Write-QueueLog "DONE $tag"
 }
+Set-Content -LiteralPath $Completion -Value (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 Write-QueueLog "DONE hard-42 blend validation queue"
