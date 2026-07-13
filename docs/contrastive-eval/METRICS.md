@@ -4,13 +4,19 @@
 
 | 순위 | metric | 의미 | 현재 (overall) |
 |---|---|---|---|
-| **P1** | `class_capture_rate` | 모든 defect class 가 ≥1 group 으로 잡힘 | **38/38 = 1.000** |
+| **P1** | `class_capture_rate` | defect class 가 cluster의 dominant class로 ≥1회 등장 | run-dependent |
 | **P2** | `noise_pct (defect only)` | defect 가 noise (-1) 로 격리 실패 비율 — 낮을수록 좋음 | **0.71%** |
 | **P3** | Completeness | 같은 class 가 같은 group 에 모이는 정도 | 0.9466 |
 | **P4** | Homogeneity | 한 group 안에 한 class 만 있는 정도 | 0.9154 |
 | 보조 | AMI | chance-corrected 일반 quality | 0.9288 |
 
 P1-P2 = production 직결 (recall / false-alarm 느낌). P3-P4 = clustering quality. AMI = cross-paper 비교 보조.
+
+> Historical migration: the May-2026 evaluator counted a class when **any** sample was non-noise
+> (`n_clusters >= 1`). That weaker value is now reported only as `legacy_presence_capture`; it is
+> not P1 and cannot be compared directly with the dominant-class P1 above.
+> The `38/38` JSON/log examples later in this document are historical legacy-presence examples,
+> not canonical P1 reference values.
 
 ## Tier 1 — 발표 / 논문 표 1행 (4 + class_fragmentation_summary)
 
@@ -19,7 +25,7 @@ P1-P2 = production 직결 (recall / false-alarm 느낌). P3-P4 = clustering qual
 | **Completeness** | Rosenberg & Hirschberg 2007 | 정보이론 기반 partition-level. "각 GT class 가 단일 cluster 에 모이는 정도". 1.0 = 모든 class 가 정확히 1 cluster |
 | **AMI** (Adjusted MI) | Vinh et al. 2010 | NMI 의 chance-corrected. cluster 수 많아도 inflate 안 함 — 우리 over-cluster 환경에 안전 |
 | **noise_pct** (defect only) | HDBSCAN 보고 표준 | (cluster_id == -1 ∩ defect) / 전체 defect. % |
-| **class_capture_rate** | 자체 정의 (class_fragmentation summary) | (n_clusters ≥ 1 인 class 수) / 전체 class 수. 1.0 = 모든 class 가 잡힘 |
+| **class_capture_rate** | 자체 정의 | (cluster의 **unique dominant/main** class로 등장한 defect class 수) / 전체 defect class 수. 동률 cluster는 대표 class 없음으로 처리. 1.0 = 모든 class 가 대표 group을 가짐 |
 
 `class_fragmentation_summary` (criteria A/B/C aggregate, 7 키) — `eval/class_fragmentation.parquet` 의 컬럼들 (`n_clusters`, `cluster_coverage`, `n_noise`) 을 한 번 aggregate:
 

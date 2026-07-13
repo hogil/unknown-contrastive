@@ -130,17 +130,21 @@ cluster 결과 평가 — **비지도 군집화** (label 없이 학습) but **GT
 
 #### **P1 = class_capture_rate** (recall 느낌, 1순위)
 
-**정의**: `(잡힌 defect class 수) / (전체 defect class 수)`
+**정의**: `(cluster의 dominant/main class로 잡힌 defect class 수) / (전체 defect class 수)`
 
 **계산 예시**:
-- 42 defect class 중 어떤 class 의 wafer 들이 **모두 noise (-1)** 가 되면 그 class "놓침" — P1 깎임
-- Iter 1: 42/42 = 1.000 → 모든 class 잡음
-- Iter 2 (REJECT): 41/42 = 0.976 → Donut_scratch_rot (n=15) 전부 noise → P1 violation
+- 42 defect class 중 어떤 class 가 어떤 cluster의 unique dominant/main class도 되지 못하면 "놓침" — P1 깎임
+- Donut_scratch_rot가 Cluster #X의 unique main class면 capture.
+- Donut_scratch_rot가 noise이거나 다른 class-dominant cluster의 소수 샘플이면 capture가 아님.
+
+> Historical migration: this report's old Iter table uses the historical non-noise-presence
+> capture (`n_clusters >= 1`) and is retained only as a record. Its `1.000` / `0.976` values
+> are not canonical P1 and must not be compared to the dominant-class P1 above.
 
 **시각 예시**:
-- ✅ Donut_scratch_rot 15 wafer 가 Cluster #X 에 모임 → capture
+- ✅ Donut_scratch_rot가 Cluster #X의 unique dominant class → capture
   ![DSR cluster](../../outputs_contrastive_260506_235250/cluster_summary/cluster_001_size_32__Donut_invalid_main__medoid_dist0.0415.png)
-- ❌ Donut_scratch_rot 15 wafer 모두 noise 처리 → P1 violation (cluster medoid PNG 안 만들어짐)
+- ❌ Donut_scratch_rot가 모두 noise이거나 모든 cluster에서 minor class → P1 violation
 
 **왜 1순위?**: production 에서 결함 누락 = 큰 사고 (검사 라인 통과 후 chip 출하 → 고객 불만)
 
@@ -365,6 +369,9 @@ L = L_global (InfoNCE 2 view) + L_queue + LOCAL_WEIGHT × L_local
 
 | Iter | atomic change | Comp P3 | AMI | **noise(def) P2** | **capture P1** | Hom P4 | ARI | Sil | 판정 |
 |---|---|---|---|---|---|---|---|---|---|
+
+> Historical table note: `capture P1` below is the old non-noise-presence value, not the current dominant-class P1.
+
 | **A0** | baseline (LW=0.5, LR=1e-3, NEG=0.72, TEMP=0.07, EPOCHS=5) | 0.938 | 0.895 | 9.34% | 1.000 | 0.893 | 0.704 | 0.791 | base |
 | **Iter 1** ★ | **LW 0.5 → 1.0** | 0.948 | 0.904 | **4.62%** | 1.000 | 0.898 | 0.733 | 0.777 | **★ P2 winner** |
 | Iter 2 | NEG 0.72 → 0.65 | 0.816 | 0.821 | 7.16% | **0.976** ❌ | 0.875 | 0.639 | 0.737 | reject (P1) |

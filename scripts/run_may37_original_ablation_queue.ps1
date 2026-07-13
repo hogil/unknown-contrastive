@@ -1,0 +1,69 @@
+param()
+
+$ErrorActionPreference = "Stop"
+$Root = "D:\project\unknown-contrastive"
+$Runner = Join-Path $Root "scripts\run_may37_original_ablation.py"
+$ResultsRoot = Join-Path $Root "runs\may37_original_reproduction"
+$Log = Join-Path $ResultsRoot "may37_original_queue.log"
+
+function Write-QueueLog([string]$Message) {
+    $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
+    $line | Tee-Object -FilePath $Log -Append
+}
+
+function Wait-ForGpu {
+    while ($true) {
+        $known = Get-CimInstance Win32_Process |
+            Where-Object { $_.Name -eq "python.exe" -and $_.CommandLine -match "multilabel_synth.run_wm38" }
+        $line = & nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader 2>$null
+        if ($line -match "(\d+)\s*%.*?(\d+)\s*MiB") {
+            $util = [int]$Matches[1]
+            $mem = [int]$Matches[2]
+            $available = (-not $known) -and $util -le 10 -and $mem -le 1200
+            Write-QueueLog "GPU check util=$util% mem=${mem}MiB known_cnn=$($null -ne $known) available=$available"
+            if ($available) { return }
+        }
+        Start-Sleep -Seconds 60
+    }
+}
+
+function Test-Completed([string]$Backbone, [string]$Cell) {
+    $suffix = "_mayexact_{0}_{1}" -f $Backbone, $Cell.ToLower()
+    $matches = @(Get-ChildItem -Path $ResultsRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Name -like "*$suffix" -and
+            (Test-Path (Join-Path $_.FullName "canonical_eval\metrics.json"))
+        })
+    return $matches.Count -gt 0
+}
+
+Set-Location -LiteralPath $Root
+$env:PYTHONIOENCODING = "utf-8"
+$env:HF_HUB_OFFLINE = "1"
+$env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+$env:CUDA_VISIBLE_DEVICES = "0"
+
+New-Item -ItemType Directory -Force -Path $ResultsRoot | Out-Null
+Write-QueueLog "May source-faithful B0-B5 queue started. source=b796ecbe5f70"
+Wait-ForGpu
+
+$cells = @("FROZEN", "B0", "B1", "B2", "B3", "B4", "B5")
+foreach ($backbone in @("cnn_tapt", "nocnn")) {
+    foreach ($cell in $cells) {
+        if (Test-Completed $backbone $cell) {
+            Write-QueueLog "SKIP completed backbone=$backbone cell=$cell"
+            continue
+        }
+        Write-QueueLog "START backbone=$backbone cell=$cell"
+        & python -u $Runner --backbone $backbone --cell $cell *>> $Log
+        if ($LASTEXITCODE -ne 0) {
+            throw "failed backbone=$backbone cell=$cell exit=$LASTEXITCODE"
+        }
+        Write-QueueLog "DONE backbone=$backbone cell=$cell"
+    }
+}
+& python -u (Join-Path $Root "scripts\summarize_may37_original_ablation.py") --results-root $ResultsRoot *>> $Log
+if ($LASTEXITCODE -ne 0) {
+    throw "failed to summarize source-faithful May B0-B5 cells exit=$LASTEXITCODE"
+}
+Write-QueueLog "DONE all source-faithful May B0-B5 cells."

@@ -35,6 +35,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 from _common import mask_palette_non_grade_to_white  # noqa: E402
+from cluster_metrics import capture_metrics  # noqa: E402
 
 
 class EvalDataset(Dataset):
@@ -76,7 +77,6 @@ def calculate_metrics(emb: np.ndarray, labels: list[str], ignored: set[str]) -> 
     labels_array = np.asarray(labels)
     measured = ~np.isin(labels_array, list(ignored))
     measured_labels = labels_array[measured]
-    measured_emb = emb[measured]
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size=12,
         min_samples=3,
@@ -84,32 +84,16 @@ def calculate_metrics(emb: np.ndarray, labels: list[str], ignored: set[str]) -> 
         cluster_selection_epsilon=0.0,
         metric="euclidean",
     )
-    pred = clusterer.fit_predict(measured_emb)
+    # Cluster the complete deployment pool first.  Background is excluded only
+    # from target metric denominators, never before cluster dominance is decided.
+    full_pred = clusterer.fit_predict(emb)
+    pred = full_pred[measured]
+    measured_emb = emb[measured]
     keep = pred != -1
     clustered_labels = measured_labels[keep]
     clustered_pred = pred[keep]
-    cluster_classes: dict[int, Counter[str]] = defaultdict(Counter)
-    for cluster_id, label in zip(clustered_pred.tolist(), clustered_labels.tolist()):
-        cluster_classes[int(cluster_id)][str(label)] += 1
-    dominant = {
-        cluster_id: counts.most_common(1)[0][0]
-        for cluster_id, counts in cluster_classes.items()
-        if counts
-    }
-    all_classes = sorted(set(measured_labels.tolist()))
-    found = {
-        label: any(cluster_label == label for cluster_label in dominant.values())
-        for label in all_classes
-    }
-    class_totals = Counter(measured_labels.tolist())
-    coverage = {}
-    for label, total in class_totals.items():
-        max_in_cluster = max(
-            (counts.get(label, 0) for counts in cluster_classes.values()),
-            default=0,
-        )
-        coverage[label] = max_in_cluster / total
-    n_clusters = len(dominant)
+    capture = capture_metrics(full_pred, labels_array, ignored)
+    n_clusters = int(capture["cluster_count"])
     can_score = len(clustered_labels) > 1 and len(set(clustered_pred.tolist())) > 1
     if can_score:
         p3 = float(completeness_score(clustered_labels, clustered_pred))
@@ -121,29 +105,34 @@ def calculate_metrics(emb: np.ndarray, labels: list[str], ignored: set[str]) -> 
         p3 = p4 = ami = ari = sil = 0.0
     n_measured = int(measured.sum())
     noise = int((pred == -1).sum())
+    capture_count = int(capture["capture_count"])
+    target_class_count = int(capture["target_class_count"])
+    dominant_cluster_count = int(capture["dominant_cluster_count"])
+    if capture_count > dominant_cluster_count or dominant_cluster_count > n_clusters:
+        raise RuntimeError("P1 capture count cannot exceed k")
     return {
-        # Historical P1/capture: distinct true classes represented by a
-        # cluster's dominant class, divided by all target classes.
-        "P1_cap": round(float(np.mean(list(found.values()))), 4) if found else 0.0,
-        "class_found_count": int(sum(found.values())),
-        "target_class_count": int(len(all_classes)),
-        # This is a different, weaker retention statistic.  Keep it separate
-        # so an over-merged giant cluster cannot be confused with capture.
-        "class_coverage": round(float(np.mean(list(coverage.values()))), 4) if coverage else 0.0,
+        "P1_capture": f"{capture_count}/{target_class_count}",
+        "P1_cap": round(float(capture["capture_rate"]), 4),
+        "class_found_count": capture_count,
+        "target_class_count": target_class_count,
+        "k": n_clusters,
+        "dominant_cluster_count": dominant_cluster_count,
+        "legacy_presence_capture": f"{capture['legacy_presence_count']}/{target_class_count}",
+        "legacy_presence_rate": round(float(capture["legacy_presence_rate"]), 4),
+        "class_coverage": round(float(capture["class_coverage_rate"]), 4),
         "P2_noise_pct": round(100.0 * noise / max(1, n_measured), 2),
         "P3_completeness": round(p3, 4),
         "P4_homogeneity": round(p4, 4),
         "AMI": round(ami, 4),
         "ARI": round(ari, 4),
         "Sil_cos": round(sil, 4),
-        "k": int(n_clusters),
-        "fragment_ratio": round(n_clusters / max(1, len(all_classes)), 4),
+        "fragment_ratio": round(n_clusters / max(1, capture["target_class_count"]), 4),
         "n_measured": n_measured,
         "noise_count": noise,
     }
 
 
-def evaluate_checkpoint(trainer, checkpoint_path: Path, eval_root: Path, batch: int) -> dict[str, float | int]:
+def evaluate_checkpoint(trainer, checkpoint_path: Path, eval_root: Path, batch: int, workers: int) -> dict[str, float | int]:
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     cfg = checkpoint["config"]
     for key, value in cfg.items():
@@ -172,25 +161,35 @@ def evaluate_checkpoint(trainer, checkpoint_path: Path, eval_root: Path, batch: 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device).eval()
     dataset = EvalDataset(eval_root, int(cfg["IMG_SIZE"]))
-    loader = DataLoader(dataset, batch_size=batch, shuffle=False, num_workers=0, pin_memory=device.type == "cuda")
+    loader_kwargs = {
+        "batch_size": batch,
+        "shuffle": False,
+        "num_workers": workers,
+        "pin_memory": device.type == "cuda",
+    }
+    if workers > 0:
+        loader_kwargs.update({"persistent_workers": True, "prefetch_factor": 2})
+    loader = DataLoader(dataset, **loader_kwargs)
     embeddings: list[np.ndarray] = []
     labels: list[str] = []
     paths: list[str] = []
     with torch.no_grad():
-        for images, batch_labels, batch_paths in loader:
+        for batch_index, (images, batch_labels, batch_paths) in enumerate(loader, 1):
             images = images.to(device, non_blocking=True)
             embeddings.append(model.infer_embedding(images).float().cpu().numpy())
             labels.extend(batch_labels)
             paths.extend(batch_paths)
+            if batch_index % max(1, len(loader) // 10) == 0 or batch_index == len(loader):
+                print(f"[embed] {min(batch_index * batch, len(dataset))}/{len(dataset)}", flush=True)
     emb = np.concatenate(embeddings, axis=0)
+    np.save(checkpoint_path.with_suffix(f".{trainer.INFER_EMBED_MODE}.npy"), emb)
+    checkpoint_path.with_suffix(".paths.json").write_text(
+        json.dumps({"paths": paths, "labels": labels}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     metrics = calculate_metrics(emb, labels, set(cfg.get("EVAL_IGNORE_CLASSES", [])))
     metrics["checkpoint"] = checkpoint_path.name
     metrics["embedding"] = trainer.INFER_EMBED_MODE
     metrics["hdbscan"] = "eom,mcs=12,ms=3,eps=0.0"
-    np.save(checkpoint_path.with_suffix(".projection.npy"), emb)
-    checkpoint_path.with_suffix(".paths.json").write_text(
-        json.dumps({"paths": paths, "labels": labels}, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
     del model
     if device.type == "cuda":
         torch.cuda.empty_cache()
@@ -201,7 +200,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--eval-root", type=Path, required=True)
-    parser.add_argument("--batch", type=int, default=32)
+    parser.add_argument("--batch", type=int, default=64)
+    parser.add_argument("--workers", type=int, default=min(4, os.cpu_count() or 1))
     args = parser.parse_args()
     run_dir = args.run_dir.resolve()
     checkpoint_dir = run_dir / "contrastive" / "epoch_checkpoints"
@@ -212,7 +212,7 @@ def main() -> None:
     rows = []
     for checkpoint_path in checkpoints:
         print(f"[eval] {checkpoint_path.name}", flush=True)
-        metrics = evaluate_checkpoint(trainer, checkpoint_path, args.eval_root.resolve(), args.batch)
+        metrics = evaluate_checkpoint(trainer, checkpoint_path, args.eval_root.resolve(), args.batch, max(0, args.workers))
         metrics["epoch"] = int(checkpoint_path.stem.rsplit("_", 1)[1])
         rows.append(metrics)
         print(json.dumps(metrics, ensure_ascii=False), flush=True)

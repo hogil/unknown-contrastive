@@ -6,13 +6,13 @@
 채점 정책: Normal/Random/R 은 클러스터링엔 포함, 채점 제외 + nz→noise% 별도.
 """
 from __future__ import annotations
-import argparse, importlib.util, sys
+import argparse, sys
 from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parent
-spec = importlib.util.spec_from_file_location("fp", REPO / "_field_pipeline.py")
-FP = importlib.util.module_from_spec(spec); sys.modules["fp"] = FP; spec.loader.exec_module(FP)
+sys.path.insert(0, str(REPO / "scripts"))
+import cluster_scoring as FP
 
 EXCL = {"Normal", "Random", "R"}
 
@@ -29,23 +29,47 @@ def labels_cache(cache_dir: Path):
     return [Path(f).name.split("__")[0] for f in files]
 
 
-def score(pred, labs):
+def score(pred, labs, excl=None):
+    excl = set(EXCL if excl is None else excl)
     labs = np.asarray(labs)
-    keep = ~np.isin(labs, list(EXCL))
+    keep = ~np.isin(labs, list(excl))
     classes = sorted(set(labs[keep]))
     true_idx = np.array([classes.index(c) if c in classes else -1 for c in labs])
-    r = FP.tier1(np.asarray(pred)[keep], true_idx[keep], list(labs[keep]), classes)
+    # Cluster labels come from the full pool.  Passing the full arrays is
+    # essential: a Normal-dominant group must not falsely capture a minor
+    # defect after background rows have been sliced away.
+    r = FP.tier1(np.asarray(pred), true_idx, list(labs), classes, excluded=excl)
+    r["n_classes"] = len(classes)
     nz = ~keep
     r["nz_to_noise_pct"] = round(float((np.asarray(pred)[nz] == -1).mean() * 100), 1) if nz.any() else None
+    # ★ 클러스터 수 분리 (사용자 260612): noise(Normal/R) 가 뭉친 클러스터도 클러스터다.
+    #   k_def = defect 주류 클러스터, k_tot = 전체 클러스터 (nz-주류 포함)
+    pf = np.asarray(pred)
+    ids = sorted(set(pf.tolist()) - {-1})
+    n_def = sum(1 for c in ids if np.isin(labs[pf == c], list(excl)).mean() < 0.5)
+    r["k_def"], r["k_tot"] = n_def, len(ids)
+    r["k_noise"] = len(ids) - n_def  # noise(Normal/R) 주류 클러스터 수
     r.pop("capture_detail", None)
     return r
+
+
+def retrieval(z, labs):
+    """보조 지표 (옛 트랙 top1/top5 계승): defect-only kNN precision@1/@5 — 클러스터러 무관 임베딩 품질."""
+    labs = np.asarray(labs)
+    keep = ~np.isin(labs, list(EXCL))
+    zk, lk = z[keep], labs[keep]
+    from sklearn.neighbors import NearestNeighbors
+    nn = NearestNeighbors(n_neighbors=6, metric="cosine").fit(zk)
+    _, idx = nn.kneighbors(zk)
+    same = (lk[idx[:, 1:]] == lk[:, None])
+    return float(same[:, 0].mean()), float(same.mean())
 
 
 def run_finch(z):
     from finch import FINCH
     c, num_clust, _ = FINCH(z, verbose=False)
     out = {}
-    for p in range(min(3, c.shape[1])):
+    for p in range(min(4, c.shape[1])):
         out[f"finch_p{p}(k{num_clust[p]})"] = c[:, p]
     return out
 
@@ -71,6 +95,15 @@ def run_louvain(z, res=6.0, k=15):
     return pred
 
 
+def run_hdbscan_raw(z):
+    """옛 검증 레시피 (scripts/train_contrastive.py): UMAP 없이 raw 위 직접 — mcs12/ms15/leaf/eps0.06."""
+    import hdbscan
+    cl = hdbscan.HDBSCAN(min_cluster_size=12, min_samples=15,
+                         cluster_selection_method="leaf",
+                         cluster_selection_epsilon=0.06).fit(z.astype(np.float64))
+    return cl.labels_
+
+
 def run_umap_hdb(z):
     import umap, hdbscan
     u = umap.UMAP(n_components=10, n_neighbors=10, min_dist=0.0, metric="cosine",
@@ -88,23 +121,86 @@ def main():
     ap.add_argument("--pool", default="data/images/mixedwm38_pool_mixed29")
     ap.add_argument("--cache", default="cache_fmap/mixed29_clean")
     ap.add_argument("--skip-umap", action="store_true")
+    ap.add_argument("--exclude-classes", default="Normal,Random,R",
+                    help="comma-separated background/noise classes excluded from P1/P3/P4/ARI scoring")
+    ap.add_argument("--out-csv", default=None,
+                    help="append machine-readable rows with P1/P2/P3/P4/ARI/Sil/k/fragment")
     a = ap.parse_args()
+    excl = {x.strip() for x in str(a.exclude_classes).split(",") if x.strip()}
     labs = labels_pool(REPO / a.pool) if a.labels_from == "pool" else labels_cache(REPO / a.cache)
+    csv_rows = []
     for ef in a.embs:
         z = FP.l2(np.load(ef).astype(np.float32))
         assert len(labs) == z.shape[0], f"label/emb mismatch {len(labs)} vs {z.shape[0]} ({ef})"
-        rows = {}
-        rows.update({k: score(v, labs) for k, v in run_finch(z).items()})
-        rows["louvain_res6"] = score(run_louvain(z), labs)
+        rows, preds_map = {}, {}
+        for k, v in run_finch(z).items():
+            rows[k] = score(v, labs, excl); preds_map[k] = v
+        lv = run_louvain(z); rows["louvain_res6"] = score(lv, labs, excl); preds_map["louvain_res6"] = lv
+        hb = run_hdbscan_raw(z); rows["hdbscan_raw(옛다이얼)"] = score(hb, labs, excl); preds_map["hdbscan_raw(옛다이얼)"] = hb
         if not a.skip_umap:
-            rows["umap_hdbscan(고정잣대)"] = score(run_umap_hdb(z), labs)
-        print(f"\n=== {Path(ef).name} ===")
-        hdr = ["method", "capture", "recov", "noise%", "nz→noise%", "k", "Comp", "Hom"]
+            uh = run_umap_hdb(z); rows["umap_hdbscan(고정잣대)"] = score(uh, labs, excl); preds_map["umap_hdbscan(고정잣대)"] = uh
+        # Silhouette (cosine, defect-only non-noise) — 보조
+        labs_arr = np.asarray(labs)
+        keep = ~np.isin(labs_arr, list(excl))
+        from sklearn.metrics import silhouette_score
+        for m, r in rows.items():
+            p = np.asarray(preds_map[m])[keep]
+            msk = p != -1
+            try:
+                r["sil"] = round(float(silhouette_score(z[keep][msk], p[msk], metric="cosine")), 4) \
+                    if msk.sum() > 10 and len(set(p[msk])) > 1 else None
+            except Exception:
+                r["sil"] = None
+        t1, t5 = retrieval(z, labs)
+        print(f"\n=== {Path(ef).name} === (retrieval top1={t1:.3f} top5={t5:.3f})")
+        # ★★ 절대규칙 (사용자 260615): 성능은 항상 P1 P2 P3 P4 ARI Sil + k(전체/클래스수/noise) + 파편비(전체÷클래스, 1=이상)
+        hdr = ["method", "P1 capture(found/total)", "recov", "P2 noise%", "P3 Comp", "P4 Hom", "ARI", "Sil",
+               "k(전체/클래스수/noise)", "파편비(전체÷클래스)"]
         print(" | ".join(hdr))
         for m, r in rows.items():
-            print(" | ".join(str(x) for x in [m, r["capture"], r["recov"], r["noise_pct"],
-                                              r["nz_to_noise_pct"], r["n_clusters"],
-                                              r["completeness"], r["homogeneity"]]))
+            frag = round(r["k_tot"] / max(1, r["n_classes"]), 2)
+            p1 = f"{r['capture_count']}/{r['target_class_count']} ({r['capture']:.4f})"
+            print(" | ".join(str(x) for x in [m, p1, r["recov"], r["noise_pct"],
+                                              r["completeness"], r["homogeneity"], r["ari"], r["sil"],
+                                              f"{r['k_tot']}/{r['n_classes']}/{r['k_noise']}", frag]))
+            csv_rows.append({
+                "embedding": str(Path(ef).resolve()),
+                "embedding_name": Path(ef).stem,
+                "method": m,
+                "P1_capture": r["capture"],
+                "P1_capture_count": r["capture_count"],
+                "P1_target_class_count": r["target_class_count"],
+                "legacy_presence_count": r["legacy_presence_count"],
+                "legacy_presence_rate": r["legacy_presence_rate"],
+                "recov": r["recov"],
+                "P2_noise_pct": r["noise_pct"],
+                "P3_completeness": r["completeness"],
+                "P4_homogeneity": r["homogeneity"],
+                "ARI": r["ari"],
+                "AMI": r.get("ami"),
+                "Sil": r["sil"],
+                "k_total": r["k_tot"],
+                "k_classes": r["n_classes"],
+                "k_noise": r["k_noise"],
+                "fragment_ratio": frag,
+                "exclude_classes": ",".join(sorted(excl)),
+            })
+    if a.out_csv:
+        import csv
+        out = Path(a.out_csv)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        fields = [
+            "embedding", "embedding_name", "method", "P1_capture", "P1_capture_count",
+            "P1_target_class_count", "legacy_presence_count", "legacy_presence_rate", "recov",
+            "P2_noise_pct", "P3_completeness", "P4_homogeneity", "ARI", "AMI",
+            "Sil", "k_total", "k_classes", "k_noise", "fragment_ratio",
+            "exclude_classes",
+        ]
+        with out.open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fields)
+            w.writeheader()
+            w.writerows(csv_rows)
+        print(f"[CSV] {out.resolve()}")
 
 
 if __name__ == "__main__":
