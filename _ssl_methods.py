@@ -38,7 +38,7 @@ class GaussNoise:  # 260707: lambda → picklable 클래스 (num_workers>0 Windo
     def __call__(self, x): return x + self.sigma * torch.randn_like(x)
 
 
-def aug(natural=False):
+def aug(natural=False, wafer_rot_deg=5.0, wafer_translate=0.05, wafer_scale_min=0.95):
     norm = T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     if natural:  # 자연이미지(DTD/Flowers 등) 표준 SimCLR aug — wafer aug 는 positive 가 거의 동일해 무용
         return T.Compose([T.RandomResizedCrop((IMG, IMG), scale=(0.2, 1.0)),
@@ -47,9 +47,17 @@ def aug(natural=False):
                           T.RandomGrayscale(p=0.2),
                           T.RandomApply([T.GaussianBlur(23, sigma=(0.1, 2.0))], p=0.5),
                           T.ToTensor(), norm])
-    return T.Compose([T.RandomResizedCrop((IMG, IMG), scale=(0.94, 1.0), ratio=(1.0, 1.0)),
-                      T.RandomAffine(degrees=5, translate=(0.05, 0.05), scale=(0.95, 1.05)),
-                      T.ToTensor(), GaussNoise(0.02), norm])
+    transforms = [T.RandomResizedCrop((IMG, IMG), scale=(0.94, 1.0), ratio=(1.0, 1.0))]
+    if float(wafer_rot_deg) > 0 or float(wafer_translate) > 0 or float(wafer_scale_min) < 1.0:
+        transforms.append(
+            T.RandomAffine(
+                degrees=float(wafer_rot_deg),
+                translate=(float(wafer_translate), float(wafer_translate)),
+                scale=(float(wafer_scale_min), 2.0 - float(wafer_scale_min)),
+            )
+        )
+    transforms.extend([T.ToTensor(), GaussNoise(0.02), norm])
+    return T.Compose(transforms)
 
 
 class TwoView(torch.utils.data.Dataset):
@@ -247,6 +255,9 @@ def main():
     ap.add_argument("--palette-mode", choices=["grade_only", "grade_bg", "raw"], default=None,
                     help="palette PNG masking: grade_only keeps 0-7, grade_bg keeps 0-8 background, raw keeps all")
     ap.add_argument("--natural-aug", action="store_true")   # 자연이미지(DTD/Flowers) 표준 SimCLR aug (crop 0.2-1.0 + colorjitter/grayscale/blur/hflip)
+    ap.add_argument("--wafer-rot-deg", type=float, default=5.0)
+    ap.add_argument("--wafer-translate", type=float, default=0.05)
+    ap.add_argument("--wafer-scale-min", type=float, default=0.95)
     ap.add_argument("--tag", default="")
     ap.add_argument("--seed", type=int, default=42)          # multi-seed robustness (mean±std)
     args = ap.parse_args()
@@ -258,8 +269,16 @@ def main():
     train_dir = Path(args.train_dir) if args.train_dir else TRAIN_DIR
     eval_dir = Path(args.eval_dir) if args.eval_dir else EVAL_DIR
     paths = list_imgs(train_dir)
-    print(f"[ssl] method={meth} {len(paths)} imgs dev={dev} train={train_dir.name} eval={eval_dir.name} palette={os.environ.get('UC_PALETTE_MODE', 'grade_only')}", flush=True)
-    dl = torch.utils.data.DataLoader(TwoView(paths, aug(natural=args.natural_aug)), batch_size=args.batch, shuffle=True,
+    print(
+        f"[ssl] method={meth} {len(paths)} imgs dev={dev} train={train_dir.name} eval={eval_dir.name} "
+        f"palette={os.environ.get('UC_PALETTE_MODE', 'grade_only')} "
+        f"wafer_aug=rot{args.wafer_rot_deg:g}/translate{args.wafer_translate:g}/scale_min{args.wafer_scale_min:g}",
+        flush=True,
+    )
+    dl = torch.utils.data.DataLoader(TwoView(paths, aug(natural=args.natural_aug,
+                                                          wafer_rot_deg=args.wafer_rot_deg,
+                                                          wafer_translate=args.wafer_translate,
+                                                          wafer_scale_min=args.wafer_scale_min)), batch_size=args.batch, shuffle=True,
                                      num_workers=4, persistent_workers=True, pin_memory=True, drop_last=True)  # ★ 260707: 0→4 (single-thread 로더가 GPU 0↔100% 진동 병목)
     online = Net(meth, K=args.dino_k, timm_id=args.timm, head=args.head).to(dev).train()
     target = None
@@ -529,7 +548,10 @@ def main():
         # 무라벨 모니터링 (D-11): alignment(두 뷰 h 거리) + uniformity — epoch 선택 기준 (260611 검증됨)
         with torch.no_grad():
             mon_paths = paths[:: max(1, len(paths)//128)][:128]
-            a_tf = aug(natural=args.natural_aug)
+            a_tf = aug(natural=args.natural_aug,
+                       wafer_rot_deg=args.wafer_rot_deg,
+                       wafer_translate=args.wafer_translate,
+                       wafer_scale_min=args.wafer_scale_min)
             h1l, h2l = [], []
             for p in mon_paths:
                 with Image.open(p) as im:
