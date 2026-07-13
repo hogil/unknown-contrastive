@@ -122,12 +122,14 @@ def calculate_metrics(emb: np.ndarray, labels: list[str], ignored: set[str]) -> 
     n_measured = int(measured.sum())
     noise = int((pred == -1).sum())
     return {
-        # Historical P1/capture: each class's largest retained cluster share.
-        # It is coverage, not class-discovery count; report both explicitly.
-        "P1_cap": round(float(np.mean(list(coverage.values()))), 4) if coverage else 0.0,
-        "class_found_rate": round(float(np.mean(list(found.values()))), 4) if found else 0.0,
+        # Historical P1/capture: distinct true classes represented by a
+        # cluster's dominant class, divided by all target classes.
+        "P1_cap": round(float(np.mean(list(found.values()))), 4) if found else 0.0,
         "class_found_count": int(sum(found.values())),
         "target_class_count": int(len(all_classes)),
+        # This is a different, weaker retention statistic.  Keep it separate
+        # so an over-merged giant cluster cannot be confused with capture.
+        "class_coverage": round(float(np.mean(list(coverage.values()))), 4) if coverage else 0.0,
         "P2_noise_pct": round(100.0 * noise / max(1, n_measured), 2),
         "P3_completeness": round(p3, 4),
         "P4_homogeneity": round(p4, 4),

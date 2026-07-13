@@ -45,6 +45,7 @@ $env:PYTHONIOENCODING = "utf-8"
 $env:HF_HUB_OFFLINE = "1"
 $env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
 $env:CUDA_VISIBLE_DEVICES = "0"
+$env:USE_LIBUV = "0"
 
 Write-QueueLog "May-37 historical-equivalent ablation queue started."
 Wait-ForGpu

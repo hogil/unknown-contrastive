@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -118,6 +119,10 @@ def main() -> None:
     args = parser.parse_args()
     output_root = args.output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        # This PyTorch build lacks libuv support; setup_ddp's setdefault is
+        # insufficient when a parent shell exports USE_LIBUV=1.
+        os.environ["USE_LIBUV"] = "0"
     module = load_trainer()
     configure(module, args.backbone, args.cell, output_root)
     made: list[Path] = []
