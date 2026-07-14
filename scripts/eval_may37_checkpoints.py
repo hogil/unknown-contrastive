@@ -73,26 +73,29 @@ def load_trainer_module():
     return module
 
 
-def calculate_metrics(emb: np.ndarray, labels: list[str], ignored: set[str]) -> dict[str, float | int]:
-    labels_array = np.asarray(labels)
-    measured = ~np.isin(labels_array, list(ignored))
-    measured_labels = labels_array[measured]
-    clusterer = hdbscan.HDBSCAN(
+def _clusterer() -> hdbscan.HDBSCAN:
+    return hdbscan.HDBSCAN(
         min_cluster_size=12,
         min_samples=3,
         cluster_selection_method="eom",
         cluster_selection_epsilon=0.0,
         metric="euclidean",
     )
-    # Cluster the complete deployment pool first.  Background is excluded only
-    # from target metric denominators, never before cluster dominance is decided.
-    full_pred = clusterer.fit_predict(emb)
-    pred = full_pred[measured]
-    measured_emb = emb[measured]
+
+
+def _summarize_predictions(
+    emb: np.ndarray,
+    labels: np.ndarray,
+    pred: np.ndarray,
+    capture_pred: np.ndarray,
+    capture_labels: np.ndarray,
+    ignored: set[str],
+    scope: str,
+) -> dict[str, float | int]:
     keep = pred != -1
-    clustered_labels = measured_labels[keep]
+    clustered_labels = labels[keep]
     clustered_pred = pred[keep]
-    capture = capture_metrics(full_pred, labels_array, ignored)
+    capture = capture_metrics(capture_pred, capture_labels, ignored)
     n_clusters = int(capture["cluster_count"])
     can_score = len(clustered_labels) > 1 and len(set(clustered_pred.tolist())) > 1
     if can_score:
@@ -100,10 +103,10 @@ def calculate_metrics(emb: np.ndarray, labels: list[str], ignored: set[str]) -> 
         p4 = float(homogeneity_score(clustered_labels, clustered_pred))
         ami = float(adjusted_mutual_info_score(clustered_labels, clustered_pred))
         ari = float(adjusted_rand_score(clustered_labels, clustered_pred))
-        sil = float(silhouette_score(measured_emb[keep], clustered_pred, metric="cosine"))
+        sil = float(silhouette_score(emb[keep], clustered_pred, metric="cosine"))
     else:
         p3 = p4 = ami = ari = sil = 0.0
-    n_measured = int(measured.sum())
+    n_measured = int(len(labels))
     noise = int((pred == -1).sum())
     capture_count = int(capture["capture_count"])
     target_class_count = int(capture["target_class_count"])
@@ -129,7 +132,44 @@ def calculate_metrics(emb: np.ndarray, labels: list[str], ignored: set[str]) -> 
         "fragment_ratio": round(n_clusters / max(1, capture["target_class_count"]), 4),
         "n_measured": n_measured,
         "noise_count": noise,
+        "scope": scope,
     }
+
+
+def calculate_metrics(emb: np.ndarray, labels: list[str], ignored: set[str]) -> dict[str, float | int]:
+    """Operational metric: cluster the full pool, then exclude background targets."""
+    labels_array = np.asarray(labels)
+    measured = ~np.isin(labels_array, list(ignored))
+    full_pred = _clusterer().fit_predict(emb)
+    return _summarize_predictions(
+        emb[measured],
+        labels_array[measured],
+        full_pred[measured],
+        full_pred,
+        labels_array,
+        ignored,
+        "full_pool_canonical",
+    )
+
+
+def calculate_defect_only_metrics(
+    emb: np.ndarray, labels: list[str], ignored: set[str]
+) -> dict[str, float | int]:
+    """May Tier1 geometry: remove background before fitting HDBSCAN."""
+    labels_array = np.asarray(labels)
+    measured = ~np.isin(labels_array, list(ignored))
+    defect_emb = emb[measured]
+    defect_labels = labels_array[measured]
+    pred = _clusterer().fit_predict(defect_emb)
+    return _summarize_predictions(
+        defect_emb,
+        defect_labels,
+        pred,
+        pred,
+        defect_labels,
+        set(),
+        "defect_only_tier1",
+    )
 
 
 def evaluate_checkpoint(trainer, checkpoint_path: Path, eval_root: Path, batch: int, workers: int) -> dict[str, float | int]:

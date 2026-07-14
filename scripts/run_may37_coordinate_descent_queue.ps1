@@ -2,7 +2,9 @@ param()
 
 $ErrorActionPreference = "Stop"
 $Root = "D:\project\unknown-contrastive"
-$OutputRoot = Join-Path $Root "runs\may37_coordinate_descent"
+$Anchor = Join-Path $Root "data\images\anchor_avg30_repro"
+$ControlId = "may37_coordinate_control_current2260"
+$OutputRoot = Join-Path $Root "runs\may37_coordinate_control_current2260"
 $Log = Join-Path $OutputRoot "coordinate_queue.log"
 
 function Write-QueueLog([string]$Message) {
@@ -32,6 +34,9 @@ trap {
 
 Set-Location -LiteralPath $Root
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
+if (-not (Test-Path -LiteralPath $Anchor)) {
+    throw "control anchor is unavailable: $Anchor"
+}
 $env:PYTHONIOENCODING = "utf-8"
 $env:HF_HUB_OFFLINE = "1"
 Remove-Item Env:\PYTORCH_CUDA_ALLOC_CONF -ErrorAction SilentlyContinue
@@ -42,7 +47,7 @@ $env:CUDA_VISIBLE_DEVICES = "0"
 foreach ($backbone in @("cnn_tapt", "nocnn")) {
     Wait-ForGpu
     Write-QueueLog "START coordinate descent backbone=$backbone"
-    & python -u scripts\run_may37_coordinate_descent.py --backbone $backbone *>> $Log
+    & python -u scripts\run_may37_coordinate_descent.py --backbone $backbone --anchor $Anchor --control-id $ControlId --output-root $OutputRoot *>> $Log
     if ($LASTEXITCODE -ne 0) { throw "coordinate descent failed backbone=$backbone exit=$LASTEXITCODE" }
     Write-QueueLog "DONE coordinate descent backbone=$backbone"
 }

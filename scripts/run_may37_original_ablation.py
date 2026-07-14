@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Run one source-faithful May B0-B5 contrastive cell.
+"""Run one manifest-locked May source-protocol B0-B6 control cell.
 
 The documented May ablation used the trainer stored in git commit
 ``b796ecbe5f70c9b88944480292e12706b64db83b``.  That loss implementation is
 not the current DDP trainer, so this runner materializes the archived source
-at run time and executes it unchanged.  Metrics are then recomputed with the
-current canonical P1 definition.
+at run time and executes it unchanged.  The original May file list is no
+longer available, so each control anchor is manifest-locked and reported as a
+paired re-reproduction rather than an exact historical-score reproduction.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -31,7 +33,7 @@ from torch.utils.data import DataLoader, Dataset
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
-from eval_may37_checkpoints import calculate_metrics
+from eval_may37_checkpoints import calculate_defect_only_metrics, calculate_metrics
 
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -39,7 +41,6 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_COMMIT = "b796ecbe5f70c9b88944480292e12706b64db83b"
 SOURCE_FILES = ("contrastive.py", "run_contrastive.py")
-ANCHOR = ROOT / "data" / "images" / "anchor_avg30_repro"
 TAPT_CKPT = Path(r"D:\project\known-cnn\models\iter116J_frozen\best_model.pth")
 FCMAE_CKPT = ROOT / "weights" / "convnextv2_base.fcmae_ft_in22k_in1k_384.pth"
 
@@ -51,6 +52,9 @@ CELLS = {
     "B3": {"local": True, "local_weight": 1.0, "queue": True, "ignore": 1.0, "neco": 0.0},
     "B4": {"local": True, "local_weight": 1.0, "queue": True, "ignore": 0.72, "neco": 0.0},
     "B5": {"local": True, "local_weight": 1.0, "queue": True, "ignore": 0.72, "neco": 0.2},
+    # May's actual best component recipe: NeCo replaces Local rather than
+    # being added on top of it (historical iter 70 / B6).
+    "B6": {"local": False, "local_weight": 0.0, "queue": True, "ignore": 0.72, "neco": 0.2},
 }
 IGNORED = {"Normal", "Random", "R"}
 
@@ -83,6 +87,43 @@ def materialize_source(output_root: Path) -> Path:
     return source_dir
 
 
+def write_anchor_manifest(anchor: Path, output_root: Path) -> dict:
+    """Lock the exact current control anchor without claiming it is May's lost list."""
+    inventory: list[dict[str, int | str]] = []
+    class_counts: Counter[str] = Counter()
+    for class_dir in sorted(path for path in anchor.iterdir() if path.is_dir()):
+        for path in sorted(class_dir.rglob("*")):
+            if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".bmp"}:
+                continue
+            inventory.append(
+                {
+                    "path": path.relative_to(anchor).as_posix(),
+                    "bytes": int(path.stat().st_size),
+                }
+            )
+            class_counts[class_dir.name] += 1
+    if not inventory:
+        raise ValueError(f"anchor has no images: {anchor}")
+    encoded = json.dumps(inventory, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    manifest = {
+        "anchor": str(anchor),
+        "n_images": len(inventory),
+        "class_counts": dict(sorted(class_counts.items())),
+        "inventory_sha256": hashlib.sha256(encoded).hexdigest(),
+        "inventory": inventory,
+    }
+    path = output_root / "anchor_manifest.json"
+    if path.exists():
+        previous = json.loads(path.read_text(encoding="utf-8"))
+        if previous.get("inventory_sha256") != manifest["inventory_sha256"]:
+            raise RuntimeError(
+                f"control anchor changed after runs began: {path}; choose a new output root"
+            )
+    else:
+        path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest
+
+
 def backbone_checkpoint(backbone: str) -> Path:
     checkpoint = TAPT_CKPT if backbone == "cnn_tapt" else FCMAE_CKPT
     if not checkpoint.exists():
@@ -90,12 +131,12 @@ def backbone_checkpoint(backbone: str) -> Path:
     return checkpoint
 
 
-def archive_cfg(backbone_path: Path, cell: str) -> dict:
+def archive_cfg(backbone_path: Path, cell: str, anchor: Path) -> dict:
     values = CELLS[cell]
     return {
-        "TRAIN_DIR": str(ANCHOR),
-        "UNKNOWN_DIR": str(ANCHOR),
-        "OVERLAY_DIR": str(ANCHOR),
+        "TRAIN_DIR": str(anchor),
+        "UNKNOWN_DIR": str(anchor),
+        "OVERLAY_DIR": str(anchor),
         "IMAGE_SIZE": 384,
         "PROJ_DIM": 128,
         "FREEZE_BACKBONE": True,
@@ -127,7 +168,7 @@ def archive_cfg(backbone_path: Path, cell: str) -> dict:
         "QUEUE_WEIGHT": 1.0,
         "IGNORE_NEG_SIM": values["ignore"],
         "NECO_WEIGHT": values["neco"],
-        # Fixed post-hoc scoring protocol used for the B0-B5 table.
+        # Fixed post-hoc scoring protocol used for the May component table.
         "MIN_CLUSTER_SIZE": 12,
         "MIN_SAMPLES": 3,
         "HDBSCAN_METRIC": "euclidean",
@@ -159,18 +200,20 @@ def unwrap_state(checkpoint_path: Path) -> dict:
     return loaded
 
 
-def make_frozen_run(source_dir: Path, output_root: Path, backbone: str) -> Path:
+def make_frozen_run(
+    source_dir: Path, output_root: Path, backbone: str, anchor: Path, control_id: str
+) -> Path:
     stamp = datetime.now().strftime("%y%m%d_%H%M%S")
-    run_dir = output_root / f"{stamp}_mayexact_{backbone}_frozen"
+    run_dir = output_root / f"{stamp}_{control_id}_{backbone}_frozen"
     run_dir.mkdir(parents=True, exist_ok=False)
     checkpoint = backbone_checkpoint(backbone)
     init_path = run_dir / "_init_backbone.pth"
     torch.save(unwrap_state(checkpoint), init_path)
-    cfg = archive_cfg(init_path, "FROZEN")
-    module = load_archived_module(source_dir, f"may_exact_frozen_{backbone}_{stamp}")
+    cfg = archive_cfg(init_path, "FROZEN", anchor)
+    module = load_archived_module(source_dir, f"may_control_frozen_{backbone}_{stamp}")
     module.CFG.update(cfg)
-    # The archived evaluator clusters model(x), i.e. the projection z. Freeze
-    # the head initialization as well so the diagnostic reference is repeatable.
+    # Frozen rows are scored in backbone feature space.  Freeze the head seed
+    # too so the saved diagnostic checkpoint remains repeatable.
     torch.manual_seed(int(cfg["SEED"]))
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(int(cfg["SEED"]))
@@ -186,14 +229,14 @@ def make_frozen_run(source_dir: Path, output_root: Path, backbone: str) -> Path:
     return run_dir
 
 
-def training_env(backbone: str, cell: str) -> dict[str, str]:
+def training_env(backbone: str, cell: str, anchor: Path) -> dict[str, str]:
     checkpoint = backbone_checkpoint(backbone)
     values = CELLS[cell]
     env = os.environ.copy()
     env.update(
         {
             "BACKBONE_CKPT": str(checkpoint),
-            "DATA_DIR": str(ANCHOR),
+            "DATA_DIR": str(anchor),
             "EPOCHS": "5",
             "BATCH": "8",
             "IMAGE_SIZE": "384",
@@ -222,20 +265,29 @@ def training_env(backbone: str, cell: str) -> dict[str, str]:
     return env
 
 
-def run_archived_training(source_dir: Path, output_root: Path, backbone: str, cell: str) -> Path:
+def run_archived_training(
+    source_dir: Path, output_root: Path, backbone: str, cell: str, anchor: Path, control_id: str
+) -> Path:
     before = {path.resolve() for path in ROOT.glob("outputs_contrastive_*") if path.is_dir()}
     logs = output_root / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%y%m%d_%H%M%S")
-    log_path = logs / f"{stamp}_mayexact_{backbone}_{cell.lower()}.log"
+    log_path = logs / f"{stamp}_{control_id}_{backbone}_{cell.lower()}.log"
     command = [sys.executable, "-u", str(source_dir / "run_contrastive.py")]
     with log_path.open("w", encoding="utf-8") as handle:
-        subprocess.run(command, cwd=source_dir, env=training_env(backbone, cell), stdout=handle, stderr=subprocess.STDOUT, check=True)
+        subprocess.run(
+            command,
+            cwd=source_dir,
+            env=training_env(backbone, cell, anchor),
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            check=True,
+        )
     after = {path.resolve() for path in ROOT.glob("outputs_contrastive_*") if path.is_dir()}
     created = sorted(after - before, key=lambda path: path.stat().st_mtime)
     if len(created) != 1:
         raise RuntimeError(f"expected one archived output directory, got {created}; log={log_path}")
-    run_dir = output_root / f"{stamp}_mayexact_{backbone}_{cell.lower()}"
+    run_dir = output_root / f"{stamp}_{control_id}_{backbone}_{cell.lower()}"
     shutil.move(str(created[0]), str(run_dir))
     shutil.copy2(log_path, run_dir / "source_train.log")
     return run_dir
@@ -260,17 +312,26 @@ class EvalDataset(Dataset):
         return tensor, label, str(path)
 
 
-def evaluate_run(source_dir: Path, run_dir: Path, mode: str) -> dict:
+def evaluate_run(
+    source_dir: Path,
+    run_dir: Path,
+    mode: str,
+    anchor: Path,
+    anchor_manifest: dict,
+    backbone: str,
+    cell: str,
+    control_id: str,
+) -> dict:
     info = json.loads((run_dir / "run_info.json").read_text(encoding="utf-8"))
     cfg = info["cfg"]
-    module = load_archived_module(source_dir, f"may_exact_eval_{run_dir.name}")
+    module = load_archived_module(source_dir, f"may_control_eval_{run_dir.name}")
     module.CFG.update(cfg)
     model = module.CL()
     checkpoint = torch.load(run_dir / "checkpoints" / "final_infer.pt", map_location="cpu", weights_only=False)
     model.load_state_dict(unwrap_state(run_dir / "checkpoints" / "final_infer.pt"), strict=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device).eval()
-    dataset = EvalDataset(ANCHOR, module.tfm(False))
+    dataset = EvalDataset(anchor, module.tfm(False))
     loader = DataLoader(dataset, batch_size=32, shuffle=False, num_workers=0, pin_memory=device.type == "cuda")
     embeddings: list[np.ndarray] = []
     labels: list[str] = []
@@ -288,13 +349,26 @@ def evaluate_run(source_dir: Path, run_dir: Path, mode: str) -> dict:
             paths.extend(batch_paths)
     emb = np.concatenate(embeddings, axis=0)
     metrics = calculate_metrics(emb, labels, IGNORED)
+    tier1 = calculate_defect_only_metrics(emb, labels, IGNORED)
+    common = {
+        "backbone": backbone,
+        "cell": cell,
+        "embedding": mode,
+        "source_commit": SOURCE_COMMIT,
+        "control_id": control_id,
+        "anchor_manifest_sha256": anchor_manifest["inventory_sha256"],
+        "anchor_n_images": anchor_manifest["n_images"],
+    }
     metrics.update(
         {
-            "backbone": "cnn_tapt" if "cnn_tapt" in run_dir.name else "nocnn",
-            "cell": run_dir.name.rsplit("_", 1)[-1].upper(),
-            "embedding": mode,
-            "source_commit": SOURCE_COMMIT,
+            **common,
             "protocol": "archived_may_loss + full_pool_hdbscan + canonical_dominant_P1",
+        }
+    )
+    tier1.update(
+        {
+            **common,
+            "protocol": "archived_may_loss + defect_only_hdbscan + canonical_dominant_P1",
         }
     )
     np.save(run_dir / f"embedding_{mode}.npy", emb)
@@ -304,10 +378,27 @@ def evaluate_run(source_dir: Path, run_dir: Path, mode: str) -> dict:
     metrics_dir = run_dir / "canonical_eval"
     metrics_dir.mkdir(exist_ok=True)
     (metrics_dir / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    tier1_path = metrics_dir / "historical_tier1_defect_only.json"
+    tier1_path.write_text(json.dumps(tier1, ensure_ascii=False, indent=2), encoding="utf-8")
     with (metrics_dir / "metrics.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(metrics.keys()))
         writer.writeheader()
         writer.writerow(metrics)
+    (run_dir / "reproduction_provenance.json").write_text(
+        json.dumps(
+            {
+                "control_id": control_id,
+                "source_commit": SOURCE_COMMIT,
+                "anchor_manifest": str((run_dir.parent / "anchor_manifest.json")),
+                "anchor_manifest_sha256": anchor_manifest["inventory_sha256"],
+                "anchor_n_images": anchor_manifest["n_images"],
+                "historical_reference": "May anchor file_list.parquet is unavailable; this is a paired control, not an exact historical dataset reproduction.",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     del model
     if device.type == "cuda":
         torch.cuda.empty_cache()
@@ -318,28 +409,54 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backbone", choices=["cnn_tapt", "nocnn"], required=True)
     parser.add_argument("--cell", choices=sorted(CELLS), required=True)
+    parser.add_argument("--anchor", type=Path, required=True)
+    parser.add_argument("--control-id", default="may37_protocol_control")
     parser.add_argument("--output-root", type=Path, default=ROOT / "runs" / "may37_original_reproduction")
     parser.add_argument("--skip-eval", action="store_true")
     args = parser.parse_args()
-    if not ANCHOR.exists():
-        raise FileNotFoundError(f"reconstructed May anchor is unavailable: {ANCHOR}")
+    anchor = args.anchor.resolve()
+    if not anchor.exists():
+        raise FileNotFoundError(f"control anchor is unavailable: {anchor}")
     output_root = args.output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
+    anchor_manifest = write_anchor_manifest(anchor, output_root)
     source_dir = materialize_source(output_root)
     print(f"[SOURCE] git={SOURCE_COMMIT} dir={source_dir}", flush=True)
-    print(f"[START] backbone={args.backbone} cell={args.cell} anchor={ANCHOR}", flush=True)
+    print(
+        f"[START] control={args.control_id} backbone={args.backbone} cell={args.cell} "
+        f"anchor={anchor} n={anchor_manifest['n_images']} "
+        f"sha256={anchor_manifest['inventory_sha256']}",
+        flush=True,
+    )
     if args.cell == "FROZEN":
-        run_dir = make_frozen_run(source_dir, output_root, args.backbone)
+        run_dir = make_frozen_run(source_dir, output_root, args.backbone, anchor, args.control_id)
         # The untrained projection head is random; a no-training baseline must
         # therefore be scored in backbone feature space. Historical B0-B5
         # continue to use the trained projection z space.
         mode = "backbone"
     else:
-        run_dir = run_archived_training(source_dir, output_root, args.backbone, args.cell)
+        run_dir = run_archived_training(
+            source_dir, output_root, args.backbone, args.cell, anchor, args.control_id
+        )
         mode = "projection"
     print(f"[RUN_DIR] {run_dir}", flush=True)
     if not args.skip_eval:
-        print(json.dumps(evaluate_run(source_dir, run_dir, mode), ensure_ascii=False), flush=True)
+        print(
+            json.dumps(
+                evaluate_run(
+                    source_dir,
+                    run_dir,
+                    mode,
+                    anchor,
+                    anchor_manifest,
+                    args.backbone,
+                    args.cell,
+                    args.control_id,
+                ),
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

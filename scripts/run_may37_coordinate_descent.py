@@ -102,13 +102,16 @@ def rank(row: dict) -> tuple[float, ...]:
     )
 
 
-def existing_record(output_root: Path, backbone: str, tag: str, recipe: dict | None) -> dict | None:
+def existing_record(
+    output_root: Path, backbone: str, tag: str, recipe: dict | None, anchor_manifest_sha256: str
+) -> dict | None:
     for meta_path in output_root.glob("*/coordinate_meta.json"):
         record = json.loads(meta_path.read_text(encoding="utf-8"))
         if (
             record.get("backbone") == backbone
             and record.get("tag") == tag
             and record.get("recipe") == recipe
+            and record.get("anchor_manifest_sha256") == anchor_manifest_sha256
         ):
             metrics_path = meta_path.parent / "canonical_eval" / "metrics.json"
             if metrics_path.exists():
@@ -118,24 +121,37 @@ def existing_record(output_root: Path, backbone: str, tag: str, recipe: dict | N
     return None
 
 
-def execute(runner, output_root: Path, backbone: str, tag: str, recipe: dict | None) -> dict:
+def execute(
+    runner,
+    output_root: Path,
+    backbone: str,
+    tag: str,
+    recipe: dict | None,
+    anchor: Path,
+    anchor_manifest: dict,
+    control_id: str,
+) -> dict:
     expected_recipe = recipe if tag != "cd_frozen" else {"embedding": "backbone_f", "training": False}
-    prior = existing_record(output_root, backbone, tag, expected_recipe)
+    prior = existing_record(output_root, backbone, tag, expected_recipe, anchor_manifest["inventory_sha256"])
     if prior is not None:
         print(f"[REUSE] {tag}: {prior['run_dir']}", flush=True)
         return prior
 
     source_dir = runner.materialize_source(output_root)
     if tag == "cd_frozen":
-        run_dir = runner.make_frozen_run(source_dir, output_root, backbone)
-        metrics = runner.evaluate_run(source_dir, run_dir, "backbone")
+        run_dir = runner.make_frozen_run(source_dir, output_root, backbone, anchor, control_id)
+        metrics = runner.evaluate_run(
+            source_dir, run_dir, "backbone", anchor, anchor_manifest, backbone, "FROZEN", control_id
+        )
         recipe = {"embedding": "backbone_f", "training": False}
     else:
         if recipe is None:
             raise ValueError(f"recipe is required for {tag}")
         runner.CELLS[tag] = dict(recipe)
-        run_dir = runner.run_archived_training(source_dir, output_root, backbone, tag)
-        metrics = runner.evaluate_run(source_dir, run_dir, "projection")
+        run_dir = runner.run_archived_training(source_dir, output_root, backbone, tag, anchor, control_id)
+        metrics = runner.evaluate_run(
+            source_dir, run_dir, "projection", anchor, anchor_manifest, backbone, tag.upper(), control_id
+        )
 
     record = {
         "backbone": backbone,
@@ -143,6 +159,7 @@ def execute(runner, output_root: Path, backbone: str, tag: str, recipe: dict | N
         "recipe": recipe,
         "run_dir": str(run_dir),
         "metrics": metrics,
+        "anchor_manifest_sha256": anchor_manifest["inventory_sha256"],
     }
     (run_dir / "coordinate_meta.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -219,20 +236,48 @@ def write_report(output_root: Path, backbone: str, frozen: dict, history: list[d
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backbone", choices=["nocnn", "cnn_tapt"], required=True)
+    parser.add_argument("--anchor", type=Path, required=True)
+    parser.add_argument("--control-id", default="may37_coordinate_control")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_ROOT)
     args = parser.parse_args()
 
     output_root = (args.output_root / args.backbone).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
+    anchor = args.anchor.resolve()
+    if not anchor.exists():
+        raise FileNotFoundError(f"control anchor is unavailable: {anchor}")
     runner = load_runner()
-    frozen = execute(runner, output_root, args.backbone, "cd_frozen", None)
-    incumbent = execute(runner, output_root, args.backbone, "cd_base", base_recipe())
+    anchor_manifest = runner.write_anchor_manifest(anchor, output_root)
+    frozen = execute(
+        runner, output_root, args.backbone, "cd_frozen", None, anchor, anchor_manifest, args.control_id
+    )
+    incumbent = execute(
+        runner,
+        output_root,
+        args.backbone,
+        "cd_base",
+        base_recipe(),
+        anchor,
+        anchor_manifest,
+        args.control_id,
+    )
     history: list[dict] = []
 
     for stage in ("local", "queue", "ignore", "neco", "temp", "lr"):
         candidates = [incumbent]
         for tag, recipe in stage_candidates(stage, incumbent["recipe"]):
-            candidates.append(execute(runner, output_root, args.backbone, tag, recipe))
+            candidates.append(
+                execute(
+                    runner,
+                    output_root,
+                    args.backbone,
+                    tag,
+                    recipe,
+                    anchor,
+                    anchor_manifest,
+                    args.control_id,
+                )
+            )
         passing = [row for row in candidates if row["tag"] == incumbent["tag"] or passes_core_gate(row, incumbent)]
         winner = max(passing, key=rank)
         history.append(

@@ -3,8 +3,10 @@ param()
 $ErrorActionPreference = "Stop"
 $Root = "D:\project\unknown-contrastive"
 $Runner = Join-Path $Root "scripts\run_may37_original_ablation.py"
-$ResultsRoot = Join-Path $Root "runs\may37_original_reproduction"
-$Log = Join-Path $ResultsRoot "may37_original_queue.log"
+$Anchor = Join-Path $Root "data\images\anchor_avg30_repro"
+$ControlId = "may37_protocol_control_current2260"
+$ResultsRoot = Join-Path $Root "runs\may37_protocol_control_current2260"
+$Log = Join-Path $ResultsRoot "may37_protocol_control_queue.log"
 $Hard42StateDir = Join-Path $Root "docs\paper\canonical_rescore_260713\unknown_strict_novel"
 $Hard42Completion = Join-Path $Hard42StateDir "hard42_seed_validation.complete"
 $Hard42Failure = Join-Path $Hard42StateDir "hard42_seed_validation.failed"
@@ -67,7 +69,7 @@ function Wait-ForGpu {
 }
 
 function Test-Completed([string]$Backbone, [string]$Cell) {
-    $suffix = "_mayexact_{0}_{1}" -f $Backbone, $Cell.ToLower()
+    $suffix = "_{0}_{1}_{2}" -f $ControlId, $Backbone, $Cell.ToLower()
     $matches = @(Get-ChildItem -Path $ResultsRoot -Directory -ErrorAction SilentlyContinue |
         Where-Object {
             $_.Name -like "*$suffix" -and
@@ -83,11 +85,14 @@ Remove-Item Env:\PYTORCH_CUDA_ALLOC_CONF -ErrorAction SilentlyContinue
 $env:CUDA_VISIBLE_DEVICES = "0"
 
 New-Item -ItemType Directory -Force -Path $ResultsRoot | Out-Null
-Write-QueueLog "May source-faithful B0-B5 queue started. source=b796ecbe5f70"
+if (-not (Test-Path -LiteralPath $Anchor)) {
+    throw "control anchor is unavailable: $Anchor"
+}
+Write-QueueLog "May source-protocol B0-B6 control started. source=b796ecbe5f70 anchor=$Anchor control=$ControlId"
 Wait-ForHard42SeedValidation
 Wait-ForGpu
 
-$cells = @("FROZEN", "B0", "B1", "B2", "B3", "B4", "B5")
+$cells = @("FROZEN", "B0", "B1", "B2", "B3", "B4", "B5", "B6")
 # Establish the historical TAPT control before changing exactly one variable:
 # replace the TAPT checkpoint with the ImageNet FCMAE checkpoint.
 foreach ($backbone in @("cnn_tapt", "nocnn")) {
@@ -97,7 +102,7 @@ foreach ($backbone in @("cnn_tapt", "nocnn")) {
             continue
         }
         Write-QueueLog "START backbone=$backbone cell=$cell"
-        & python -u $Runner --backbone $backbone --cell $cell *>> $Log
+        & python -u $Runner --backbone $backbone --cell $cell --anchor $Anchor --control-id $ControlId --output-root $ResultsRoot *>> $Log
         if ($LASTEXITCODE -ne 0) {
             throw "failed backbone=$backbone cell=$cell exit=$LASTEXITCODE"
         }
@@ -106,6 +111,6 @@ foreach ($backbone in @("cnn_tapt", "nocnn")) {
 }
 & python -u (Join-Path $Root "scripts\summarize_may37_original_ablation.py") --results-root $ResultsRoot *>> $Log
 if ($LASTEXITCODE -ne 0) {
-    throw "failed to summarize source-faithful May B0-B5 cells exit=$LASTEXITCODE"
+    throw "failed to summarize May source-protocol B0-B6 control cells exit=$LASTEXITCODE"
 }
-Write-QueueLog "DONE all source-faithful May B0-B5 cells."
+Write-QueueLog "DONE all source-protocol May B0-B6 control cells."
