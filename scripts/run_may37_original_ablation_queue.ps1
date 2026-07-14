@@ -101,6 +101,7 @@ foreach ($backbone in @("cnn_tapt", "nocnn")) {
             Write-QueueLog "SKIP completed backbone=$backbone cell=$cell"
             continue
         }
+        Wait-ForGpu
         Write-QueueLog "START backbone=$backbone cell=$cell"
         & python -u $Runner --backbone $backbone --cell $cell --anchor $Anchor --control-id $ControlId --output-root $ResultsRoot *>> $Log
         if ($LASTEXITCODE -ne 0) {
