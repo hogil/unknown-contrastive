@@ -37,7 +37,9 @@ $env:HF_HUB_OFFLINE = "1"
 Remove-Item Env:\PYTORCH_CUDA_ALLOC_CONF -ErrorAction SilentlyContinue
 $env:CUDA_VISIBLE_DEVICES = "0"
 
-foreach ($backbone in @("nocnn", "cnn_tapt")) {
+# Coordinate descent follows the same paired-control order as the source
+# reproduction: TAPT first, then the otherwise identical no-TAPT arm.
+foreach ($backbone in @("cnn_tapt", "nocnn")) {
     Wait-ForGpu
     Write-QueueLog "START coordinate descent backbone=$backbone"
     & python -u scripts\run_may37_coordinate_descent.py --backbone $backbone *>> $Log

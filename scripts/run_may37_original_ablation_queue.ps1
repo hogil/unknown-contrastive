@@ -88,7 +88,9 @@ Wait-ForHard42SeedValidation
 Wait-ForGpu
 
 $cells = @("FROZEN", "B0", "B1", "B2", "B3", "B4", "B5")
-foreach ($backbone in @("nocnn", "cnn_tapt")) {
+# Establish the historical TAPT control before changing exactly one variable:
+# replace the TAPT checkpoint with the ImageNet FCMAE checkpoint.
+foreach ($backbone in @("cnn_tapt", "nocnn")) {
     foreach ($cell in $cells) {
         if (Test-Completed $backbone $cell) {
             Write-QueueLog "SKIP completed backbone=$backbone cell=$cell"
