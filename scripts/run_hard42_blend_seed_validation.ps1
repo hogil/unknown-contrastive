@@ -12,6 +12,7 @@ $StateDir = Join-Path $Root "docs\paper\canonical_rescore_260713\unknown_strict_
 $Log = Join-Path $StateDir "hard42_seed_validation_queue.log"
 $Completion = Join-Path $StateDir "hard42_seed_validation.complete"
 $Failure = Join-Path $StateDir "hard42_seed_validation.failed"
+$Deferred = Join-Path $StateDir "hard42_seed_validation.deferred"
 
 function Write-QueueLog([string]$Message) {
     $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
@@ -46,10 +47,10 @@ function Wait-ForGpu {
 
 Set-Location -LiteralPath $Root
 New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
-Remove-Item -LiteralPath $Completion, $Failure -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $Completion, $Failure, $Deferred -Force -ErrorAction SilentlyContinue
 $env:PYTHONIOENCODING = "utf-8"
 $env:HF_HUB_OFFLINE = "1"
-$env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+Remove-Item Env:\PYTORCH_CUDA_ALLOC_CONF -ErrorAction SilentlyContinue
 $env:CUDA_VISIBLE_DEVICES = "0"
 
 Write-QueueLog "hard-42 blend validation queue started before May reproduction; seeds=$($Seeds -join ',')"

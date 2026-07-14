@@ -59,7 +59,7 @@ Set-Location -LiteralPath $Root
 New-Item -ItemType Directory -Force -Path $Embeddings, $ScoreDir | Out-Null
 $env:PYTHONIOENCODING = "utf-8"
 $env:HF_HUB_OFFLINE = "1"
-$env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+Remove-Item Env:\PYTORCH_CUDA_ALLOC_CONF -ErrorAction SilentlyContinue
 $env:CUDA_VISIBLE_DEVICES = "0"
 
 $configs = @(

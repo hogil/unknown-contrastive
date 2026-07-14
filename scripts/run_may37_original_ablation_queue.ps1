@@ -8,6 +8,8 @@ $Log = Join-Path $ResultsRoot "may37_original_queue.log"
 $Hard42StateDir = Join-Path $Root "docs\paper\canonical_rescore_260713\unknown_strict_novel"
 $Hard42Completion = Join-Path $Hard42StateDir "hard42_seed_validation.complete"
 $Hard42Failure = Join-Path $Hard42StateDir "hard42_seed_validation.failed"
+$Hard42Deferred = Join-Path $Hard42StateDir "hard42_seed_validation.deferred"
+$Hard42Task = "unknown_contrastive_hard42_blend_seed_validation"
 
 function Write-QueueLog([string]$Message) {
     $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
@@ -22,6 +24,16 @@ trap {
 
 function Wait-ForHard42SeedValidation {
     while ($true) {
+        if (Test-Path -LiteralPath $Hard42Deferred) {
+            Write-QueueLog "hard-42 seed validation deferred for May reproduction priority"
+            return
+        }
+        $task = Get-ScheduledTask -TaskName $Hard42Task -ErrorAction SilentlyContinue
+        if ($null -ne $task -and $task.State -eq "Running") {
+            Write-QueueLog "waiting for running higher-priority hard-42 fixed-recipe seed validation"
+            Start-Sleep -Seconds 60
+            continue
+        }
         if (Test-Path -LiteralPath $Hard42Completion) {
             Write-QueueLog "hard-42 fixed-recipe seed validation complete; starting May source reproduction"
             return
@@ -67,7 +79,7 @@ function Test-Completed([string]$Backbone, [string]$Cell) {
 Set-Location -LiteralPath $Root
 $env:PYTHONIOENCODING = "utf-8"
 $env:HF_HUB_OFFLINE = "1"
-$env:PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+Remove-Item Env:\PYTORCH_CUDA_ALLOC_CONF -ErrorAction SilentlyContinue
 $env:CUDA_VISIBLE_DEVICES = "0"
 
 New-Item -ItemType Directory -Force -Path $ResultsRoot | Out-Null
@@ -76,7 +88,7 @@ Wait-ForHard42SeedValidation
 Wait-ForGpu
 
 $cells = @("FROZEN", "B0", "B1", "B2", "B3", "B4", "B5")
-foreach ($backbone in @("cnn_tapt", "nocnn")) {
+foreach ($backbone in @("nocnn", "cnn_tapt")) {
     foreach ($cell in $cells) {
         if (Test-Completed $backbone $cell) {
             Write-QueueLog "SKIP completed backbone=$backbone cell=$cell"
