@@ -73,7 +73,7 @@ function Test-Completed([string]$Backbone, [string]$Cell) {
     $matches = @(Get-ChildItem -Path $ResultsRoot -Directory -ErrorAction SilentlyContinue |
         Where-Object {
             $_.Name -like "*$suffix" -and
-            (Test-Path (Join-Path $_.FullName "canonical_eval\metrics.json"))
+            (Test-Path (Join-Path $_.FullName "completion.json"))
         })
     return $matches.Count -gt 0
 }
@@ -92,7 +92,7 @@ Write-QueueLog "May source-protocol B0-B6 control started. source=b796ecbe5f70 a
 Wait-ForHard42SeedValidation
 Wait-ForGpu
 
-$cells = @("FROZEN", "B0", "B1", "B2", "B3", "B4", "B5", "B6")
+$cells = @("FROZEN", "PCA128", "RANDOM128", "B0", "B1", "B2", "B3", "B4", "B5", "B6")
 # Establish the historical TAPT control before changing exactly one variable:
 # replace the TAPT checkpoint with the ImageNet FCMAE checkpoint.
 foreach ($backbone in @("cnn_tapt", "nocnn")) {
@@ -114,3 +114,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "failed to summarize May source-protocol B0-B6 control cells exit=$LASTEXITCODE"
 }
 Write-QueueLog "DONE all source-protocol May B0-B6 control cells."
+
+$Hard42Runner = Join-Path $Root "scripts\run_hard42_headonly_coordinate_descent.py"
+$Hard42Output = Join-Path $Root "runs\hard42_headonly_coordinate_descent"
+Write-QueueLog "START hard-42 frozen-backbone head-only coordinate descent (cnn_tapt -> nocnn)."
+& python -u $Hard42Runner --output-root $Hard42Output --backbones "cnn_tapt,nocnn" *>> $Log
+if ($LASTEXITCODE -ne 0) {
+    throw "failed hard-42 head-only coordinate descent exit=$LASTEXITCODE"
+}
+Write-QueueLog "DONE hard-42 frozen-backbone head-only coordinate descent."
