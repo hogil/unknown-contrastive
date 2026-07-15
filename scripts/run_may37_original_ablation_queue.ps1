@@ -3,6 +3,7 @@ param()
 $ErrorActionPreference = "Stop"
 $Root = "D:\project\unknown-contrastive"
 $Runner = Join-Path $Root "scripts\run_may37_original_ablation.py"
+$ResultAgent = Join-Path $Root "scripts\run_result_analysis_agent.py"
 $Anchor = Join-Path $Root "data\images\anchor_avg30_repro"
 $ControlId = "may37_protocol_control_current2260"
 $ResultsRoot = Join-Path $Root "runs\may37_protocol_control_current2260"
@@ -68,14 +69,25 @@ function Wait-ForGpu {
     }
 }
 
-function Test-Completed([string]$Backbone, [string]$Cell) {
+function Get-CompletedEvent([string]$Backbone, [string]$Cell) {
     $suffix = "_{0}_{1}_{2}" -f $ControlId, $Backbone, $Cell.ToLower()
     $matches = @(Get-ChildItem -Path $ResultsRoot -Directory -ErrorAction SilentlyContinue |
         Where-Object {
             $_.Name -like "*$suffix" -and
             (Test-Path (Join-Path $_.FullName "completion.json"))
-        })
-    return $matches.Count -gt 0
+        } |
+        Sort-Object LastWriteTime -Descending)
+    if ($matches.Count -eq 0) { return $null }
+    return Join-Path $matches[0].FullName "completion.json"
+}
+
+function Invoke-ResultAgent([string]$EventFile) {
+    Write-QueueLog "ANALYZE event=$EventFile"
+    & python -u $ResultAgent --event-file $EventFile --context may_source *>> $Log
+    if ($LASTEXITCODE -ne 0) {
+        throw "result analysis agent failed event=$EventFile exit=$LASTEXITCODE"
+    }
+    Write-QueueLog "ANALYZED event=$EventFile"
 }
 
 Set-Location -LiteralPath $Root
@@ -97,8 +109,10 @@ $cells = @("FROZEN", "PCA128", "RANDOM128", "B0", "B1", "B2", "B3", "B4", "B5", 
 # replace the TAPT checkpoint with the ImageNet FCMAE checkpoint.
 foreach ($backbone in @("cnn_tapt", "nocnn")) {
     foreach ($cell in $cells) {
-        if (Test-Completed $backbone $cell) {
+        $completedEvent = Get-CompletedEvent $backbone $cell
+        if ($null -ne $completedEvent) {
             Write-QueueLog "SKIP completed backbone=$backbone cell=$cell"
+            Invoke-ResultAgent $completedEvent
             continue
         }
         Wait-ForGpu
@@ -108,6 +122,11 @@ foreach ($backbone in @("cnn_tapt", "nocnn")) {
             throw "failed backbone=$backbone cell=$cell exit=$LASTEXITCODE"
         }
         Write-QueueLog "DONE backbone=$backbone cell=$cell"
+        $completedEvent = Get-CompletedEvent $backbone $cell
+        if ($null -eq $completedEvent) {
+            throw "completion event missing backbone=$backbone cell=$cell"
+        }
+        Invoke-ResultAgent $completedEvent
     }
 }
 & python -u (Join-Path $Root "scripts\summarize_may37_original_ablation.py") --results-root $ResultsRoot *>> $Log

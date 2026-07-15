@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "context",
+    "verdict",
+    "summary",
+    "metric_comparison",
+    "failure_mode",
+    "next_experiment",
+    "evidence_paths",
+    "warnings",
+    "analysis_markdown"
+  ],
+  "properties": {
+    "event_id": {"type": "string"},
+    "context": {"type": "string"},
+    "verdict": {
+      "type": "string",
+      "enum": ["accept", "reject", "invalid", "inconclusive", "required_control"]
+    },
+    "summary": {"type": "string"},
+    "metric_comparison": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["metric", "candidate", "reference", "delta", "direction", "pass"],
+        "properties": {
+          "metric": {"type": "string"},
+          "candidate": {"type": ["number", "null"]},
+          "reference": {"type": ["number", "null"]},
+          "delta": {"type": ["number", "null"]},
+          "direction": {"type": "string", "enum": ["higher", "lower", "diagnostic"]},
+          "pass": {"type": ["boolean", "null"]}
+        }
+      }
+    },
+    "failure_mode": {
+      "type": "string",
+      "enum": [
+        "none",
+        "overmerge",
+        "fragmentation",
+        "noise",
+        "capture_regression",
+        "representation_regression",
+        "clusterer_artifact",
+        "protocol_invalid",
+        "insufficient_evidence"
+      ]
+    },
+    "next_experiment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "dataset",
+        "backbone",
+        "parent_run",
+        "axis",
+        "values",
+        "reason",
+        "acceptance_gate"
+      ],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "continue_required_control",
+            "run_one_axis",
+            "rerun_invalid",
+            "accept_candidate",
+            "wait_for_evidence"
+          ]
+        },
+        "dataset": {"type": "string"},
+        "backbone": {"type": "string"},
+        "parent_run": {"type": "string"},
+        "axis": {"type": "string"},
+        "values": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string"},
+        "acceptance_gate": {"type": "string"}
+      }
+    },
+    "evidence_paths": {"type": "array", "items": {"type": "string"}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "analysis_markdown": {"type": "string"}
+  }
+}

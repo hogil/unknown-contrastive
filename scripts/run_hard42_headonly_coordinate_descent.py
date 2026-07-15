@@ -16,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts" / "run_hard42_headonly_ablation.py"
 EVALUATOR = ROOT / "scripts" / "eval_hard42_headonly_checkpoints.py"
+RESULT_AGENT = ROOT / "scripts" / "run_result_analysis_agent.py"
 SOURCE_RESULTS = ROOT / "runs" / "may37_protocol_control_current2260"
 DEFAULT_OUTPUT = ROOT / "runs" / "hard42_headonly_coordinate_descent"
 EXCLUDED = (
@@ -198,6 +199,24 @@ def wait_for_gpu() -> None:
         time.sleep(60)
 
 
+def analyze_result(event_file: Path) -> None:
+    if not event_file.exists():
+        raise FileNotFoundError(f"result event is unavailable: {event_file}")
+    subprocess.run(
+        [
+            sys.executable,
+            "-u",
+            str(RESULT_AGENT),
+            "--event-file",
+            str(event_file),
+            "--context",
+            "hard42",
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+
+
 def existing_run(output_root: Path, backbone: str, recipe: dict) -> Path | None:
     for provenance_path in output_root.glob("*/headonly_provenance.json"):
         completion = provenance_path.parent / "headonly_completion.json"
@@ -247,6 +266,7 @@ def execute(output_root: Path, backbone: str, cell: str, recipe: dict) -> dict:
     else:
         print(f"[REUSE] backbone={backbone} cell={cell} run={prior}", flush=True)
     metrics = prior / "contrastive" / "evaluation" / "dev_strict_novel" / "hard42_dev_strict_novel_metrics.csv"
+    analyze_result(prior / "headonly_completion.json")
     return {"cell": cell, "recipe": deepcopy(recipe), "run_dir": str(prior), "point": best_point(metrics)}
 
 
@@ -264,6 +284,7 @@ def run_frozen(output_root: Path, backbone: str) -> dict:
         raise RuntimeError(f"frozen run failed: {backbone}")
     dev = prior / "contrastive" / "evaluation" / "dev_strict_novel" / "hard42_dev_strict_novel_metrics.csv"
     holdout = prior / "contrastive" / "evaluation" / "holdout_strict_novel" / "hard42_holdout_strict_novel_metrics.csv"
+    analyze_result(prior / "headonly_completion.json")
     return {"run_dir": str(prior), "dev": best_point(dev), "holdout": best_point(holdout)}
 
 
