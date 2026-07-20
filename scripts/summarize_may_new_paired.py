@@ -74,6 +74,7 @@ def main() -> None:
         "",
         "Semantic recipe: `Global InfoNCE + NeCo(0.2) + Queue(4096) + NEG(0.72); Local OFF`.",
         "Only the backbone checkpoint changes between paired arms.",
+        "Decision priority: P1 capture first, then P2/P3/P4 and k/fragmentation; ARI and Silhouette remain recorded as supporting metrics.",
         "",
         "## Full-Pool Canonical HDBSCAN",
         "",

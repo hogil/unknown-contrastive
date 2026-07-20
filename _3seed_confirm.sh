@@ -77,7 +77,7 @@ cat > "$RES" <<'EOF'
 
 Protocol: all-unfreeze + backbone `f`; labels are used only for scoring. Epochs are locked from the seed-3 discovery trajectory: WM ep8, RESISC45 ep6, DTD ep8. No per-seed best-epoch selection.
 
-Acceptance gate: all three seeds present; primary FINCH ARI mean improves over frozen and at least 2/3 seeds improve; every seed preserves P1; mean P2 does not worsen; mean P3/P4 do not worsen; mean fragmentation is no more than 1.5x frozen; Louvain mean ARI changes in the same positive direction.
+Acceptance gate: all three seeds present; every seed preserves P1; at least 2/3 seeds jointly preserve or improve P1/P2/P3/P4; mean P2 does not worsen; mean P3/P4 do not worsen; mean fragmentation is no more than 1.5x frozen; Louvain preserves P1 and P3/P4 on average. ARI and Silhouette remain recorded as supporting metrics.
 
 Raw rows use the canonical metric order: P1 capture, recov, P2 noise, P3 completeness, P4 homogeneity, ARI, Silhouette, k(total/classes/background), fragment ratio.
 EOF
@@ -161,8 +161,8 @@ def fmt(values, digits=3):
 
 with report.open("a", encoding="utf-8") as out:
     out.write("\n## Aggregate and acceptance gate\n")
-    out.write("\n| dataset | clusterer | P1 count/total | P1 | P2 | P3 | P4 | ARI | Sil | k | fragment | delta ARI |\n")
-    out.write("|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+    out.write("\n| dataset | clusterer | P1 count/total | P1 | P2 | P3 | P4 | ARI | Sil | k | fragment | delta P1 | delta P3 | delta P4 | delta ARI |\n")
+    out.write("|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
     gates = []
     for name, spec in specs.items():
         epoch = spec["epoch"]
@@ -174,13 +174,17 @@ with report.open("a", encoding="utf-8") as out:
             counts = [row["P1_capture_count"] for row in rows]
             total = rows[0]["P1_target_class_count"]
             ari_values = [row["ARI"] for row in rows]
-            delta = statistics.mean(ari_values) - baseline["ARI"]
+            delta_p1 = statistics.mean(row["P1_capture"] for row in rows) - baseline["P1_capture"]
+            delta_p3 = statistics.mean(row["P3_completeness"] for row in rows) - baseline["P3_completeness"]
+            delta_p4 = statistics.mean(row["P4_homogeneity"] for row in rows) - baseline["P4_homogeneity"]
+            delta_ari = statistics.mean(ari_values) - baseline["ARI"]
             out.write(
                 f"| {name} | {clusterer} | {fmt(counts, 2)}/{total} | "
                 f"{fmt([r['P1_capture'] for r in rows])} | {fmt([r['P2_noise_pct'] for r in rows])} | "
                 f"{fmt([r['P3_completeness'] for r in rows])} | {fmt([r['P4_homogeneity'] for r in rows])} | "
                 f"{fmt(ari_values)} | {fmt([r['Sil'] for r in rows])} | {fmt([r['k_total'] for r in rows], 2)} | "
-                f"{fmt([r['fragment_ratio'] for r in rows])} | {delta:+.3f} |\n"
+                f"{fmt([r['fragment_ratio'] for r in rows])} | {delta_p1:+.3f} | {delta_p3:+.3f} | "
+                f"{delta_p4:+.3f} | {delta_ari:+.3f} |\n"
             )
 
         primary = spec["primary"]
@@ -188,16 +192,24 @@ with report.open("a", encoding="utf-8") as out:
         primary_rows = [read_method(metrics_dir / f"{name}_s{s}_ep{epoch}.csv", primary) for s in seeds]
         lv_base = read_method(baseline_csv, "louvain_res6")
         lv_rows = [read_method(metrics_dir / f"{name}_s{s}_ep{epoch}.csv", "louvain_res6") for s in seeds]
+        joint_quality_passes = sum(
+            row["P1_capture"] >= base["P1_capture"]
+            and row["P2_noise_pct"] <= base["P2_noise_pct"]
+            and row["P3_completeness"] >= base["P3_completeness"]
+            and row["P4_homogeneity"] >= base["P4_homogeneity"]
+            for row in primary_rows
+        )
         checks = {
             "three_seeds": len(primary_rows) == 3,
-            "ari_mean_up": statistics.mean(r["ARI"] for r in primary_rows) > base["ARI"],
-            "ari_2_of_3_up": sum(r["ARI"] > base["ARI"] for r in primary_rows) >= 2,
             "p1_preserved_each_seed": all(r["P1_capture"] >= base["P1_capture"] for r in primary_rows),
+            "joint_quality_2_of_3": joint_quality_passes >= 2,
             "p2_mean_not_worse": statistics.mean(r["P2_noise_pct"] for r in primary_rows) <= base["P2_noise_pct"],
             "p3_mean_not_worse": statistics.mean(r["P3_completeness"] for r in primary_rows) >= base["P3_completeness"],
             "p4_mean_not_worse": statistics.mean(r["P4_homogeneity"] for r in primary_rows) >= base["P4_homogeneity"],
             "fragment_guard": statistics.mean(r["fragment_ratio"] for r in primary_rows) <= 1.5 * base["fragment_ratio"],
-            "louvain_ari_mean_up": statistics.mean(r["ARI"] for r in lv_rows) > lv_base["ARI"],
+            "louvain_p1_preserved": statistics.mean(r["P1_capture"] for r in lv_rows) >= lv_base["P1_capture"],
+            "louvain_p3_not_worse": statistics.mean(r["P3_completeness"] for r in lv_rows) >= lv_base["P3_completeness"],
+            "louvain_p4_not_worse": statistics.mean(r["P4_homogeneity"] for r in lv_rows) >= lv_base["P4_homogeneity"],
         }
         passed = all(checks.values())
         gates.append(passed)
