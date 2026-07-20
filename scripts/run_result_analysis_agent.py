@@ -93,9 +93,11 @@ Required analysis:
 2. Report canonical P1 as unique dominant/main target classes divided by all
    target classes. Enforce capture_count <= dominant_cluster_count <= k.
    Never call legacy image presence/coverage P1.
-3. Compare P1, P2 noise, P3 completeness, P4 homogeneity, ARI, Silhouette, k,
-   and fragment ratio. Use FINCH-p2 as primary and Louvain as a sanity check
-   when both are available.
+3. Record and compare P1, P2 noise, P3 completeness, P4 homogeneity, ARI,
+   Silhouette, k, and fragment ratio. Decide in this order: P1 first, then
+   P2/P3/P4 and k/fragmentation. ARI and Silhouette are supporting metrics and
+   must never override a P1/P3/P4 regression. Use the protocol's pre-registered
+   primary partition and Louvain as a sanity check when available.
 4. Diagnose overmerge, fragmentation, noise, capture regression,
    representation regression, clusterer artifact, or invalid protocol.
 5. Recommend exactly one next one-axis experiment or state that the required
