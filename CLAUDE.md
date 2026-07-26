@@ -1,5 +1,64 @@
 # CLAUDE.md
 
+> **정본(canonical): `docs/ABSOLUTE_RULES.md`.** 목적·사다리·데이터 경계·에이전트 프로토콜의
+> 구속력 있는 기록은 그 파일이다. 아래는 그 요약 + Claude Code 세션용 실무 규칙이며,
+> 충돌 시 `docs/ABSOLUTE_RULES.md` 가 우선한다.
+> 측정 규율과 에이전트 구조도는 `docs/GOAL_AND_LADDER.md`, 실행 스냅샷은 `docs/HANDOFF_260726.md`.
+
+## ★★★ 절대규칙 0: 이 프로젝트의 목적과 배포 사다리 (사용자 directive, 260726)
+
+> 여러 데이터셋에서 contrastive 성능 향상을 확인하고 ablation 해서 최고 성능을 만들어낸다.
+> **최종 목적은 사내 실제 데이터셋에서 unknown grouping 으로 신규불량 발생 시 감지해내는 것.**
+> 이걸 위해 끊임없이, 몇 일이 걸려도 진행한다.
+
+**배포 사다리 — 좋은 순서대로 (사용자 명시, 변경 금지)**
+
+| 순위 | 방법 | 검증 상태 (260726) |
+|---|---|---|
+| **1** | 여기서 만든 **모델로 바로 predict** (zero-shot) | ❌ **실패 확정** — cca 14 source 중 frozen 을 이기는 게 0개 |
+| **2** | 여기서 만든 **레시피로 학습** 후 predict | ✅ 작동 — severstal(산업 결함)에서 전 지표 우세 |
+| **3** | 여기서 만든 **recipe sweep 학습** 후 predict | ⏳ 진행 — severstal 10셀 승자 `lr008`(LR 2배), ARI +62% |
+| **4** | **CNN TAPT** 까지 한 후 학습 sweep 후 predict | 미착수 |
+
+**모든 작업은 이 사다리 중 어느 칸을 전진시키는지 말할 수 있어야 한다.** 말할 수 없으면 우선순위가 낮다.
+
+### 이 목적에서 파생되는 하위 절대규칙
+
+1. **사내엔 라벨이 없다.** "성능이 올랐다"는 주장은 **"라벨 없이 그 설정을 고를 수 있었나"** 까지
+   답해야 완결된다. 아니면 오라클 선택이고 배포 불가.
+   - epoch 선택: **Rule C** ✅ 외부검증 통과 / 레시피 선택: ⏳ / **다이얼 선택: ❌ 방법 없음(확정)**
+2. **대조군은 frozen 이 아니라 z0(랜덤 head)** 이고 **용량(head 수·차원)을 맞춰야** 한다.
+   랜덤 head 만으로도 지표가 잡음폭 밖으로 움직인다.
+3. **reassign 전/후를 분리 보고**하라. 후처리 후 noise 는 어떤 임베딩에든 나오는 바닥값이다.
+4. **다이얼은 pool 기하에 맞춘다: `mcs ≈ n/k 의 10%`.** 다른 pool 값 이식 금지.
+   ⚠ k̂ 를 알아야 쓰는 규칙 → **사내 배포 시 예상 불량 종수를 현업에서 받아야 한다.**
+5. **측정 지점 하나에서 결론 내지 마라.** 260726 하루에 같은 실수 4건(다이얼·대조군·임계·후처리).
+   각 arm 을 **자기 최적점**에서 비교하고, 비교 영역은 **k ≈ 실제 클래스 수**.
+
+상세: `docs/GOAL_AND_LADDER.md`, `docs/HANDOFF_260726.md`
+
+---
+
+## ★★★ 절대규칙: 데이터셋은 `E:/data/images/` 에만 두고 거기서 로드한다 (260726)
+
+1. **다운로드·생성·로드 위치는 `E:/data/images/<dataset>/` 하나뿐이다.** 새 데이터셋을 받거나
+   렌더링하면 반드시 이 경로 아래에 만든다. `D:/project/unknown-contrastive/data/images/` 에
+   데이터셋을 두지 않는다.
+2. **동일 데이터셋에서 하위셋용 폴더를 새로 만들지 않는다.** subset/split/pool 은 전부
+   **manifest(코드)로 선택**한다 — `data/pools/<name>.json` + `scripts/_common.py::resolve_pool()`.
+   물리 복사로 파생 폴더를 만드는 행위 금지 (과거 164GB 중복의 원인).
+2-1. **★ 하드링크·심볼릭 링크·junction 절대 금지.** 어떤 형태의 링크도 만들지 않는다
+   (`os.link`, `mklink`, `fsutil hardlink`, `New-Item -ItemType SymbolicLink` 전부 금지).
+   해결책은 링크가 아니라 **원본 코드에서 이미지 선택 경로를 바꾸는 것**이다 —
+   master 경로 하나만 두고 코드가 필요한 이미지를 골라 읽는다.
+3. manifest 포맷: `{"root": "E:/data/images/<dataset>", "files":[{"path":"<class>/<file>","label":"<class>"}...]}`
+   생성기 = `scripts/make_pool_manifest.py`. `--pool` 인자는 디렉토리/manifest 둘 다 받는다(후방호환).
+4. 정렬 규칙은 스크립트마다 다르므로 `resolve_pool()` 을 쓸 것 — 임의 정렬 금지
+   (임베딩 행 순서 ↔ 라벨 매칭이 깨지면 모든 지표가 조용히 망가진다).
+
+현재 master: `E:/data/images/unknown` (21,143장 / 45 class). 파생 pool 은 `data/pools/*.json` 참조.
+
+
 이 파일은 Claude Code(claude.ai/code) 새 세션에 프로젝트 진입점을 알려준다.
 
 ## 이 repo가 하는 일 (현재)
@@ -61,7 +120,7 @@ known-cnn 은 supervised side 만 담당.
   다르고, defect chip의 hot item 평균은 normal chip 대비 ≥3x (실측 3.5-4.9x).
   새 클래스/spec 변경 시 이 분석성 검증 필수.
 - **chip-object crop**: `D:/project/data/wm-811k/classification_chips/<obj>/<wafer_basename_without_yield_sys>_x<x>_y<y>_b<bin>.png`
-  - 5 obj label (bank_boundary / particle_blast / scratch / scratch_21deg / invalid_main)
+  - 5 obj label (bank_boundary / fork / scratch / scratch_rot / invalid_main)
   - **wafer generation 시점에 inline 저장** (`_sample_gen.save_chip_crops`).
     chip별 true object 라벨(`chip_meta['obj']`)을 사용하므로 75% primary + 25% mixed
     환경에서도 정확. **post-process folder-suffix 라벨링 절대 금지** (25% mixed chip 오라벨).
@@ -207,7 +266,7 @@ default `model_tag` = backbone short name (`convnextv2_base`).
 - ✅ ±15° rotation: 검사장비 stage 회전 오차 범위 내
 - ✅ 작은 translate/scale (±3%): alignment / magnification variability
 - ✅ Gaussian noise σ=0.01: sensor pixel noise
-- ❌ HFlip: scratch_21deg 등 angle = 클래스 정체성 (21° → -21°)
+- ❌ HFlip: scratch_rot 등 angle = 클래스 정체성 (21° → -21°)
 - ❌ VFlip / 180° rotation: Edge-Top ↔ Edge-Bottom 클래스 뒤집힘
 - ❌ ColorJitter: palette grade(0=정상, 1-7=강도) 의미 손상
 - ❌ MixUp / CutMix / Cutout: palette pixel 평균이 무의미한 grade 생성
