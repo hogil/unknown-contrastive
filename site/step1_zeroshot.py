@@ -41,6 +41,12 @@ class Config:
     CHAMPION_PROJ = env("SITE_CHAMPION_PROJ",
                         "weights/champion/proj_s42_ep20.pt,weights/champion/proj_s1_ep18.pt")
 
+    # ★ May 배포본 contrastive_b4 (선택). 이건 **자체 backbone 을 갖는 독립 arm** 이다 —
+    #   FCMAE 와 섞을 수 없다(378개 텐서가 전부 다름). 아래 두 파일을 함께 두면 4번째 arm 으로 비교한다.
+    #   추출법:  python site/extract_b4.py  (원본 contrastive_b4.pt 필요)
+    B4_BACKBONE = env("SITE_B4_BACKBONE", "weights/b4_may/b4_backbone.pth")
+    B4_PROJ = env("SITE_B4_PROJ", "weights/b4_may/b4_proj.pt")
+
     DEVICE = env("SITE_DEVICE", "cuda")          # cuda | cpu
     BATCH = env("SITE_BATCH", 32)
     REASSIGN = env("SITE_REASSIGN", "nearest_q90")   # none | nearest_q90 | nearest_q80 | assign_all
@@ -78,19 +84,28 @@ def main() -> int:
                  champ if use_champ else None)
 
     out_root = rel(Config.OUT_ROOT) / "step1_zeroshot"
-    arms: list[tuple[str, list[str] | None]] = [("frozen", None)]
+    # (arm 이름, backbone, proj 목록)
+    arms: list[tuple[str, str, list[str] | None]] = [("frozen", Config.BACKBONE, None)]
     # ★ z0 는 champion 과 head 수를 맞춘다. 용량이 다르면 비교가 무효다.
     n_heads = len(champ) if use_champ else 1
-    arms.append((f"z0_x{n_heads}", make_z0_set(out_root / "_z0", n_heads, int(Config.Z0_SEED))))
+    arms.append((f"z0_x{n_heads}", Config.BACKBONE,
+                 make_z0_set(out_root / "_z0", n_heads, int(Config.Z0_SEED))))
     if use_champ:
-        arms.append(("champion", champ))
+        arms.append(("champion", Config.BACKBONE, champ))
+
+    # ★ May 배포본은 자체 backbone 을 쓰는 독립 arm — FCMAE 와 섞으면 안 된다.
+    b4bb, b4pj = rel(Config.B4_BACKBONE), rel(Config.B4_PROJ)
+    if b4bb.exists() and b4pj.exists():
+        arms.append(("contrastive_b4(May)", Config.B4_BACKBONE, [Config.B4_PROJ]))
+        arms.append(("b4_backbone_only", Config.B4_BACKBONE, None))
+        print("[info] May 배포본 b4 를 독립 arm 으로 추가 (자체 backbone 사용)")
 
     results = {}
-    for name, projs in arms:
-        out = out_root / name
-        rc = run(deploy_cmd(Config.BACKBONE, pool, out, mcs, ms, projs,
+    for name, bb, projs in arms:
+        out = out_root / name.replace("(", "_").replace(")", "")
+        rc = run(deploy_cmd(bb, pool, out, mcs, ms, projs,
                             Config.DEVICE, int(Config.BATCH), Config.REASSIGN),
-                 log_path=out_root / f"{name}.log")
+                 log_path=out_root / f"{out.name}.log")
         if rc != 0:
             print(f"[warn] {name} 종료코드 {rc} — summary.json 존재로 판정한다")
         results[name] = read_summary(out)
@@ -98,7 +113,7 @@ def main() -> int:
     print("\n" + "=" * 78)
     print("[결과] 같은 다이얼, 같은 pool, 같은 reassign — 1축 비교")
     print("=" * 78)
-    for name, _ in arms:
+    for name, _, _ in arms:
         print(fmt_row(name, results.get(name)))
 
     verdict, note = judge(results, arms)
@@ -109,7 +124,8 @@ def main() -> int:
     print("-" * 78)
 
     save_result(rel(Config.OUT_ROOT), "step1",
-                {"dial": {"mcs": mcs, "ms": ms}, "arms": {k: results.get(k) for k, _ in arms},
+                {"dial": {"mcs": mcs, "ms": ms},
+                 "arms": {k: results.get(k) for k, _, _ in arms},
                  "verdict": verdict, "notes": note, "config": cfg})
     print("\n다음:  python site/step2_recipe.py")
     print(f"\n[OUT] {out_root}")
@@ -129,7 +145,7 @@ def judge(results: dict, arms: list) -> tuple[str, list[str]]:
     notes.append(f"frozen 기준선: seed_noise={fz_sn}, k={fz.get('k')} "
                  f"— 이 값이 step2/step3 의 비교 대상이다.")
 
-    z0key = next((k for k, _ in arms if k.startswith("z0")), None)
+    z0key = next((a[0] for a in arms if a[0].startswith("z0")), None)
     z0 = results.get(z0key) if z0key else None
     if z0 and fz_sn is not None and sn(z0) is not None:
         d = sn(z0) - fz_sn
@@ -149,6 +165,16 @@ def judge(results: dict, arms: list) -> tuple[str, list[str]]:
     ch_sn, z_sn = sn(ch), sn(z0) if z0 else None
     beats_frozen = ch_sn is not None and fz_sn is not None and ch_sn < fz_sn - 2.28
     beats_z0 = ch_sn is not None and z_sn is not None and ch_sn < z_sn - 2.28
+
+    b4 = results.get("contrastive_b4(May)")
+    if b4 and sn(b4) is not None and ch_sn is not None:
+        d = sn(b4) - ch_sn
+        if d < -2.28:
+            notes.append(f"★ May 배포본 b4 가 champion 보다 seed_noise {-d:.2f}pp 낮다 — b4 를 써라.")
+        elif d > 2.28:
+            notes.append(f"May 배포본 b4 는 champion 보다 {d:.2f}pp 나쁘다.")
+        else:
+            notes.append(f"May 배포본 b4 와 champion 은 잡음폭 안(Δ{d:+.2f}pp) — 둘 중 아무거나.")
 
     if beats_frozen and beats_z0:
         notes.append("champion 이 frozen 과 z0 를 모두 잡음폭 밖으로 이겼다.")

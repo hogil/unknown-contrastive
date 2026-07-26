@@ -37,6 +37,24 @@
   그 경우 `SITE_SKIP_CHAMPION=1` 로 두면 경고 없이 진행한다.
 - 나중에 받으면 step1 만 다시 돌리면 된다.
 
+### 선택 — May 배포본 `contrastive_b4.pt` (사다리 ① 비교용)
+
+| 두는 위치 | 원본 | 크기 |
+|---|---|---|
+| `weights/b4_may/contrastive_b4.pt` | `<failure_agent>/checkpoints/contrastive_b4.pt` | ~356MB |
+
+```bash
+python site/extract_b4.py      # backbone / proj 로 분리 -> step1 이 자동 인식
+```
+
+★ **b4 는 자체 backbone 을 갖는 독립 arm 이다.** 번들 안의 backbone 378개 텐서가
+같은 폴더 `backbone.pth` 와 **전부 다르다**(실측). 그래서 b4 proj 를 우리 FCMAE 위에
+올리면 안 된다 — 학습 때와 다른 feature 분포를 먹이게 된다.
+`extract_b4.py` 가 이 검증을 자동으로 해준다.
+
+champion(FCMAE + 2 head) 과 b4(자체 backbone + 1 head) 중 어느 쪽이 사내 데이터에서
+나은지는 **재봐야 안다**. step1 이 두 arm 을 같은 다이얼로 비교해서 판정까지 출력한다.
+
 ### 선택 1개 — TAPT backbone (사다리 ④ 용, 라벨 필요)
 
 | 두는 위치 | 비고 |
