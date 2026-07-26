@@ -175,7 +175,7 @@ def _passing_metrics(n_seeds=3):
     return {
         "n_seeds": n_seeds,
         "primary_wafer": {"unknown": {"capture_drop_pp": 0.0}, "mixedwm38": {"capture_drop_pp": 0.5}},
-        "background_far": {"increase_pp": 0.1},
+        "background_far": {"far_per_batch_delta": 0.1},
         "far_or_noise_improvements": {"unknown": {"far_improve_pp": 4.0}, "mixedwm38": {"noise_improve_pp": 5.0}},
         "ari": {"drop": 0.0}, "ami": {"drop": 0.0},
         "temporal": {"far_events": 0, "detect_batches": 1, "novel_per_batch": 25},
@@ -432,7 +432,7 @@ class TestTemporalAdapter:
     def test_reads_champion_operating_point(self, report_dir):
         op = {"P": "10", "K": "1", "size_col": "size20", "arm": "champion"}
         m = load_temporal_metrics(report_dir, op)
-        assert m == {"far_events": 0, "detect_batches": 0, "novel_per_batch": 20}
+        assert m == {"far_events": 0, "detect_batches": 0, "novel_per_batch": 20, "held_out_batches": 4}
 
     def test_missing_file_returns_none(self, tmp_path):
         op = {"P": "10", "K": "1", "size_col": "size20", "arm": "champion"}
@@ -445,7 +445,8 @@ class TestTemporalAdapter:
     def test_background_far_delta_champion_vs_frozen(self, report_dir):
         op = {"P": "10", "K": "1", "size_col": "size20", "arm": "champion"}
         bg = load_background_far_delta(report_dir, op, baseline_arm="frozen")
-        assert bg["increase_pp"] == 0 - 5  # champion 0 alarms vs frozen 5 -> improvement, not increase
+        # champion 0/4=0 alarms/batch vs frozen 5/4=1.25 alarms/batch -> -1.25 (improvement)
+        assert bg["far_per_batch_delta"] == pytest.approx(-1.25)
 
     def test_background_far_delta_missing_baseline_arm(self, report_dir):
         op = {"P": "10", "K": "1", "size_col": "size20", "arm": "champion"}
@@ -512,5 +513,43 @@ class TestBuildGateMetrics:
             w.writerows(rows)
         step = {"temporal_report_path": str(tmp_path), "operating_point": {"P": "10", "K": "1", "size_col": "size20", "arm": "champion"}}
         m = build_gate_metrics(step, {}, run_dir)
-        assert m["temporal"] == {"far_events": 0, "detect_batches": 0, "novel_per_batch": 20}
-        assert m["background_far"]["increase_pp"] == -5
+        assert m["temporal"] == {"far_events": 0, "detect_batches": 0, "novel_per_batch": 20, "held_out_batches": 4}
+        assert m["background_far"]["far_per_batch_delta"] == pytest.approx(-1.25)
+
+
+# ===================== resolve_trainer_output_dir (260726 team-lead fix) =====================
+from scripts.run_unknown_campaign import resolve_trainer_output_dir
+import time
+
+
+class TestResolveTrainerOutputDir:
+    def test_finds_single_candidate_after_start(self, tmp_path):
+        before = time.time()
+        target = tmp_path / "may_repro" / "abl_campaign_t2_s1_B4_260726_120000"
+        target.mkdir(parents=True)
+        found = resolve_trainer_output_dir(tmp_path, "_campaign_t2_s1", "B4", before)
+        assert found == target
+
+    def test_ignores_stale_dir_created_before_start(self, tmp_path):
+        stale = tmp_path / "may_repro" / "abl_campaign_t2_s1_B4_260726_090000"
+        stale.mkdir(parents=True)
+        after = time.time() + 5  # well past the function's 2s OS-precision tolerance
+        with pytest.raises(RuntimeError, match="no trainer output dir found"):
+            resolve_trainer_output_dir(tmp_path, "_campaign_t2_s1", "B4", after)
+
+    def test_raises_on_zero_candidates(self, tmp_path):
+        with pytest.raises(RuntimeError, match="no trainer output dir found"):
+            resolve_trainer_output_dir(tmp_path, "_campaign_t2_s1", "B4", time.time())
+
+    def test_raises_on_ambiguous_multiple_candidates(self, tmp_path):
+        before = time.time()
+        (tmp_path / "may_repro" / "abl_campaign_t2_s1_B4_260726_120000").mkdir(parents=True)
+        (tmp_path / "may_repro" / "abl_campaign_t2_s1_B4_260726_120500").mkdir(parents=True)
+        with pytest.raises(RuntimeError, match="ambiguous"):
+            resolve_trainer_output_dir(tmp_path, "_campaign_t2_s1", "B4", before)
+
+    def test_different_seed_tag_not_matched(self, tmp_path):
+        before = time.time()
+        (tmp_path / "may_repro" / "abl_campaign_t2_s2_B4_260726_120000").mkdir(parents=True)
+        with pytest.raises(RuntimeError, match="no trainer output dir found"):
+            resolve_trainer_output_dir(tmp_path, "_campaign_t2_s1", "B4", before)

@@ -245,7 +245,7 @@ class Registry:
 # configs/unknown_campaign_v1.json's "gates" block (this function only reads it).
 DEFAULT_GATES = {
     "capture_drop_pp_max": 1.0,
-    "far_increase_pp_max": 0.5,
+    "far_increase_max": 0.5,  # units: alarms per held-out background batch (NOT a percentage -- 260726 team-lead fix)
     "far_or_noise_improve_pp_min": 3.0,
     "far_or_noise_improve_datasets_min": 2,
     "ari_ami_drop_max": 0.02,
@@ -275,7 +275,7 @@ def evaluate_gate(gates_cfg: dict, metrics: dict, n_seeds_min_override: int | No
     passed, with a reason explaining what is missing):
       n_seeds: int
       primary_wafer: {name: {"capture_drop_pp": float}}   # baseline - candidate, in pp
-      background_far: {"increase_pp": float}
+      background_far: {"far_per_batch_delta": float}  # alarms/batch, candidate minus baseline
       far_or_noise_improvements: {name: {"far_improve_pp": float, "noise_improve_pp": float}}
       ari: {"drop": float}   # baseline - candidate
       ami: {"drop": float}
@@ -312,10 +312,11 @@ def evaluate_gate(gates_cfg: dict, metrics: dict, n_seeds_min_override: int | No
                      f"{g['capture_drop_pp_max']}pp max")
 
     bg = metrics.get("background_far")
-    if not bg or bg.get("increase_pp") is None:
-        fail("missing background_far.increase_pp")
-    elif bg["increase_pp"] > g["far_increase_pp_max"]:
-        fail(f"background_far increased {bg['increase_pp']:.2f}pp > {g['far_increase_pp_max']}pp max")
+    if not bg or bg.get("far_per_batch_delta") is None:
+        fail("missing background_far.far_per_batch_delta")
+    elif bg["far_per_batch_delta"] > g["far_increase_max"]:
+        fail(f"background_far increased {bg['far_per_batch_delta']:.3f} alarms/batch > "
+             f"{g['far_increase_max']} alarms/batch max")
 
     improved = metrics.get("far_or_noise_improvements") or {}
     n_improved = 0
@@ -426,46 +427,65 @@ def _capture_frac(capture_str) -> float | None:
 def load_temporal_metrics(report_dir, operating_point: dict) -> dict | None:
     """Reads a perf-temporal summary_tables.csv (schema: metric,arm,P,K,size05,
     size10,size20,size30,unit) for one (arm,P,K,size_col) cell and returns
-    {"far_events": int, "detect_batches": int, "novel_per_batch": int}.
-    Returns None (fail-closed upstream) if the file or the requested row is
-    missing -- never estimates.
+    {"far_events": int, "detect_batches": int, "novel_per_batch": int,
+    "held_out_batches": int}. held_out_batches is parsed out of the
+    "FAR_alarms_over_N_bg_batches" metric name itself (N), not hardcoded --
+    if the sim's held-out window changes, that name changes with it and this
+    keeps following it (260726 team-lead fix). Returns None (fail-closed
+    upstream) if the file or the requested row is missing -- never estimates.
     """
     path = Path(report_dir) / "summary_tables.csv"
     if not path.exists():
         return None
     import csv
+    import re
     p_val, k_val = str(operating_point.get("P")), str(operating_point.get("K"))
     size_col, arm = operating_point.get("size_col"), operating_point.get("arm")
     if not (p_val and k_val and size_col and arm):
         return None
     rows = {}
+    far_metric_name = None
     with open(path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
             if row.get("arm") == arm and row.get("P") == p_val and row.get("K") == k_val:
-                rows[row.get("metric")] = row.get(size_col)
-    far = rows.get("FAR_alarms_over_4_bg_batches")
+                metric = row.get("metric")
+                rows[metric] = row.get(size_col)
+                if metric and metric.startswith("FAR_alarms_over_"):
+                    far_metric_name = metric
+    far = next((v for k, v in rows.items() if k and k.startswith("FAR_alarms_over_")), None)
     lag = rows.get("true_positive_detection_lag")
-    if far is None or lag is None:
+    if far is None or lag is None or far_metric_name is None:
         return None
+    m = re.search(r"over_(\d+)_bg_batches", far_metric_name)
+    if not m:
+        return None
+    held_out_batches = int(m.group(1))
     digits = "".join(ch for ch in size_col if ch.isdigit())
     return {"far_events": int(far), "detect_batches": int(lag),
-            "novel_per_batch": int(digits) if digits else None}
+            "novel_per_batch": int(digits) if digits else None,
+            "held_out_batches": held_out_batches}
 
 
 def load_background_far_delta(report_dir, operating_point: dict, baseline_arm: str = "frozen") -> dict | None:
-    """held-out background FAR delta = candidate arm's FAR-alarm COUNT minus the
-    baseline (frozen) arm's, at the same (P,K,size_col) cell. Per team-lead
-    260726: this reuses the temporal report's held-out batches (t=5-8), not a
-    separate per-image percentage -- the "increase_pp" field name is kept for
-    evaluate_gate() schema compatibility, but the value here is an event-count
-    delta, not a true percentage-point. Returns None if either side is missing.
+    """held-out background FAR rate delta = candidate arm's (alarms / held-out
+    batches) minus the baseline (frozen) arm's, at the same (P,K,size_col)
+    cell. held-out batch count is parsed dynamically from the metric name
+    (see load_temporal_metrics), never hardcoded. Returns
+    {"far_per_batch_delta": float} -- alarms per batch, matching
+    evaluate_gate()'s "far_increase_max" threshold unit (260726 team-lead
+    fix; the earlier "increase_pp" event-count-delta version conflated units
+    with the gate's percentage-point threshold and is retired). Returns None
+    if either side is missing.
     """
     cand = load_temporal_metrics(report_dir, operating_point)
     base = load_temporal_metrics(report_dir, {**operating_point, "arm": baseline_arm})
     if cand is None or base is None:
         return None
-    return {"increase_pp": cand["far_events"] - base["far_events"],
-            "_unit_note": "event-count delta over held-out background batches, not a true percentage-point"}
+    cand_rate = cand["far_events"] / cand["held_out_batches"]
+    base_rate = base["far_events"] / base["held_out_batches"]
+    return {"far_per_batch_delta": round(cand_rate - base_rate, 4),
+            "_unit_note": "alarms per held-out background batch, candidate minus baseline"}
+
 
 
 def build_gate_metrics(step: dict, cfg: dict, run_dir: Path) -> dict:
@@ -516,6 +536,38 @@ def build_gate_metrics(step: dict, cfg: dict, run_dir: Path) -> dict:
     return metrics
 
 
+
+
+def resolve_trainer_output_dir(search_root: Path, tag: str, cell: str, after_ts: float) -> Path:
+    """Find _may_ablation.py's own timestamped output dir for one (REPRO_TAG, cell)
+    pair (it computes CFG["OUTPUT_DIR"] + "_" + RUN_TS internally -- there is no
+    --out flag to hand it a path directly). Pattern: abl{tag}_{cell}_<RUN_TS>,
+    searched recursively under search_root, restricted to directories created at
+    or after `after_ts` (the step's own start time) so a stale dir from an
+    earlier attempt with the same REPRO_TAG is never picked up.
+
+    Raises RuntimeError if there are zero or more-than-one candidates -- per
+    260726 team-lead directive, silently picking one when there are multiple
+    could aggregate a different seed's results into this step's record.
+    """
+    pattern = f"abl{tag}_{cell}_*"
+    # 2s tolerance: OS/filesystem timestamp precision can otherwise let a
+    # directory created a few ms after after_ts read back with a slightly
+    # earlier ctime (observed on NTFS) -- real subprocess dispatch always
+    # has far more latency than this, so it never risks matching a genuinely
+    # stale run from an earlier attempt (those are seconds-to-minutes old).
+    cutoff = after_ts - 2.0
+    candidates = sorted(
+        p for p in search_root.rglob(pattern)
+        if p.is_dir() and p.stat().st_ctime >= cutoff
+    )
+    if not candidates:
+        raise RuntimeError(f"no trainer output dir found matching {search_root}/**/{pattern} "
+                            f"created at or after step start ({after_ts})")
+    if len(candidates) > 1:
+        raise RuntimeError(f"ambiguous trainer output dir: {len(candidates)} candidates match "
+                            f"{pattern} created after step start -- {[str(c) for c in candidates]}")
+    return candidates[0]
 
 
 # ===================== step dispatch =====================
@@ -791,7 +843,22 @@ class Campaign:
 
             timeout_sec = int(step.get("timeout_sec", self.cfg.get("safety", {}).get("run_timeout_sec", 43200)))
             heartbeat_sec = int(self.cfg.get("safety", {}).get("heartbeat_sec", 60))
+            step_start_ts = time.time()
             result = run_subprocess_step(argv, run_dir, timeout_sec, heartbeat_sec, env=env)
+
+            resolved_output_dir, produced_checkpoint_path, resolve_error = None, None, None
+            resolve_cell = step.get("resolve_output_glob_cell")
+            if resolve_cell and result["status"] == "completed":
+                try:
+                    resolved = resolve_trainer_output_dir(REPO_ROOT / "runs", env.get("REPRO_TAG", ""),
+                                                           resolve_cell, step_start_ts)
+                    resolved_output_dir = str(resolved)
+                    epochs = recipe.get("epochs")
+                    if epochs:
+                        produced_checkpoint_path = str(resolved / "checkpoints" / f"proj_ep{epochs}.pt")
+                except RuntimeError as e:
+                    resolve_error = str(e)
+                    result = {**result, "status": "failed"}
 
             metrics = None
             metrics_path = step.get("metrics_path")
@@ -813,14 +880,15 @@ class Campaign:
                 champion_after = self._maybe_promote(tier, run_id, ckpt_entries, gate_passed)
 
             failure_reason = None if result["status"] == "completed" else \
-                f"{result['status']}:returncode={result.get('returncode')}"
+                (resolve_error or f"{result['status']}:returncode={result.get('returncode')}")
 
-            rec = {**base, "metrics": metrics,
+            rec = {**base, "metrics": metrics, "resolved_output_dir": resolved_output_dir,
                    "gate": {"evaluated": step.get("evaluate_gate", False), "passed": gate_passed,
                              "reasons": gate_reasons},
                    "status": result["status"], "failure_reason": failure_reason,
                    "retry_count": attempt - 1, "attempt": attempt, "duration_sec": result["duration_sec"],
-                   "log_path": result["log_path"], "champion_before": champion_before,
+                   "log_path": result["log_path"], "produced_checkpoint_path": produced_checkpoint_path,
+                   "champion_before": champion_before,
                    "champion_after": champion_after}
             self.registry.append(rec)
 

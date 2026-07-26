@@ -52,7 +52,7 @@
   },
   "gates": {
     "capture_drop_pp_max": 1.0,
-    "far_increase_pp_max": 0.5,
+    "far_increase_max": 0.5,
     "far_or_noise_improve_pp_min": 3.0,
     "far_or_noise_improve_datasets_min": 2,
     "ari_ami_drop_max": 0.02,
@@ -66,6 +66,11 @@
     "severstal_capture_required": "4/4",
     "severstal_noise_pct_baseline": 77.74,
     "severstal_noise_pct_improve_min_pp": 20.0
+  },
+  "gates_units": {
+    "_note": "JSON has no comments -- non-obvious threshold units documented here (260726 fix).",
+    "far_increase_max": "alarms per held-out background batch (NOT a percentage-point). See scripts/run_unknown_campaign.py::load_background_far_delta -- held-out batch count is parsed from the perf-temporal summary_tables.csv metric name, not hardcoded.",
+    "capture_drop_pp_max / far_or_noise_improve_pp_min / ari_ami_drop_max": "true percentage points / absolute score drop, from offline_summary.json vs cfg.baselines diffing (build_gate_metrics)."
   },
   "tiers": [
     {
@@ -145,6 +150,8 @@
             "REPRO_SKIP_FINAL_EMBED": "1"
           },
           "env_note": "REPRO_IGNORE_NEG_SIM (not REPRO_NEG) per team-lead 260726 -- REPRO_NEG is read by _may_repro_src.py at import time but then overwritten by _may_ablation.py's B4 cell hardcode (IGNORE_NEG_SIM=0.72, same value here so it wouldn't currently show a bug, but REPRO_IGNORE_NEG_SIM is the one _may_ablation.py re-applies after the cell merge and is therefore the only one that is guaranteed correct if the B4 cell definition ever changes).",
+          "resolve_output_glob_cell": "B4",
+          "resolve_output_note": "_may_ablation.py builds its own runs/may_repro/abl{REPRO_TAG}_B4_<RUN_TS>/ dir internally (no --out flag). scripts/run_unknown_campaign.py::resolve_trainer_output_dir globs for it by REPRO_TAG among dirs created after this step started, 0 or 2+ matches -> hard failure (260726 team-lead fix, replaces the earlier unresolved-path gap).",
           "command": ["{python}", "_may_ablation.py", "B4"]
         },
         {
