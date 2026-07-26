@@ -1,0 +1,354 @@
+#!/usr/bin/env python3
+"""★ 재현 가능한 단일 진입점 — 무라벨 wafer grouping 배포.
+
+배경: `_grouping_deliverable.py` 는 이긴 체크포인트 아키텍처(Linear->BN->ReLU->Linear, "net."
+prefix 없음)를 로드하는 유일한 스크립트지만 (1) 앙상블 미지원 (2) soft-reassign 미이식
+(3) 최소 1단계 하위폴더를 강제해 진짜 flat 폴더에서 n=0 크래시 (4) HDBSCAN 다이얼 기본값이
+May-dial(mcs12/ms15) 로 stale (5) 라벨 없는 사내 데이터에서도 offline_eval 을 무조건 생성해
+가짜 점수를 만들 위험이 있었다. 이 스크립트는 그 5개를 고친 배포용 진입점이다.
+
+원본(`_grouping_deliverable.py`, `scripts/predict_grouping_prod.py`)은 수정하지 않는다 —
+기존 결과 재현성 보존을 위해 이 파일을 새로 만들었다. soft-reassign 은
+`scripts/predict_grouping_prod.py::reassign_noise_to_nearest_cluster` 를 그대로 import 해서
+재사용한다 (새로 안 짬).
+
+산출 스키마는 `_grouping_deliverable.py` 와 동일 (하위호환):
+    groups.csv (label-free), representatives/group_XXX/, composites/group_XXX.png,
+    summary.json (label-free, 항상 생성 — n/k/noise%/over_merge/stability/coherence),
+    offline_eval.csv + offline_summary.json (★--offline-eval 명시 시에만 생성, 기본 OFF).
+
+★ 라벨-free 지표 정의 (사내 배포 시 유일한 판단 창 — 정확히 이 정의로 고정, 임의 변경 금지):
+    - group_coherence  = 최종(재배정 후) 그룹 멤버 pairwise cosine 유사도 평균. 재배정 포함 —
+      "지금 이 그룹이 실제로 얼마나 뭉쳐 보이는가"를 재는 거라 최종 멤버십을 써야 맞음.
+    - group_stability  = HDBSCAN이 낸 **seed(재배정 전) 클러스터**의 bootstrap co-assignment
+      robustness (n_boot=5, frac=0.8, seed=42 고정 — `_grouping_deliverable.py` 원본과 동일).
+      ★ 반드시 seed_pred(재배정 전) 로 계산 — 재배정 후 pred 로 계산하면 "구조 안정성"이 아니라
+      "nearest-centroid 재배정 휴리스틱의 안정성"으로 의미가 바뀌어 stability >= 0.75 무라벨
+      선택 게이트 판정이 실제로 뒤집힐 수 있다 (실측: 0.4547 재배정후 vs 0.8441 재배정전,
+      champion 0.8825 와 후자가 일치하는 쪽 — 260726 team-lead 리뷰로 확정, 코드에도 주석).
+    - noise_pct (summary.json)  = 재배정 후 최종 noise / n (전체, 배경 포함).
+
+champion 재현 (real MixedWM38 clean546, ens[s42_t20ep20+s1_ep18] mcs6ms3leaf reassign0.90):
+    python grouping_deploy.py \\
+        --backbone weights/convnextv2_base.fcmae_ft_in22k_in1k_384.pth \\
+        --proj runs/sweep/abl_sw_t20_B4_260724_102757/checkpoints/proj_ep20.pt \\
+               runs/sweep/abl_best_s1_B4_260724_111053/checkpoints/proj_ep18.pt \\
+        --pool data/images/mwm38_clean546 \\
+        --out result_grouping/deliverable_repro_260726 \\
+        --reassign nearest_q90 --offline-eval --device cpu
+
+flat 폴더(사내 실데이터, 하위폴더 없음) 배포:
+    python grouping_deploy.py --backbone <pth> --proj <ckpt> \\
+        --pool E:/data/images/prod/AA/K1AA/20260726 --out result_grouping/prod_run
+    (하위폴더가 없으면 라벨 없이 동작 — offline-eval 은 자동으로 건너뜀)
+"""
+import argparse
+import csv
+import importlib.util
+import json
+import re
+import shutil
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+import numpy as np
+import torch
+import timm
+import torch.nn as nn
+import torch.nn.functional as F
+from torchvision import transforms as T
+from PIL import Image
+
+REPO_ROOT = Path(__file__).resolve().parent
+IMG = 384
+EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+TF = T.Compose([T.Resize((IMG, IMG), interpolation=T.InterpolationMode.BILINEAR), T.ToTensor(),
+                T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+
+# ★ 이긴 운영점 다이얼 (real-domain clean546 champion) — 사용자 승인 없이 값 변경 금지, CLI 로 override 만.
+DEFAULT_MCS = 6
+DEFAULT_MS = 3
+DEFAULT_METHOD = "leaf"
+DEFAULT_EPS = 0.06
+
+
+def _load_reassign_fn():
+    """scripts/predict_grouping_prod.py 의 reassign_noise_to_nearest_cluster 를 그대로 import (재구현 금지)."""
+    path = REPO_ROOT / "scripts" / "predict_grouping_prod.py"
+    spec = importlib.util.spec_from_file_location("_pgp_reused", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.reassign_noise_to_nearest_cluster
+
+
+def build_proj():
+    return nn.Sequential(nn.Linear(1024, 1024, bias=False), nn.BatchNorm1d(1024),
+                          nn.ReLU(inplace=True), nn.Linear(1024, 128))
+
+
+def load_backbone(path, device):
+    bb = timm.create_model("convnextv2_base.fcmae_ft_in22k_in1k_384", pretrained=False, num_classes=0, global_pool="")
+    sd = torch.load(path, map_location="cpu")
+    if isinstance(sd, dict) and "state_dict" in sd:
+        sd = sd["state_dict"]
+    for p in ("model.", "backbone.", "module."):
+        if any(k.startswith(p) for k in sd):
+            sd = {(k[len(p):] if k.startswith(p) else k): v for k, v in sd.items()}
+    bb.load_state_dict(sd, strict=False)
+    return bb.eval().to(device)
+
+
+def load_proj(path, device):
+    d = torch.load(path, map_location="cpu")
+    pj = d["proj"] if isinstance(d, dict) and "proj" in d else d
+    pj = {k[len("net."):] if k.startswith("net.") else k: v for k, v in pj.items()}
+    proj = build_proj()
+    proj.load_state_dict(pj)
+    return proj.eval().to(device)
+
+
+def proj_tag(proj_path: str) -> str:
+    """체크포인트 경로에서 라벨-free 태그 derive (seed는 run_info.json 에서, epoch은 파일명에서)."""
+    p = Path(proj_path)
+    m = re.search(r"ep(\d+)", p.stem)
+    epoch = m.group(1) if m else p.stem
+    run_dir = p.parent.parent if p.parent.name == "checkpoints" else p.parent
+    seed = None
+    ri = run_dir / "run_info.json"
+    if ri.exists():
+        try:
+            cfg = json.loads(ri.read_text(encoding="utf-8")).get("cfg", {})
+            seed = cfg.get("SEED")
+        except Exception:
+            pass
+    return f"s{seed}_ep{epoch}" if seed is not None else f"{run_dir.name}_ep{epoch}"
+
+
+def collect_pool(pool_dir: str):
+    """flat + nested 둘 다 지원 (rglob). 하위폴더 있으면 그 이름을 label 로 선택적 수집, flat 이면 label=None."""
+    root = Path(pool_dir)
+    paths, labels = [], []
+    for p in sorted(root.rglob("*")):
+        if p.is_file() and p.suffix.lower() in EXTS:
+            paths.append(str(p))
+            labels.append(p.parent.name if p.parent != root else None)
+    return paths, labels
+
+
+def embed_one_checkpoint(paths, backbone, proj, device, batch=32):
+    """raw GAP f -> proj -> L2 (학습과 동일 순서; normalize 후 projection 은 버그)."""
+    embs = []
+    with torch.no_grad():
+        for i in range(0, len(paths), batch):
+            x = torch.stack([TF(Image.open(p).convert("RGB")) for p in paths[i:i + batch]]).to(device)
+            pool = backbone.forward_features(x).mean(dim=(2, 3))
+            embs.append(F.normalize(proj(pool), dim=1).cpu())
+    return torch.cat(embs)
+
+
+def hdbscan_predict(z, mcs, ms, method, eps):
+    import hdbscan
+    return hdbscan.HDBSCAN(min_cluster_size=mcs, min_samples=ms, metric="euclidean",
+                            cluster_selection_method=method,
+                            cluster_selection_epsilon=eps).fit_predict(z.astype(np.float64)).astype(int)
+
+
+def per_group_stability(z, base_pred, mcs, ms, method, eps, n_boot=5, frac=0.8, seed=42):
+    """group 별 co-assignment stability: 부분표본에서 그 그룹 멤버쌍이 같은 cluster 유지 평균 비율."""
+    rng = np.random.RandomState(seed)
+    n = len(z)
+    keep = defaultdict(list)
+    for _ in range(n_boot):
+        idx = np.sort(rng.choice(n, int(frac * n), replace=False))
+        pos = {g: i for i, g in enumerate(idx)}
+        p2 = hdbscan_predict(z[idx], mcs, ms, method, eps)
+        for c in set(base_pred.tolist()):
+            if c == -1:
+                continue
+            mem = [g for g in np.where(base_pred == c)[0] if g in pos]
+            if len(mem) < 2:
+                continue
+            lb = np.array([p2[pos[g]] for g in mem])
+            same = 0
+            tot = 0
+            for i in range(len(mem)):
+                for j in range(i + 1, len(mem)):
+                    tot += 1
+                    if lb[i] == lb[j] and lb[i] != -1:
+                        same += 1
+            if tot:
+                keep[c].append(same / tot)
+    return {c: float(np.mean(v)) if v else 0.0 for c, v in keep.items()}
+
+
+def reassign_display(mode: str) -> str:
+    return {"none": "", "nearest_q90": "_reassign0.90", "nearest_q80": "_reassign0.80",
+            "assign_all": "_reassignall"}.get(mode, f"_reassign{mode}")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--backbone", required=True, help="frozen backbone .pth (FCMAE 등)")
+    ap.add_argument("--proj", required=True, nargs="+",
+                     help="projection head .pt 1개 이상 (2개+ 주면 앙상블: 각각 raw-GAP->proj->L2 후 concat+L2)")
+    ap.add_argument("--pool", required=True, help="이미지 루트 (flat 또는 중첩 폴더 모두 지원, rglob)")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--reps", type=int, default=12, help="cluster당 대표 이미지 수")
+    ap.add_argument("--mcs", type=int, default=DEFAULT_MCS, help=f"HDBSCAN min_cluster_size (기본 {DEFAULT_MCS}=champion)")
+    ap.add_argument("--ms", type=int, default=DEFAULT_MS, help=f"HDBSCAN min_samples (기본 {DEFAULT_MS}=champion)")
+    ap.add_argument("--method", default=DEFAULT_METHOD, choices=["leaf", "eom"],
+                     help=f"HDBSCAN cluster_selection_method (기본 {DEFAULT_METHOD}=champion)")
+    ap.add_argument("--eps", type=float, default=DEFAULT_EPS, help=f"HDBSCAN cluster_selection_epsilon (기본 {DEFAULT_EPS}=champion)")
+    ap.add_argument("--reassign", default="none", choices=["none", "nearest_q90", "nearest_q80", "assign_all"],
+                     help="HDBSCAN noise(-1) 를 nearest cluster centroid 로 재배정 (라벨無, scripts/predict_grouping_prod.py 재사용). "
+                          "champion 운영점 = nearest_q90. 기본 none.")
+    ap.add_argument("--offline-eval", action="store_true",
+                     help="★ 명시할 때만 라벨 기반 P1-P4/ARI/AMI 채점 (offline_eval.csv+offline_summary.json). "
+                          "기본 OFF — 폴더명이 진짜 라벨이 아니면(사내 실데이터) 가짜 점수 방지.")
+    ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"],
+                     help="기본 cpu. GPU 는 다른 학습이 비어있을 때만 --device cuda 로 명시.")
+    ap.add_argument("--batch", type=int, default=32)
+    a = ap.parse_args()
+
+    device = a.device if (a.device == "cpu" or torch.cuda.is_available()) else "cpu"
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    paths, labels = collect_pool(a.pool)
+    if not paths:
+        raise SystemExit(f"[grouping_deploy] no images found under {a.pool} (checked recursively, exts={sorted(EXTS)})")
+    n_labeled = sum(1 for l in labels if l is not None)
+    print(f"[data] {len(paths)} imgs ({n_labeled} with a parent-folder label, {len(paths) - n_labeled} flat/root)", flush=True)
+
+    print(f"[model] backbone={a.backbone}", flush=True)
+    bb = load_backbone(a.backbone, device)
+    tags = []
+    per_ckpt_embs = []
+    for proj_path in a.proj:
+        tag = proj_tag(proj_path)
+        tags.append(tag)
+        print(f"[model] proj={proj_path} (tag={tag})", flush=True)
+        proj = load_proj(proj_path, device)
+        per_ckpt_embs.append(embed_one_checkpoint(paths, bb, proj, device, a.batch))
+
+    if len(per_ckpt_embs) > 1:
+        z = F.normalize(torch.cat(per_ckpt_embs, dim=1), dim=1).numpy().astype("float32")
+        print(f"[ensemble] concat {len(per_ckpt_embs)} checkpoints -> dim {z.shape[1]}, L2 renormalized", flush=True)
+    else:
+        z = per_ckpt_embs[0].numpy().astype("float32")
+
+    print(f"[cluster] HDBSCAN mcs={a.mcs} ms={a.ms} method={a.method} eps={a.eps}", flush=True)
+    seed_pred = hdbscan_predict(z, a.mcs, a.ms, a.method, a.eps)
+    pred = seed_pred
+    n = len(pred)
+    seed_noise = int((seed_pred == -1).sum())
+
+    reassign_info = {"mode": a.reassign, "seed_n_noise": seed_noise, "n_reassigned": 0, "assign_quantile": None}
+    if a.reassign != "none":
+        reassign_fn = _load_reassign_fn()
+        pred, reassign_info = reassign_fn(z, seed_pred, a.reassign)
+        print(f"[cluster] reassign={a.reassign} seed_noise={seed_noise} "
+              f"reassigned={reassign_info['n_reassigned']} final_noise={int((pred == -1).sum())}", flush=True)
+
+    clusters = sorted(int(c) for c in set(pred.tolist()) if c != -1)
+    # stability = seed(pre-reassign) 클러스터의 bootstrap co-assignment robustness.
+    # reassign 된 noise 는 HDBSCAN 이 낸 구조가 아니라 후처리 휴리스틱 소속이라 여기 섞으면
+    # "구조 안정성"이 아니라 "재배정 휴리스틱 안정성"이 되어 의미가 달라진다
+    # (base _grouping_deliverable.py 는 애초 reassign 이 없어 pred==seed_pred 였음 -- 그 의미를 유지).
+    stab = per_group_stability(z, seed_pred, a.mcs, a.ms, a.method, a.eps)
+    lab = np.array([l if l is not None else "" for l in labels])
+
+    model_mode = f"adapted_ens[{'+'.join(tags)}]_mcs{a.mcs}ms{a.ms}{a.method}{reassign_display(a.reassign)}" \
+        if len(tags) > 1 else f"adapted[{tags[0]}]_mcs{a.mcs}ms{a.ms}{a.method}{reassign_display(a.reassign)}"
+
+    # --- representatives + composites + groups.csv (label-free) ---
+    rep_root = out / "representatives"
+    comp_root = out / "composites"
+    rep_root.mkdir(exist_ok=True)
+    comp_root.mkdir(exist_ok=True)
+    rows, off_rows = [], []
+    for c in clusters:
+        idx = np.where(pred == c)[0]
+        center = z[idx].mean(0)
+        order = idx[np.argsort(np.linalg.norm(z[idx] - center, axis=1))]
+        sim = z[idx] @ z[idx].T
+        iu = np.triu_indices(len(idx), 1)
+        coh = float(sim[iu].mean()) if len(idx) > 1 else 1.0
+        over = len(idx) >= 0.20 * n
+        gdir = rep_root / f"group_{c:03d}_n{len(idx)}"
+        gdir.mkdir(exist_ok=True)
+        for rank, i in enumerate(order[:a.reps], 1):
+            src = Path(paths[i])
+            if src.exists():
+                shutil.copy2(src, gdir / f"rep{rank:02d}_{src.name}")
+        acc = None
+        cnt = 0
+        for i in idx:
+            im = np.asarray(Image.open(paths[i]).convert("L").resize((256, 256)), dtype=np.float32)
+            acc = im if acc is None else acc + im
+            cnt += 1
+        if cnt:
+            comp = (acc / cnt).clip(0, 255).astype(np.uint8)
+            Image.fromarray(comp).save(comp_root / f"group_{c:03d}_n{len(idx)}.png")
+        rows.append({"group_id": c, "group_size": len(idx), "group_stability": round(stab.get(c, 0.0), 4),
+                      "group_coherence": round(coh, 4),
+                      "review_status": "over_merged_review" if over else "candidate",
+                      "model_mode": model_mode})
+        if n_labeled:
+            vals, cnts = np.unique(lab[idx], return_counts=True)
+            off_rows.append({"group_id": c, "group_size": len(idx),
+                              "majority_label": str(vals[cnts.argmax()]),
+                              "purity": round(float(cnts.max() / cnts.sum()), 4)})
+
+    with (out / "groups.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["group_id", "group_size", "group_stability", "group_coherence",
+                                           "review_status", "model_mode"])
+        w.writeheader()
+        w.writerows(rows)
+
+    noise = 100.0 * (pred == -1).sum() / n
+    summary = {"n": n, "k": len(clusters), "noise_pct": round(noise, 2),
+               "over_merge_groups": [r["group_id"] for r in rows if r["review_status"].startswith("over")],
+               "mean_coherence": round(float(np.mean([r["group_coherence"] for r in rows])) if rows else 0, 4),
+               "mean_stability": round(float(np.mean([r["group_stability"] for r in rows])) if rows else 0, 4),
+               "model_mode": model_mode,
+               "dial": {"mcs": a.mcs, "ms": a.ms, "method": a.method, "eps": a.eps},
+               "reassign": reassign_info}
+    (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    print(f"\n[summary] {json.dumps(summary, ensure_ascii=False)}", flush=True)
+
+    # --- offline_eval (★opt-in only, 라벨 없으면 자동 skip) ---
+    if a.offline_eval:
+        if not n_labeled:
+            print("[offline-eval] skipped: no parent-folder labels found under pool (flat folder) "
+                  "-> nothing to score against", flush=True)
+        else:
+            sys.path.insert(0, str(REPO_ROOT / "scripts"))
+            from eval_may37_checkpoints import _summarize_predictions, _expand_ignored, _drop_megaclusters
+            BG = {"Normal", "R", "Random"}
+            ignored = _expand_ignored(lab, set(BG))
+            measured = ~np.isin(lab, list(ignored))
+            fp = _drop_megaclusters(pred.copy(), 0.20)
+            r = _summarize_predictions(z[measured], lab[measured], fp[measured], fp, lab, ignored, "deliverable")
+            with (out / "offline_eval.csv").open("w", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=["group_id", "group_size", "majority_label", "purity"])
+                w.writeheader()
+                w.writerows(off_rows)
+            (out / "offline_summary.json").write_text(json.dumps(
+                {"P1_capture": r["P1_capture"], "P2_noise_pct": r["P2_noise_pct"],
+                 "P3_completeness": r["P3_completeness"], "P4_homogeneity": r["P4_homogeneity"],
+                 "Sil_cos": r["Sil_cos"], "fragment_ratio": r["fragment_ratio"],
+                 "ARI": r["ARI"], "AMI": r["AMI"], "k": r["k"]}, indent=2, ensure_ascii=False), encoding="utf-8")
+            print(f"[offline] P1={r['P1_capture']} P2noise={r['P2_noise_pct']} "
+                  f"P4hom={r['P4_homogeneity']} ARI={r['ARI']}", flush=True)
+    else:
+        print("[offline-eval] not requested (default OFF) -- pass --offline-eval to score against folder labels", flush=True)
+
+    print(f"[OUT] {out.resolve()}", flush=True)
+    print("[DONE_GROUPING_DEPLOY]", flush=True)
+
+
+if __name__ == "__main__":
+    main()
