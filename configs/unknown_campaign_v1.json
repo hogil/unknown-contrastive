@@ -1,0 +1,183 @@
+{
+  "campaign_id": "unknown_campaign_v1",
+  "created": "260726",
+  "owner": "loop-repo (built per team-lead 260726 campaign-runner directive)",
+  "notes": [
+    "4-tier ladder from the approved plan, expressed entirely as data so scripts/run_unknown_campaign.py",
+    "never hardcodes a recipe. Tier 1 points at real, already-existing checkpoints/pools and is safe to",
+    "dispatch as-is (CPU, grouping_deploy.py only). Tiers 2-4 need: (a) data/pools/v2/... manifests from",
+    "the camp-splits agent (task #8, in progress at write time -- partial output already exists under",
+    "data/pools/v2/), (b) GPU free (currently busy with other training -- CPU-only rule applies), and",
+    "(c) a per-tier metrics adapter that maps grouping_deploy.py/offline_summary.json (and whatever the",
+    "perf-* leaderboard agents emit) into the evaluate_gate() schema documented in run_unknown_campaign.py.",
+    "Known open item: scripts/train_contrastive_ddp.py has no --seed CLI flag (SEED=42 is a module",
+    "constant) -- Tier 2's 'seeds: [1,2,42]' is recorded in the registry for provenance but will not",
+    "actually vary the seed until that flag is added; do not claim seed-diversity from this config alone."
+  ],
+  "python": "python",
+  "safety": {
+    "min_free_gb": {"D": 200, "E": 500},
+    "allowlist_roots": [
+      "E:/data/images/unknown",
+      "E:/data/images/unknown_multi",
+      "E:/data/images/mixedwm38",
+      "E:/data/images/severstal",
+      "E:/data/images/hf_dtd",
+      "E:/data/images/hf_flowers102",
+      "E:/data/images/hf_resisc45"
+    ],
+    "gpu_max_concurrent": 1,
+    "gpu_min_free_mb": 1024,
+    "max_retries": 2,
+    "heartbeat_sec": 60,
+    "run_timeout_sec": 43200
+  },
+  "gates": {
+    "capture_drop_pp_max": 1.0,
+    "far_increase_pp_max": 0.5,
+    "far_or_noise_improve_pp_min": 3.0,
+    "far_or_noise_improve_datasets_min": 2,
+    "ari_ami_drop_max": 0.02,
+    "n_seeds_min": 3,
+    "temporal_far_events_max": 0,
+    "temporal_detect_batches_max": 2,
+    "temporal_novel_min_per_batch": 20,
+    "clean546_capture_required": "7/7",
+    "clean546_noise_pct_target": 2.57,
+    "clean546_noise_pct_tolerance_pp": 1.0,
+    "severstal_capture_required": "4/4",
+    "severstal_noise_pct_baseline": 77.74,
+    "severstal_noise_pct_improve_min_pp": 20.0
+  },
+  "tiers": [
+    {
+      "tier": 1,
+      "name": "existing_model_direct_predict",
+      "description": "Frozen FCMAE backbone + current 2-seed projection-head ensemble, zero-shot. Lowest-risk operating point.",
+      "checkpoint_type": "projection-only",
+      "n_seeds_min": 1,
+      "steps": [
+        {
+          "name": "predict_unknown_eval",
+          "predictor": "grouping_deploy.py",
+          "checkpoint": [
+            "runs/sweep/abl_sw_t20_B4_260724_102757/checkpoints/proj_ep20.pt",
+            "runs/sweep/abl_best_s1_B4_260724_111053/checkpoints/proj_ep18.pt"
+          ],
+          "backbone": "weights/convnextv2_base.fcmae_ft_in22k_in1k_384.pth",
+          "manifest": "data/pools/unknown_eval100.json",
+          "pool": "data/pools/unknown_eval100.json",
+          "needs_gpu": false,
+          "evaluate_gate": true,
+          "metrics_path": "{run_dir}/offline_summary.json",
+          "command": [
+            "{python}", "grouping_deploy.py",
+            "--backbone", "weights/convnextv2_base.fcmae_ft_in22k_in1k_384.pth",
+            "--proj",
+            "runs/sweep/abl_sw_t20_B4_260724_102757/checkpoints/proj_ep20.pt",
+            "runs/sweep/abl_best_s1_B4_260724_111053/checkpoints/proj_ep18.pt",
+            "--pool", "data/pools/unknown_eval100.json",
+            "--out", "{run_dir}",
+            "--mcs", "6", "--ms", "3", "--method", "leaf", "--eps", "0.06",
+            "--reassign", "nearest_q90", "--offline-eval", "--device", "cpu"
+          ]
+        }
+      ]
+    },
+    {
+      "tier": 2,
+      "name": "current_best_recipe_retrain",
+      "description": "Frozen FCMAE, proj128/ep20/batch64/sampling0.25/temp0.20/queue16384/ignoreNeg0.72/local0.5/lrHead1e-3/wd1e-6, seeds 1/2/42, label-free epoch pick.",
+      "checkpoint_type": "projection-only",
+      "n_seeds_min": 3,
+      "steps": [
+        {
+          "name": "train_frozen_recipe",
+          "predictor": null,
+          "needs_gpu": true,
+          "evaluate_gate": false,
+          "seeds": [1, 2, 42],
+          "manifest": "data/pools/v2/unknown/strict_novel_train.json",
+          "recipe": {
+            "freeze_backbone": true, "proj_dim": 128, "epochs": 20, "batch": 64,
+            "train_sampling_ratio": 0.25, "nce_temp": 0.20, "queue_size": 16384,
+            "ignore_neg_sim": 0.72, "local_weight": 0.5, "lr_head": 1e-3,
+            "wd": "1e-6 (not CLI-overridable in train_contrastive_ddp.py -- module constant, provenance only)",
+            "seed_note": "SEED is a module constant (=42) in train_contrastive_ddp.py; no --seed flag exists yet. Recorded here for registry provenance -- does not yet vary the run."
+          },
+          "timeout_sec": 21600,
+          "command": [
+            "{python}", "scripts/train_contrastive_ddp.py",
+            "--freeze-backbone", "--proj-dim", "128", "--epochs", "20", "--batch", "64",
+            "--train-sampling-ratio", "0.25", "--nce-temp", "0.20", "--queue-size", "16384",
+            "--ignore-neg-sim", "0.72", "--local-weight", "0.5", "--lr-head", "1e-3",
+            "--train-dirs", "data/pools/v2/unknown/strict_novel_train.json",
+            "--eval-dirs", "data/pools/v2/unknown/strict_novel_val.json",
+            "--tag", "campaign_t2_seed{seed}", "--save-epoch-checkpoints"
+          ]
+        },
+        {
+          "name": "select_epoch_label_free",
+          "predictor": null,
+          "needs_gpu": false,
+          "evaluate_gate": false,
+          "seeds": [1, 2, 42],
+          "description": "Wire to scripts/label_free_gate.py once per-epoch embeddings are exported (bootstrap_stability/coherence/noise/fragmentation, no labels). Placeholder command -- fill in --frozen-embedding/--adapted-embedding paths once tier2 training lands.",
+          "command": [
+            "{python}", "scripts/label_free_gate.py",
+            "--paths-manifest", "data/pools/v2/unknown/strict_novel_val.json",
+            "--frozen-embedding", "{run_dir}/frozen_embedding.npy",
+            "--adapted-embedding", "{run_dir}/adapted_embedding.npy",
+            "--out", "{run_dir}/label_free_gate.json"
+          ]
+        }
+      ]
+    },
+    {
+      "tier": 3,
+      "name": "recipe_and_grouping_sweep",
+      "description": "1-seed/4-epoch pilot (10 cells) -> top4 full 20ep -> top2 3-seed. HDBSCAN dial grid on cached embeddings (validation only, no re-training). Temporal threshold sweep. Wafer 4-dataset shortlist then HF 3-dataset transfer check.",
+      "checkpoint_type": "projection-only",
+      "n_seeds_min": 3,
+      "manifest": "data/pools/v2/unknown/strict_novel_train.json",
+      "pilot_cells": [
+        {"name": "baseline",          "recipe": {}},
+        {"name": "lr_3e-4",           "recipe": {"lr_head": 3e-4}},
+        {"name": "lr_3e-3",           "recipe": {"lr_head": 3e-3}},
+        {"name": "temp_0.10",         "recipe": {"nce_temp": 0.10}},
+        {"name": "temp_0.30",         "recipe": {"nce_temp": 0.30}},
+        {"name": "ignore_neg_0.60",   "recipe": {"ignore_neg_sim": 0.60}},
+        {"name": "ignore_neg_0.66",   "recipe": {"ignore_neg_sim": 0.66}},
+        {"name": "queue_32768",       "recipe": {"queue_size": 32768}},
+        {"name": "local_off",         "recipe": {"local_weight": 0.0}},
+        {"name": "residual_adapter",  "recipe": {"adapter": true}}
+      ],
+      "pilot_epochs": 4,
+      "pilot_seeds": [42],
+      "promote_top4_epochs": 20,
+      "promote_top2_seeds": [1, 2, 42],
+      "selection": "manual_top_n",
+      "selection_note": "The runner does not auto-rank pilot cells -- inspect runs/campaign_registry.jsonl for the 10 pilot records (tier=3, step name matches a pilot_cells[].name), pick the top 4 by the label-free gate (coherence/bootstrap-stability/noise/fragmentation, scripts/label_free_gate.py), add 4 explicit tier-3 steps at 20 epochs, then top 2 at 3 seeds. This keeps an untested auto-selection heuristic out of an unmanned multi-day loop.",
+      "cluster_sweep_grid": {
+        "note": "Validation-only, operates on already-embedded pools (no re-training) via grouping_deploy.py --mcs/--ms/--eps/--reassign/--method. Not auto-expanded into concrete steps yet -- do that once a tier-2 or tier-3 champion embedding exists to sweep over.",
+        "mcs": [6, 9, 12], "ms": [1, 3], "eps": [0.03, 0.06, 0.09],
+        "reassign": ["none", "nearest_q90", "nearest_q95"]
+      },
+      "temporal_threshold_sweep": {"percentile": [5, 10, 20], "persistence": [1, 2, 3]},
+      "wafer_shortlist_then_hf_transfer": {
+        "note": "Pick 4 wafer datasets from the tier-3 result, then confirm the same recipe/dial transfers to hf_dtd/hf_flowers102/hf_resisc45 before promotion consideration."
+      },
+      "steps": []
+    },
+    {
+      "tier": 4,
+      "name": "cnn_tapt_then_sweep",
+      "description": "known-cnn TAPT backbone init, same tier-3 sweep. Only promoted if it beats the frozen champion -- never demotes an already-set lower-tier champion regardless of its own gate result.",
+      "checkpoint_type": "cnn-tapt",
+      "n_seeds_min": 3,
+      "backbone_init_source": "D:/project/known-cnn/models/iter116J_frozen/best_model.pth",
+      "backbone_init_note": "classified as type=cnn-tapt by scripts/campaign_checkpoint.py -- valid ONLY as --backbone/--cnn-run-dir init for scripts/train_contrastive_ddp.py, never as a grouping-predictor checkpoint. If retraining known-cnn itself is needed first, novel classes must stay excluded (known-train classes only).",
+      "steps": []
+    }
+  ]
+}
