@@ -21,7 +21,34 @@
 
 **모든 step 이 이걸 쓴다.** 없으면 아무것도 안 돈다.
 
-### 선택 2개 — champion projection head (**★ 2개 다 필요하다**)
+### ★ 최우선 — May 배포본 `contrastive_b4.pt`
+
+**260727 실측 결과 이게 가장 중요한 체크포인트다.** 아래 champion head 보다 우선순위가 높다.
+
+| 두는 위치 | 원본 | 크기 |
+|---|---|---|
+| `weights/b4_may/contrastive_b4.pt` | `<failure_agent>/checkpoints/contrastive_b4.pt` | ~356MB |
+
+```bash
+python site/extract_b4.py    # backbone / proj 분리 + 검증 -> step1 이 자동 인식
+```
+
+2개 pool 에서 **b4 의 backbone 을 head 없이 쓰는 arm 이 전부 1위**였다:
+
+| pool | arm | P1 | seed_noise | ARI |
+|---|---|---|--:|--:|
+| clean546 | champion (2-head) | 8/9 | 37.18 | 0.711 |
+| clean546 | **b4_backbone only** | 8/9 | 41.94 | **0.904** |
+| anchor | champion (2-head) | 30/43 | 63.50 | 0.692 |
+| anchor | **b4_backbone only** | **43/43** | **47.30** | **0.807** |
+
+anchor 에서 champion 은 **frozen(39/43)보다도 나쁘다**. b4 backbone 은 **P1 만점**이다.
+b4 자신의 head 를 붙이면 오히려 나빠지므로(ARI 0.904→0.706) **backbone 만 쓰는 arm 이 본命**이다.
+
+가설: b4 backbone 은 wafer 데이터로 TAPT 된 것이라 ImageNet FCMAE 보다 도메인이 가깝다.
+사내도 wafer 이므로 이 이점이 유지될 가능성이 높다 — 다만 step1 이 그 pool 에서 다시 판정한다.
+
+### 선택 2개 — champion projection head (**보내려면 2개 다**)
 
 | 두는 위치 (상대경로) | 원본 경로 | 크기 |
 |---|---|---|
