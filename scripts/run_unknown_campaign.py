@@ -412,6 +412,111 @@ def extract_metrics_from_run(run_dir: Path) -> dict:
             out.setdefault("ami", {})["candidate_raw"] = o["AMI"]
     return out
 
+def _capture_frac(capture_str) -> float | None:
+    """"31/31" -> 0.9686... style fraction parse; returns None for anything else."""
+    if not capture_str or "/" not in str(capture_str):
+        return None
+    try:
+        num, den = str(capture_str).split("/")
+        return float(num) / float(den)
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def load_temporal_metrics(report_dir, operating_point: dict) -> dict | None:
+    """Reads a perf-temporal summary_tables.csv (schema: metric,arm,P,K,size05,
+    size10,size20,size30,unit) for one (arm,P,K,size_col) cell and returns
+    {"far_events": int, "detect_batches": int, "novel_per_batch": int}.
+    Returns None (fail-closed upstream) if the file or the requested row is
+    missing -- never estimates.
+    """
+    path = Path(report_dir) / "summary_tables.csv"
+    if not path.exists():
+        return None
+    import csv
+    p_val, k_val = str(operating_point.get("P")), str(operating_point.get("K"))
+    size_col, arm = operating_point.get("size_col"), operating_point.get("arm")
+    if not (p_val and k_val and size_col and arm):
+        return None
+    rows = {}
+    with open(path, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            if row.get("arm") == arm and row.get("P") == p_val and row.get("K") == k_val:
+                rows[row.get("metric")] = row.get(size_col)
+    far = rows.get("FAR_alarms_over_4_bg_batches")
+    lag = rows.get("true_positive_detection_lag")
+    if far is None or lag is None:
+        return None
+    digits = "".join(ch for ch in size_col if ch.isdigit())
+    return {"far_events": int(far), "detect_batches": int(lag),
+            "novel_per_batch": int(digits) if digits else None}
+
+
+def load_background_far_delta(report_dir, operating_point: dict, baseline_arm: str = "frozen") -> dict | None:
+    """held-out background FAR delta = candidate arm's FAR-alarm COUNT minus the
+    baseline (frozen) arm's, at the same (P,K,size_col) cell. Per team-lead
+    260726: this reuses the temporal report's held-out batches (t=5-8), not a
+    separate per-image percentage -- the "increase_pp" field name is kept for
+    evaluate_gate() schema compatibility, but the value here is an event-count
+    delta, not a true percentage-point. Returns None if either side is missing.
+    """
+    cand = load_temporal_metrics(report_dir, operating_point)
+    base = load_temporal_metrics(report_dir, {**operating_point, "arm": baseline_arm})
+    if cand is None or base is None:
+        return None
+    return {"increase_pp": cand["far_events"] - base["far_events"],
+            "_unit_note": "event-count delta over held-out background batches, not a true percentage-point"}
+
+
+def build_gate_metrics(step: dict, cfg: dict, run_dir: Path) -> dict:
+    """Assembles evaluate_gate()'s metrics dict by diffing this step's candidate
+    result against a config-declared frozen baseline (cfg["baselines"][dataset])
+    and, if configured, a perf-temporal summary_tables.csv. Every field is only
+    set when a real number was found on both sides -- no estimates, so
+    evaluate_gate() keeps failing closed on anything this adapter can't fill.
+    """
+    metrics: dict = {}
+    if step.get("n_seeds_reported") is not None:
+        metrics["n_seeds"] = step["n_seeds_reported"]
+    elif step.get("seeds"):
+        metrics["n_seeds"] = len(step["seeds"])
+
+    dataset = step.get("baseline_dataset")
+    baselines = cfg.get("baselines", {})
+    base = baselines.get(dataset) if dataset else None
+    offline_path = run_dir / "offline_summary.json"
+    cand = read_json(offline_path) if offline_path.exists() else None
+
+    if cand and base and dataset:
+        cand_cap, base_cap = _capture_frac(cand.get("P1_capture")), _capture_frac(base.get("P1_capture"))
+        if cand_cap is not None and base_cap is not None:
+            metrics.setdefault("primary_wafer", {})[dataset] = {
+                "capture_drop_pp": round((base_cap - cand_cap) * 100.0, 4)}
+        if "ARI" in cand and "ARI" in base:
+            metrics["ari"] = {"drop": round(base["ARI"] - cand["ARI"], 4)}
+        if "AMI" in cand and "AMI" in base:
+            metrics["ami"] = {"drop": round(base["AMI"] - cand["AMI"], 4)}
+        if cand.get("P2_noise_pct") is not None and base.get("noise_pct") is not None:
+            improve = base["noise_pct"] - cand["P2_noise_pct"]
+            metrics.setdefault("far_or_noise_improvements", {})[dataset] = {"noise_improve_pp": round(improve, 4)}
+        if dataset == "clean546":
+            metrics["clean546"] = {"capture": cand.get("P1_capture"), "noise_pct": cand.get("P2_noise_pct")}
+        if dataset == "severstal":
+            metrics["severstal"] = {"capture": cand.get("P1_capture"), "noise_pct": cand.get("P2_noise_pct")}
+
+    temporal_dir, op = step.get("temporal_report_path"), step.get("operating_point")
+    if temporal_dir and op:
+        t = load_temporal_metrics(temporal_dir, op)
+        if t:
+            metrics["temporal"] = t
+        bg = load_background_far_delta(temporal_dir, op)
+        if bg:
+            metrics["background_far"] = bg
+
+    return metrics
+
+
+
 
 # ===================== step dispatch =====================
 def build_command(step: dict, context: dict) -> list[str]:
@@ -428,8 +533,21 @@ def build_command(step: dict, context: dict) -> list[str]:
     return argv
 
 
+def build_env(step: dict, context: dict) -> dict:
+    """step["env"] (extra env vars, e.g. _may_repro_src.py's REPRO_* contract) with the
+    same "{placeholder}" substitution as build_command. Returns {} if step has no "env"."""
+    fmt_ctx = {"python": context.get("python", sys.executable), **context}
+    env = {}
+    for k, v in step.get("env", {}).items():
+        try:
+            env[k] = str(v).format(**fmt_ctx)
+        except (KeyError, IndexError) as e:
+            raise ValueError(f"unresolved placeholder in env {k}={v!r}: {e}") from e
+    return env
+
+
 def run_subprocess_step(argv: list[str], run_dir: Path, timeout_sec: int,
-                         heartbeat_sec: int = 60, cwd: Path = REPO_ROOT) -> dict:
+                         heartbeat_sec: int = 60, cwd: Path = REPO_ROOT, env: dict | None = None) -> dict:
     """Runs argv to completion with a heartbeat file + hard timeout.
 
     Returns {"status": "completed"|"failed"|"timeout", "returncode": int|None,
@@ -439,11 +557,14 @@ def run_subprocess_step(argv: list[str], run_dir: Path, timeout_sec: int,
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "step.log"
     heartbeat_path = run_dir / "step.heartbeat"
+    full_env = os.environ.copy()
+    if env:
+        full_env.update({k: str(v) for k, v in env.items()})
     t0 = time.time()
     with open(log_path, "w", encoding="utf-8") as logf:
         logf.write(f"[cmd] {' '.join(argv)}\n[cwd] {cwd}\n[started] {now_ts()}\n\n")
         logf.flush()
-        proc = subprocess.Popen(argv, cwd=str(cwd), stdout=logf, stderr=subprocess.STDOUT)
+        proc = subprocess.Popen(argv, cwd=str(cwd), stdout=logf, stderr=subprocess.STDOUT, env=full_env)
         last_size = -1
         status = "completed"
         while True:
@@ -658,6 +779,8 @@ class Campaign:
             try:
                 argv = build_command(step, {"python": self.python_exe, "run_dir": str(run_dir),
                                              "seed": seed, "manifest": manifest, **step.get("context", {})})
+                env = build_env(step, {"python": self.python_exe, "run_dir": str(run_dir),
+                                     "seed": seed, "manifest": manifest, **step.get("context", {})})
             except ValueError as e:
                 rec = {**base, "status": "blocked", "failure_reason": f"command_build_error:{e}",
                        "retry_count": attempt - 1, "attempt": attempt,
@@ -668,7 +791,7 @@ class Campaign:
 
             timeout_sec = int(step.get("timeout_sec", self.cfg.get("safety", {}).get("run_timeout_sec", 43200)))
             heartbeat_sec = int(self.cfg.get("safety", {}).get("heartbeat_sec", 60))
-            result = run_subprocess_step(argv, run_dir, timeout_sec, heartbeat_sec)
+            result = run_subprocess_step(argv, run_dir, timeout_sec, heartbeat_sec, env=env)
 
             metrics = None
             metrics_path = step.get("metrics_path")
@@ -678,6 +801,7 @@ class Campaign:
                     metrics = read_json(mp)
             if metrics is None:
                 metrics = extract_metrics_from_run(run_dir)
+                metrics.update(build_gate_metrics(step, self.cfg, run_dir))  # baseline-diffed gate fields
 
             gate_passed, gate_reasons = None, None
             if step.get("evaluate_gate", False):

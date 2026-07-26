@@ -368,3 +368,149 @@ class TestHashing:
         a = sha256_obj({"x": 1})
         b = sha256_obj({"x": 2})
         assert a != b
+
+
+# ===================== new: env-var command building =====================
+from scripts.run_unknown_campaign import build_env
+
+
+class TestBuildEnv:
+    def test_substitutes_placeholders(self):
+        step = {"env": {"REPRO_SEED": "{seed}", "REPRO_DATA": "{manifest}"}}
+        env = build_env(step, {"python": "python", "run_dir": "runs/x", "seed": 42, "manifest": "m.json"})
+        assert env == {"REPRO_SEED": "42", "REPRO_DATA": "m.json"}
+
+    def test_no_env_returns_empty(self):
+        assert build_env({}, {"python": "python"}) == {}
+
+    def test_missing_placeholder_raises(self):
+        step = {"env": {"REPRO_SEED": "{nope}"}}
+        with pytest.raises(ValueError):
+            build_env(step, {"python": "python"})
+
+
+# ===================== new: baseline-diff metrics adapter =====================
+from scripts.run_unknown_campaign import (
+    _capture_frac, load_temporal_metrics, load_background_far_delta, build_gate_metrics,
+)
+
+
+class TestCaptureFrac:
+    def test_parses_fraction(self):
+        assert _capture_frac("31/31") == 1.0
+        assert _capture_frac("4/7") == pytest.approx(4 / 7)
+
+    def test_none_for_bad_input(self):
+        assert _capture_frac(None) is None
+        assert _capture_frac("not-a-fraction") is None
+        assert _capture_frac("0/0") is None  # ZeroDivisionError -> None, not a crash
+
+
+class TestTemporalAdapter:
+    """Against a synthetic summary_tables.csv shaped exactly like perf-temporal's real output."""
+
+    @pytest.fixture
+    def report_dir(self, tmp_path):
+        import csv
+        rows = [
+            {"metric": "FAR_alarms_over_4_bg_batches", "arm": "frozen", "P": "10", "K": "1",
+             "size05": "5", "size10": "5", "size20": "5", "size30": "5", "unit": "count"},
+            {"metric": "FAR_alarms_over_4_bg_batches", "arm": "champion", "P": "10", "K": "1",
+             "size05": "0", "size10": "0", "size20": "0", "size30": "0", "unit": "count"},
+            {"metric": "true_positive_detection_lag", "arm": "frozen", "P": "10", "K": "1",
+             "size05": "3", "size10": "1", "size20": "0", "size30": "1", "unit": "batches_after_t0"},
+            {"metric": "true_positive_detection_lag", "arm": "champion", "P": "10", "K": "1",
+             "size05": "3", "size10": "1", "size20": "0", "size30": "1", "unit": "batches_after_t0"},
+        ]
+        p = tmp_path / "summary_tables.csv"
+        with open(p, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            w.writeheader()
+            w.writerows(rows)
+        return tmp_path
+
+    def test_reads_champion_operating_point(self, report_dir):
+        op = {"P": "10", "K": "1", "size_col": "size20", "arm": "champion"}
+        m = load_temporal_metrics(report_dir, op)
+        assert m == {"far_events": 0, "detect_batches": 0, "novel_per_batch": 20}
+
+    def test_missing_file_returns_none(self, tmp_path):
+        op = {"P": "10", "K": "1", "size_col": "size20", "arm": "champion"}
+        assert load_temporal_metrics(tmp_path, op) is None
+
+    def test_missing_arm_returns_none(self, report_dir):
+        op = {"P": "10", "K": "1", "size_col": "size20", "arm": "does_not_exist"}
+        assert load_temporal_metrics(report_dir, op) is None
+
+    def test_background_far_delta_champion_vs_frozen(self, report_dir):
+        op = {"P": "10", "K": "1", "size_col": "size20", "arm": "champion"}
+        bg = load_background_far_delta(report_dir, op, baseline_arm="frozen")
+        assert bg["increase_pp"] == 0 - 5  # champion 0 alarms vs frozen 5 -> improvement, not increase
+
+    def test_background_far_delta_missing_baseline_arm(self, report_dir):
+        op = {"P": "10", "K": "1", "size_col": "size20", "arm": "champion"}
+        assert load_background_far_delta(report_dir, op, baseline_arm="nonexistent") is None
+
+
+class TestBuildGateMetrics:
+    def test_fills_from_baseline_and_candidate(self, tmp_path):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "offline_summary.json").write_text(json.dumps(
+            {"P1_capture": "30/31", "P2_noise_pct": 5.0, "ARI": 0.80, "AMI": 0.90}), encoding="utf-8")
+        cfg = {"baselines": {"unknown_eval100": {"P1_capture": "31/31", "noise_pct": 10.0, "ARI": 0.814, "AMI": 0.92}}}
+        step = {"baseline_dataset": "unknown_eval100", "seeds": [1, 2, 42]}
+        m = build_gate_metrics(step, cfg, run_dir)
+        assert m["n_seeds"] == 3
+        assert m["primary_wafer"]["unknown_eval100"]["capture_drop_pp"] == pytest.approx(
+            (1.0 - 30 / 31) * 100.0, abs=1e-3)  # implementation rounds to 4 decimals
+        assert m["ari"]["drop"] == pytest.approx(0.014, abs=1e-9)
+        assert m["ami"]["drop"] == pytest.approx(0.02, abs=1e-9)
+        assert m["far_or_noise_improvements"]["unknown_eval100"]["noise_improve_pp"] == pytest.approx(5.0)
+
+    def test_empty_when_no_candidate_file(self, tmp_path):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        cfg = {"baselines": {"unknown_eval100": {"P1_capture": "31/31", "noise_pct": 0.0}}}
+        step = {"baseline_dataset": "unknown_eval100"}
+        m = build_gate_metrics(step, cfg, run_dir)
+        assert "primary_wafer" not in m and "ari" not in m
+
+    def test_empty_when_no_baseline_configured(self, tmp_path):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "offline_summary.json").write_text(json.dumps({"P1_capture": "1/1"}), encoding="utf-8")
+        m = build_gate_metrics({"baseline_dataset": "no_such_dataset"}, {"baselines": {}}, run_dir)
+        assert "primary_wafer" not in m
+
+    def test_clean546_and_severstal_subblocks(self, tmp_path):
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        (run_dir / "offline_summary.json").write_text(json.dumps(
+            {"P1_capture": "7/7", "P2_noise_pct": 2.5}), encoding="utf-8")
+        cfg = {"baselines": {"clean546": {"P1_capture": "4/7", "noise_pct": 60.0}}}
+        m = build_gate_metrics({"baseline_dataset": "clean546"}, cfg, run_dir)
+        assert m["clean546"] == {"capture": "7/7", "noise_pct": 2.5}
+
+    def test_temporal_and_background_far_wired(self, tmp_path):
+        import csv
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        rows = [
+            {"metric": "FAR_alarms_over_4_bg_batches", "arm": "frozen", "P": "10", "K": "1",
+             "size05": "5", "size10": "5", "size20": "5", "size30": "5", "unit": "count"},
+            {"metric": "FAR_alarms_over_4_bg_batches", "arm": "champion", "P": "10", "K": "1",
+             "size05": "0", "size10": "0", "size20": "0", "size30": "0", "unit": "count"},
+            {"metric": "true_positive_detection_lag", "arm": "frozen", "P": "10", "K": "1",
+             "size05": "3", "size10": "1", "size20": "0", "size30": "1", "unit": "batches_after_t0"},
+            {"metric": "true_positive_detection_lag", "arm": "champion", "P": "10", "K": "1",
+             "size05": "3", "size10": "1", "size20": "0", "size30": "1", "unit": "batches_after_t0"},
+        ]
+        with open(tmp_path / "summary_tables.csv", "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            w.writeheader()
+            w.writerows(rows)
+        step = {"temporal_report_path": str(tmp_path), "operating_point": {"P": "10", "K": "1", "size_col": "size20", "arm": "champion"}}
+        m = build_gate_metrics(step, {}, run_dir)
+        assert m["temporal"] == {"far_events": 0, "detect_batches": 0, "novel_per_batch": 20}
+        assert m["background_far"]["increase_pp"] == -5

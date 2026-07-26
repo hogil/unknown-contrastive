@@ -1,20 +1,38 @@
 {
   "campaign_id": "unknown_campaign_v1",
   "created": "260726",
+  "updated": "260726 (team-lead follow-up: Tier2 rewired to _may_ablation.py, metrics adapter added)",
   "owner": "loop-repo (built per team-lead 260726 campaign-runner directive)",
   "notes": [
     "4-tier ladder from the approved plan, expressed entirely as data so scripts/run_unknown_campaign.py",
     "never hardcodes a recipe. Tier 1 points at real, already-existing checkpoints/pools and is safe to",
-    "dispatch as-is (CPU, grouping_deploy.py only). Tiers 2-4 need: (a) data/pools/v2/... manifests from",
-    "the camp-splits agent (task #8, in progress at write time -- partial output already exists under",
-    "data/pools/v2/), (b) GPU free (currently busy with other training -- CPU-only rule applies), and",
-    "(c) a per-tier metrics adapter that maps grouping_deploy.py/offline_summary.json (and whatever the",
-    "perf-* leaderboard agents emit) into the evaluate_gate() schema documented in run_unknown_campaign.py.",
-    "Known open item: scripts/train_contrastive_ddp.py has no --seed CLI flag (SEED=42 is a module",
-    "constant) -- Tier 2's 'seeds: [1,2,42]' is recorded in the registry for provenance but will not",
-    "actually vary the seed until that flag is added; do not claim seed-diversity from this config alone."
+    "dispatch as-is (CPU, grouping_deploy.py only). Tier 2 now dispatches the real champion trainer",
+    "(_may_ablation.py cell B4 -> _may_repro_src.py) via its REPRO_* env-var contract, which has a real",
+    "REPRO_SEED (train_contrastive_ddp.py did not -- superseded for Tier 2, kept available for Tiers 3-4",
+    "component sweeps that don't need multi-seed).",
+    "Known gap: _may_ablation.py computes its own timestamped output dir internally (CFG['OUTPUT_DIR'] +",
+    "RUN_TS), not directly the orchestrator's runs/campaign/<run_id>/ -- REPRO_TAG keeps per-seed runs",
+    "distinguishable, but resolving the exact produced path (for metrics_path/checkpoint auto-discovery)",
+    "needs a follow-up glob-by-tag step, same category as the train_contrastive_ddp.py gap it replaced.",
+    "The step's own step.log (this orchestrator's subprocess stdout/stderr capture) is unaffected.",
+    "metrics adapter (scripts/run_unknown_campaign.py::build_gate_metrics) diffs a candidate's",
+    "offline_summary.json against cfg.baselines[dataset] and reads a perf-temporal summary_tables.csv",
+    "for temporal/background_far -- both fail closed (absent, not guessed) when data is missing.",
+    "v2 unknown split (camp-splits, task #8, completed 260726): train 12647 / val 4196 / test 4300",
+    "SEALED. Only train/val are referenced by any step below; the test manifest lives under",
+    "sealed_test_pools (informational only) and must not be copied into a step's manifest/pool/env field",
+    "until final scoring is explicitly authorized."
   ],
   "python": "python",
+  "sealed_test_pools": {
+    "unknown": "data/pools/v2/unknown/strict_novel_test.json",
+    "_note": "SEALED until final scoring (team-lead 260726). Do not reference from any step below."
+  },
+  "baselines": {
+    "unknown_eval100": {"P1_capture": "31/31", "noise_pct": 0.0, "completeness": 0.904, "homogeneity": 0.960, "ARI": 0.814},
+    "clean546": {"P1_capture": "4/7", "noise_pct": 60.0},
+    "severstal": {"P1_capture": "4/4", "noise_pct": 77.74, "completeness": 0.416, "homogeneity": 0.877, "ARI": 0.331, "k": 17}
+  },
   "safety": {
     "min_free_gb": {"D": 200, "E": 500},
     "allowlist_roots": [
@@ -69,7 +87,10 @@
           "pool": "data/pools/unknown_eval100.json",
           "needs_gpu": false,
           "evaluate_gate": true,
-          "metrics_path": "{run_dir}/offline_summary.json",
+          "baseline_dataset": "unknown_eval100",
+          "n_seeds_reported": 2,
+          "temporal_report_path": "result_grouping/temporal_novelty_260726",
+          "operating_point": {"P": "10", "K": "1", "size_col": "size20", "arm": "champion"},
           "command": [
             "{python}", "grouping_deploy.py",
             "--backbone", "weights/convnextv2_base.fcmae_ft_in22k_in1k_384.pth",
@@ -87,7 +108,7 @@
     {
       "tier": 2,
       "name": "current_best_recipe_retrain",
-      "description": "Frozen FCMAE, proj128/ep20/batch64/sampling0.25/temp0.20/queue16384/ignoreNeg0.72/local0.5/lrHead1e-3/wd1e-6, seeds 1/2/42, label-free epoch pick.",
+      "description": "Champion recipe retrain via the real recovered trainer (_may_ablation.py cell B4 -> _may_repro_src.py), REPRO_SEED 1/2/42, label-free epoch pick. Rewired 260726 off train_contrastive_ddp.py (no real --seed there).",
       "checkpoint_type": "projection-only",
       "n_seeds_min": 3,
       "steps": [
@@ -99,22 +120,32 @@
           "seeds": [1, 2, 42],
           "manifest": "data/pools/v2/unknown/strict_novel_train.json",
           "recipe": {
+            "trainer": "_may_ablation.py cell B4 -> _may_repro_src.py (rewired 260726 -- real REPRO_SEED support)",
+            "cell": "B4",
             "freeze_backbone": true, "proj_dim": 128, "epochs": 20, "batch": 64,
             "train_sampling_ratio": 0.25, "nce_temp": 0.20, "queue_size": 16384,
-            "ignore_neg_sim": 0.72, "local_weight": 0.5, "lr_head": 1e-3,
-            "wd": "1e-6 (not CLI-overridable in train_contrastive_ddp.py -- module constant, provenance only)",
-            "seed_note": "SEED is a module constant (=42) in train_contrastive_ddp.py; no --seed flag exists yet. Recorded here for registry provenance -- does not yet vary the run."
+            "ignore_neg_sim": 0.72, "local_weight": 0.5,
+            "lr_head": 4e-3,
+            "lr_head_note": "4e-3 supersedes the original plan's 1e-3 per team-lead 260726 (measured: lock-in noise 31.0->23.2%, fragmentation also improved)",
+            "backbone_note": "not overridden -- uses _may_repro_src.py's own default LOCAL_BACKBONE_WEIGHTS (_b4_backbone.pth, the real recovered b4 backbone), which is what makes this 'the champion recipe'"
           },
           "timeout_sec": 21600,
-          "command": [
-            "{python}", "scripts/train_contrastive_ddp.py",
-            "--freeze-backbone", "--proj-dim", "128", "--epochs", "20", "--batch", "64",
-            "--train-sampling-ratio", "0.25", "--nce-temp", "0.20", "--queue-size", "16384",
-            "--ignore-neg-sim", "0.72", "--local-weight", "0.5", "--lr-head", "1e-3",
-            "--train-dirs", "data/pools/v2/unknown/strict_novel_train.json",
-            "--eval-dirs", "data/pools/v2/unknown/strict_novel_val.json",
-            "--tag", "campaign_t2_seed{seed}", "--save-epoch-checkpoints"
-          ]
+          "env": {
+            "REPRO_DATA": "data/pools/v2/unknown/strict_novel_train.json",
+            "REPRO_TEMP": "0.20",
+            "REPRO_QUEUE": "16384",
+            "REPRO_IGNORE_NEG_SIM": "0.72",
+            "REPRO_SEED": "{seed}",
+            "REPRO_BATCH": "64",
+            "REPRO_EPOCHS": "20",
+            "REPRO_SAMPLING": "0.25",
+            "REPRO_LR": "4e-3",
+            "REPRO_TAG": "_campaign_t2_s{seed}",
+            "REPRO_LEAN": "1",
+            "REPRO_SKIP_FINAL_EMBED": "1"
+          },
+          "env_note": "REPRO_IGNORE_NEG_SIM (not REPRO_NEG) per team-lead 260726 -- REPRO_NEG is read by _may_repro_src.py at import time but then overwritten by _may_ablation.py's B4 cell hardcode (IGNORE_NEG_SIM=0.72, same value here so it wouldn't currently show a bug, but REPRO_IGNORE_NEG_SIM is the one _may_ablation.py re-applies after the cell merge and is therefore the only one that is guaranteed correct if the B4 cell definition ever changes).",
+          "command": ["{python}", "_may_ablation.py", "B4"]
         },
         {
           "name": "select_epoch_label_free",
@@ -122,7 +153,7 @@
           "needs_gpu": false,
           "evaluate_gate": false,
           "seeds": [1, 2, 42],
-          "description": "Wire to scripts/label_free_gate.py once per-epoch embeddings are exported (bootstrap_stability/coherence/noise/fragmentation, no labels). Placeholder command -- fill in --frozen-embedding/--adapted-embedding paths once tier2 training lands.",
+          "description": "Wire to scripts/label_free_gate.py once (a) the tier-2 training step's actual output dir is resolved (see the top-level 'notes' gap on _may_ablation.py's internal RUN_TS-suffixed path) and (b) per-epoch embeddings are exported from its proj_ep*.pt checkpoints. Placeholder command.",
           "command": [
             "{python}", "scripts/label_free_gate.py",
             "--paths-manifest", "data/pools/v2/unknown/strict_novel_val.json",
@@ -176,7 +207,7 @@
       "checkpoint_type": "cnn-tapt",
       "n_seeds_min": 3,
       "backbone_init_source": "D:/project/known-cnn/models/iter116J_frozen/best_model.pth",
-      "backbone_init_note": "classified as type=cnn-tapt by scripts/campaign_checkpoint.py -- valid ONLY as --backbone/--cnn-run-dir init for scripts/train_contrastive_ddp.py, never as a grouping-predictor checkpoint. If retraining known-cnn itself is needed first, novel classes must stay excluded (known-train classes only).",
+      "backbone_init_note": "classified as type=cnn-tapt by scripts/campaign_checkpoint.py -- valid ONLY as a --backbone-init source (e.g. via _may_repro_src.py's LOCAL_BACKBONE_WEIGHTS / REPRO_BACKBONE, extracting backbone-only weights first), never as a grouping-predictor checkpoint. If retraining known-cnn itself is needed first, novel classes must stay excluded (known-train classes only).",
       "steps": []
     }
   ]
