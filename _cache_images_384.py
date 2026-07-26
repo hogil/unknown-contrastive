@@ -151,7 +151,7 @@ def write_derived_manifests(manifest_info: list[dict]) -> None:
         derived["cache_source_manifest"] = str(info["manifest_path"])
         derived["cache_note"] = ("384x384 사전 리사이즈 캐시 (_cache_images_384.py). "
                                   "files/labels는 cache_source_manifest와 동일.")
-        out_path = POOLS_DIR / f"{info['name']}_384.json"
+        out_path = info["manifest_path"].parent / f"{info['name']}_384.json"  # source manifest 와 같은 위치(sibling) — data/pools/ 로 flatten 안 함
         out_path.write_text(json.dumps(derived, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         print(f"[derived manifest] {out_path}", flush=True)
 
