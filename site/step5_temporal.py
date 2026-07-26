@@ -159,8 +159,8 @@ def main() -> int:
     with torch.no_grad():
         for i in range(0, len(paths), bs):
             x = torch.stack([tf(gd.Image.open(p).convert("RGB")) for p in paths[i:i + bs]]).to(dev)
-            f = bb(x)
-            feats.append((f.mean(dim=(2, 3)) if f.ndim == 4 else f).float().cpu())
+            # ★ grouping_deploy 와 동일: forward_features -> GAP (bb(x) 는 head norm 이 껴서 다르다)
+            feats.append(bb.forward_features(x).mean(dim=(2, 3)).float().cpu())
             if i % (bs * 20) == 0:
                 print(f"  [feat] {i}/{len(paths)}", flush=True)
     raw = torch.cat(feats)

@@ -95,8 +95,10 @@ def score_epochs(pool: str, backbone: str, ckpt_dir: Path, mcs: int, ms: int,
     with torch.no_grad():
         for i in range(0, len(paths), batch):
             x = torch.stack([tf(gd.Image.open(p).convert("RGB")) for p in paths[i:i + batch]]).to(device)
-            f = bb(x)
-            f = f.mean(dim=(2, 3)) if f.ndim == 4 else f      # manual GAP
+            # ★ grouping_deploy.embed_one_checkpoint 와 동일해야 한다.
+            # bb(x) 는 head norm 을 거쳐 분포가 달라지고(std 1.68 -> 0.23),
+            # proj head 는 forward_features 기준으로 학습됐으므로 클러스터가 붕괴한다.
+            f = bb.forward_features(x).mean(dim=(2, 3))
             feats.append(f.float().cpu())
             if i % (batch * 20) == 0:
                 print(f"  [feat] {i}/{len(paths)}", flush=True)
