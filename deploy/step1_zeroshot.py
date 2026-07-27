@@ -41,6 +41,7 @@ class Config:
     B4_BACKBONE = Paths.B4_BACKBONE
     B4_PROJ = Paths.B4_PROJ
     REASSIGN = Cluster.REASSIGN
+    PARTITION_BY = Cluster.PARTITION_BY
     Z0_SEED = 42
     SKIP_CHAMPION = False
     PALETTE_PROBE = Cluster.PALETTE_PROBE
@@ -107,7 +108,7 @@ def main() -> int:
         out = out_root / name.replace("(", "_").replace(")", "")
         extra = {"UC_PALETTE_MASK": "1"} if name == "frozen_masked" else {"UC_PALETTE_MASK": "0"}
         rc = run(deploy_cmd(bb, pool, out, mcs, ms, projs,
-                            Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, True),
+                            Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, True, Config.PARTITION_BY),
                  env_extra=extra, log_path=out_root / f"{out.name}.log")
         if rc != 0:
             print(f"[warn] {name} 종료코드 {rc} — summary.json 존재로 판정한다")

@@ -38,6 +38,7 @@ class Config:
     CACHE = Runtime.CACHE
     BATCH = Runtime.BATCH
     REASSIGN = Cluster.REASSIGN
+    PARTITION_BY = Cluster.PARTITION_BY
     SEEDS = Recipe.SEEDS
     EPOCHS = epochs()
     K_PERCENTILE = Cluster.RULE_C_K_PERCENTILE
@@ -185,7 +186,7 @@ def main() -> int:
         cp = Path(info["ckpt_dir"]) / info["selected"]["ckpt"]
         out = out_root / f"final_seed{seed}"
         run(deploy_cmd(Config.BACKBONE, pool, out, mcs, ms, [str(cp)],
-                       Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache),
+                       Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, False, Config.PARTITION_BY),
             log_path=out_root / f"final_seed{seed}.log")
         finals[f"seed{seed}"] = read_summary(out)
 
@@ -195,7 +196,7 @@ def main() -> int:
     if len(ens_paths) > 1:
         out = out_root / "final_ensemble"
         run(deploy_cmd(Config.BACKBONE, pool, out, mcs, ms, ens_paths,
-                       Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache),
+                       Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, False, Config.PARTITION_BY),
             log_path=out_root / "final_ensemble.log")
         ens = read_summary(out)
         finals["ensemble"] = ens

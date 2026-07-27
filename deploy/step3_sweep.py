@@ -39,6 +39,7 @@ class Config:
     CACHE = Runtime.CACHE
     BATCH = Runtime.BATCH
     REASSIGN = Cluster.REASSIGN
+    PARTITION_BY = Cluster.PARTITION_BY
     EPOCHS = epochs()
     K_PERCENTILE = Cluster.RULE_C_K_PERCENTILE
     CELLS = Sweep.CELLS
@@ -175,7 +176,7 @@ def main() -> int:
     ck_list += [str(Path(g["ckpt_dir"]) / g["selected"]["ckpt"]) for g in r2.get(final_win, [])]
     out = out_root / "final"
     run(deploy_cmd(Config.BACKBONE, pool, out, mcs, ms, ck_list,
-                   Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, True),
+                   Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, True, Config.PARTITION_BY),
         log_path=out_root / "final.log")
     final_sum = read_summary(out)
 

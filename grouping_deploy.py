@@ -371,6 +371,87 @@ def _progress(done, total, t0, what="embed"):
           f"{rate:5.1f} img/s  경과 {el/60:.1f}분  남은 {eta/60:.1f}분{split}", flush=True)
 
 
+def partition_keys(paths, spec: str):
+    """파일명에서 분리 그룹핑 키를 뽑는다. spec 이 비면 None (= 분리 안 함).
+
+    사내 파일명 예: `AAQ729_00C_20_20260501_010000_83.0_17_PE_ENGINEER.png`
+      `_` 로 나눈 필드 -> [AAQ729, 00C, 20, 20260501, 010000, 83.0, 17, PE, ENGINEER]
+      제품/라인 코드는 **필드 1** (`00C` 1,259장 / `00P` 1,001장).
+
+    spec 형식:
+      "field:1"        -> `_` 로 나눈 1번 필드 (권장. 위치가 고정이라 안전하다)
+      "<regex>"        -> 캡처그룹 1을 키로. 예: `_(\\d{2}[A-Z])_`
+      ""               -> 분리 안 함
+
+    ⚠ "언더바 사이 3글자" 를 길이로만 잡으면 안 된다 — 같은 파일명에 `PWQ` 도 3글자다
+      (실측 2,260장 중 742장이 3글자 필드를 2개 갖는다). 그래서 위치/정규식으로 고정한다.
+    """
+    spec = (spec or "").strip()
+    if not spec:
+        return None
+    keys = []
+    if spec.startswith("field:"):
+        i = int(spec.split(":", 1)[1])
+        for p in paths:
+            f = Path(p).stem.split("_")
+            keys.append(f[i] if 0 <= i < len(f) else "_unknown")
+    else:
+        rx = re.compile(spec)
+        for p in paths:
+            m = rx.search(Path(p).name)
+            keys.append((m.group(1) if m.groups() else m.group(0)) if m else "_unknown")
+    return keys
+
+
+def cluster_by_partition(z, keys, a, reassign_fn):
+    """키마다 **독립으로** HDBSCAN 을 돌리고 cluster id 를 겹치지 않게 이어 붙인다.
+
+    다이얼(mcs/ms)은 그대로 쓴다 — "몇 장 이상 뭉쳐야 그룹인가"는 운영 판단이라
+    파티션이 나뉘어도 같은 값이 맞다. ★ k 는 여기서도 쓰지 않는다.
+    """
+    keys = list(keys)
+    uniq = sorted(set(keys))
+    seed = np.full(len(keys), -1, dtype=int)
+    final = np.full(len(keys), -1, dtype=int)
+    offset = 0
+    rows, n_re = [], 0
+    print(f"[partition] {a.partition_by} -> {len(uniq)}개로 분리 클러스터링: "
+          + ", ".join(f"{k}({keys.count(k)})" for k in uniq), flush=True)
+    # ★ 다이얼은 **파티션 크기 대비**로 봐야 한다. 전체 n 으로 정한 mcs 를 작은
+    #   파티션에 그대로 쓰면 그룹이 하나도 안 생겨 조용히 k=0 / noise 100% 가 된다
+    #   (실측: n=36 파티션에 mcs=20 -> k=0). 미리 경고한다.
+    small = [(k, keys.count(k)) for k in uniq if keys.count(k) < 3 * a.mcs]
+    if small:
+        print(f"[partition] ★ 경고: mcs={a.mcs} 에 비해 너무 작은 파티션이 있다 "
+              f"-> {', '.join(f'{k}(n={v})' for k, v in small)}", flush=True)
+        print(f"[partition]   그룹이 안 만들어져 k=0/noise 100% 가 될 수 있다. "
+              f"SITE_MIN_GROUP_SIZE 를 낮추거나 --partition-by 를 끄라.", flush=True)
+    for k in uniq:
+        idx = np.array([i for i, v in enumerate(keys) if v == k])
+        zk = z[idx]
+        sp = hdbscan_predict(zk, a.mcs, a.ms, a.method, a.eps)
+        sn = int((sp == -1).sum())
+        fp = sp
+        if reassign_fn is not None:
+            fp, info = reassign_fn(zk, sp, a.reassign)
+            n_re += int(info.get("n_reassigned", 0))
+        kk = sorted(int(c) for c in set(sp.tolist()) if c != -1)
+        remap = {c: offset + j for j, c in enumerate(kk)}
+        seed[idx] = [remap.get(int(c), -1) for c in sp]
+        final[idx] = [remap.get(int(c), -1) for c in fp]
+        offset += len(kk)
+        rows.append({"key": k, "n": int(len(idx)), "k": len(kk),
+                     "seed_noise_pct": round(100.0 * sn / max(1, len(idx)), 2),
+                     "noise_pct": round(100.0 * int((fp == -1).sum()) / max(1, len(idx)), 2)})
+        print(f"  [partition] {k:<8} n={len(idx):>6,}  k={len(kk):>4}  "
+              f"seed_noise={rows[-1]['seed_noise_pct']:>6.2f}%  "
+              f"noise={rows[-1]['noise_pct']:>6.2f}%", flush=True)
+    info = {"mode": a.reassign, "seed_n_noise": int((seed == -1).sum()),
+            "n_reassigned": n_re, "assign_quantile": None,
+            "partition_by": a.partition_by}
+    return seed, final, rows, info
+
+
 def hdbscan_predict(z, mcs, ms, method, eps):
     import hdbscan
     return hdbscan.HDBSCAN(min_cluster_size=mcs, min_samples=ms, metric="euclidean",
@@ -433,6 +514,10 @@ def main():
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"],
                      help="기본 auto = GPU 있으면 GPU. 강제로 CPU 를 쓰려면 --device cpu.")
     ap.add_argument("--batch", type=int, default=32)
+    ap.add_argument("--partition-by", default="",
+                     help="파일명 코드마다 **따로** 클러스터링. 예 field:1 이면 `_` 로 나눈 "
+                          "1번 필드(_00P_ / _00C_)별로 분리. 정규식도 됨(캡처그룹 1). "
+                          "비우면 분리 안 함. ★ k 는 여기서도 입력하지 않는다.")
     ap.add_argument("--no-composites", action="store_true",
                      help="composite 생략. ★ arm/셀 비교 단계에서는 켜라 — composite 는 "
                           "원본 6400x6400 을 다시 읽어 arm 당 ~70초를 먹는데, arm 을 "
@@ -514,17 +599,29 @@ def main():
 
     print(f"[cluster] HDBSCAN mcs={a.mcs} ms={a.ms} method={a.method} eps={a.eps} "
           f"— n={len(z)} 시작 (큰 pool 이면 수 분 걸린다)", flush=True)
-    seed_pred = hdbscan_predict(z, a.mcs, a.ms, a.method, a.eps)
-    pred = seed_pred
-    n = len(pred)
-    seed_noise = int((seed_pred == -1).sum())
 
-    reassign_info = {"mode": a.reassign, "seed_n_noise": seed_noise, "n_reassigned": 0, "assign_quantile": None}
-    if a.reassign != "none":
-        reassign_fn = _load_reassign_fn()
-        pred, reassign_info = reassign_fn(z, seed_pred, a.reassign)
-        print(f"[cluster] reassign={a.reassign} seed_noise={seed_noise} "
-              f"reassigned={reassign_info['n_reassigned']} final_noise={int((pred == -1).sum())}", flush=True)
+    # ★ 분리 그룹핑 — 파일명의 코드(예 _00P_ / _00C_)마다 **따로** 클러스터링한다.
+    #   서로 다른 제품/라인은 애초에 같은 그룹이 될 수 없으므로 한 덩어리로 묶어
+    #   돌리면 다이얼 하나가 두 모집단을 동시에 맞춰야 해서 양쪽 다 나빠진다.
+    parts = partition_keys(paths, a.partition_by)
+    reassign_fn = _load_reassign_fn() if a.reassign != "none" else None
+    if parts is None:
+        seed_pred = hdbscan_predict(z, a.mcs, a.ms, a.method, a.eps)
+        pred = seed_pred
+        seed_noise = int((seed_pred == -1).sum())
+        reassign_info = {"mode": a.reassign, "seed_n_noise": seed_noise,
+                         "n_reassigned": 0, "assign_quantile": None}
+        if reassign_fn is not None:
+            pred, reassign_info = reassign_fn(z, seed_pred, a.reassign)
+            print(f"[cluster] reassign={a.reassign} seed_noise={seed_noise} "
+                  f"reassigned={reassign_info['n_reassigned']} "
+                  f"final_noise={int((pred == -1).sum())}", flush=True)
+        part_summary = None
+    else:
+        seed_pred, pred, part_summary, reassign_info = cluster_by_partition(
+            z, parts, a, reassign_fn)
+        seed_noise = int((seed_pred == -1).sum())
+    n = len(pred)
 
     clusters = sorted(int(c) for c in set(pred.tolist()) if c != -1)
     # stability = seed(pre-reassign) 클러스터의 bootstrap co-assignment robustness.
@@ -550,7 +647,11 @@ def main():
         sim = z[idx] @ z[idx].T
         iu = np.triu_indices(len(idx), 1)
         coh = float(sim[iu].mean()) if len(idx) > 1 else 1.0
-        over = len(idx) >= 0.20 * n
+        # ★ 과병합 판정은 **자기 파티션 크기** 기준. 전체 n 으로 재면 분리 그룹핑을 켠
+        #   순간 모든 그룹이 임계 밑으로 내려가 과병합이 조용히 안 잡힌다
+        #   (실측: 분리 전 3건 -> 분리 후 0건).
+        _base = n if parts is None else sum(1 for v in parts if v == parts[idx[0]])
+        over = len(idx) >= 0.20 * _base
         gdir = rep_root / f"group_{c:03d}_n{len(idx)}"
         gdir.mkdir(exist_ok=True)
         for rank, i in enumerate(order[:a.reps], 1):
@@ -603,6 +704,11 @@ def main():
                "model_mode": model_mode,
                "dial": {"mcs": a.mcs, "ms": a.ms, "method": a.method, "eps": a.eps},
                "reassign": reassign_info}
+    if part_summary is not None:
+        # ★ 분리 그룹핑을 했으면 **키별 표를 따로 남긴다.** 전체 합산값만 보면
+        #   한쪽 코드가 나빠도 다른 쪽에 묻힌다.
+        summary["partition_by"] = a.partition_by
+        summary["partitions"] = part_summary
     (out / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print(f"\n[summary] {json.dumps(summary, ensure_ascii=False)}", flush=True)
