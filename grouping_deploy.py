@@ -61,7 +61,9 @@ from torchvision import transforms as T
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(REPO_ROOT))
+# ★ append: insert(0) 은 repo 안 폴더가 site-packages 를 가리게 만든다
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
 from scripts._common import load_pool_manifest  # noqa: E402  (manifest-based --pool selection, backward-compat)
 IMG = 384
 EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
@@ -378,7 +380,9 @@ def main():
             print("[offline-eval] skipped: no parent-folder labels found under pool (flat folder) "
                   "-> nothing to score against", flush=True)
         else:
-            sys.path.insert(0, str(REPO_ROOT / "scripts"))
+            _sp = str(REPO_ROOT / "scripts")
+            if _sp not in sys.path:
+                sys.path.append(_sp)
             from eval_may37_checkpoints import _summarize_predictions, _expand_ignored, _drop_megaclusters
             BG = {"Normal", "R", "Random"}
             ignored = _expand_ignored(lab, set(BG))

@@ -29,6 +29,17 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 
+def add_path(p) -> None:
+    """sys.path 에 **맨 뒤로** 추가한다.
+
+    insert(0, ...) 은 repo 안의 아무 폴더나 site-packages 를 가리게 만든다.
+    실제로 폴더명 하나(site)가 stdlib 을 가려 PIL import 가 깨진 전례가 있다.
+    표준 경로가 먼저 이기도록 append 한다.
+    """
+    p = str(p)
+    if p not in sys.path:
+        sys.path.append(p)
+
 def rel(*parts) -> Path:
     """루트 기준 상대경로 -> 절대 Path. 이미 절대경로면 그대로 둔다.
 

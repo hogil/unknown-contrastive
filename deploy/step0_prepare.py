@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _site_common import (REPO, banner, dial_from_min_group, dial_scan_range,  # noqa: E402
+from _site_common import (add_path, REPO, banner, dial_from_min_group, dial_scan_range,  # noqa: E402
                           die, env, pick_dial_by_stability, rel, save_result,
                           show_config)
 
@@ -51,7 +51,7 @@ def resolve_dial(n: int, pool_path: str):
     if Config.AUTO_DIAL:
         import torch
         import torch.nn.functional as F
-        sys.path.insert(0, str(REPO))
+        add_path(REPO)
         import grouping_deploy as gd
         bb_p = rel(Config.BACKBONE)
         if not bb_p.exists():

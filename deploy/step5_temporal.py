@@ -30,7 +30,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _site_common import (REPO, banner, check_inputs, die, env, rel,  # noqa: E402
+from _site_common import (add_path, REPO, banner, check_inputs, die, env, rel,  # noqa: E402
                           save_result, show_config)
 
 
@@ -115,7 +115,7 @@ def main() -> int:
         die("step0 결과가 없다. 먼저:  python deploy/step0_prepare.py")
     check_inputs(Config.BACKBONE, s0["image_root"])
 
-    sys.path.insert(0, str(REPO))
+    add_path(REPO)
     import numpy as np
     import torch
     import torch.nn.functional as F

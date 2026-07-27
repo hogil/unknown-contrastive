@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
+from _site_common import (add_path, REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, read_summary, rel, run, save_result,
                           show_config, train_env)
 
@@ -57,7 +57,7 @@ def score_epochs(pool: str, backbone: str, ckpt_dir: Path, mcs: int, ms: int,
 
     라벨을 전혀 쓰지 않는다 (사내엔 없다).
     """
-    sys.path.insert(0, str(REPO))
+    add_path(REPO)
     import numpy as np
     import torch
     import torch.nn.functional as F
