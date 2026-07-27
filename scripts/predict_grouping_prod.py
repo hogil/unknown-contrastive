@@ -63,6 +63,7 @@ MIN_SAMPLES         = 15
 CLUSTER_SELECTION_METHOD = "leaf"
 CLUSTER_SELECTION_EPSILON = 0.06
 NOISE_REASSIGN     = "none"       # none / nearest_q80 / nearest_q90 / assign_all
+CLUSTER_MERGE_CENTROID_SIM = None # None=off. 예: 0.75면 가까운 cluster centroid끼리 merge.
 
 # Backbone (같은 architecture 가정)
 BACKBONE            = "convnextv2_base.fcmae_ft_in22k_in1k_384"
@@ -432,6 +433,69 @@ def reassign_noise_to_nearest_cluster(embeddings: np.ndarray, pred: np.ndarray,
     return out, info
 
 
+class _DisjointSet:
+    def __init__(self, n: int):
+        self.parent = list(range(n))
+
+    def find(self, x: int) -> int:
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def union(self, a: int, b: int) -> None:
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self.parent[rb] = ra
+
+
+def merge_clusters_by_centroid(embeddings: np.ndarray, pred: np.ndarray,
+                               threshold: float | None) -> tuple[np.ndarray, dict]:
+    """라벨 없이 cluster centroid cosine similarity 기준으로 HDBSCAN 조각을 합친다."""
+    before = int(len(set(int(x) for x in pred if int(x) >= 0)))
+    info = {
+        "enabled": threshold is not None,
+        "threshold": threshold,
+        "before_clusters": before,
+        "after_clusters": before,
+        "n_merged_clusters": 0,
+    }
+    if threshold is None:
+        return pred, info
+    cluster_ids = sorted(int(c) for c in set(pred.tolist()) if int(c) >= 0)
+    if len(cluster_ids) <= 1:
+        return pred, info
+
+    emb = embeddings.astype(np.float32, copy=False)
+    emb = emb / np.maximum(np.linalg.norm(emb, axis=1, keepdims=True), 1e-12)
+    centers = []
+    for cid in cluster_ids:
+        center = emb[pred == cid].mean(axis=0)
+        center = center / max(float(np.linalg.norm(center)), 1e-12)
+        centers.append(center)
+    centers = np.stack(centers, axis=0).astype(np.float32, copy=False)
+    sim = centers @ centers.T
+
+    dsu = _DisjointSet(len(cluster_ids))
+    thr = float(threshold)
+    for i in range(len(cluster_ids)):
+        for j in range(i + 1, len(cluster_ids)):
+            if float(sim[i, j]) >= thr:
+                dsu.union(i, j)
+
+    root_to_new = {}
+    out = np.asarray(pred, dtype=int).copy()
+    for i, cid in enumerate(cluster_ids):
+        root = dsu.find(i)
+        if root not in root_to_new:
+            root_to_new[root] = len(root_to_new)
+        out[pred == cid] = root_to_new[root]
+
+    info["after_clusters"] = int(len(root_to_new))
+    info["n_merged_clusters"] = int(before - info["after_clusters"])
+    return out, info
+
+
 def save_grouping_representatives(output_subdir: Path, embeddings: np.ndarray,
                                   pred: np.ndarray, paths: list[str],
                                   per_cluster: int) -> int:
@@ -725,6 +789,19 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
               f"seed_noise={reassign_info['seed_n_noise']} "
               f"reassigned={reassign_info['n_reassigned']} "
               f"final_noise={int((pred == -1).sum())}", flush=True)
+    merge_info = {
+        "enabled": CLUSTER_MERGE_CENTROID_SIM is not None,
+        "threshold": CLUSTER_MERGE_CENTROID_SIM,
+        "before_clusters": int(len(set(p for p in pred if p >= 0))),
+        "after_clusters": int(len(set(p for p in pred if p >= 0))),
+        "n_merged_clusters": 0,
+    }
+    if CLUSTER_MERGE_CENTROID_SIM is not None:
+        pred, merge_info = merge_clusters_by_centroid(
+            embeddings, pred, CLUSTER_MERGE_CENTROID_SIM)
+        print(f"[cluster] centroid_merge threshold={merge_info['threshold']} "
+              f"{merge_info['before_clusters']} -> {merge_info['after_clusters']} "
+              f"(merged={merge_info['n_merged_clusters']})", flush=True)
     n_clusters = len(set(p for p in pred if p >= 0))
     n_noise = int((pred == -1).sum())
     from collections import Counter
@@ -777,6 +854,7 @@ def cluster_folder(folder_path, model: nn.Module, device, output_subdir: Path,
         "n_noise": n_noise,
         "noise_pct": round(n_noise / len(pred) * 100, 2),
         "noise_reassign": reassign_info,
+        "cluster_merge": merge_info,
         "seed_n_noise": int(reassign_info["seed_n_noise"]),
         "seed_noise_pct": round(int(reassign_info["seed_n_noise"]) / len(seed_pred) * 100, 2),
         "largest_group_size": int(largest_group),
@@ -849,7 +927,7 @@ def _apply_args():
     global OUTPUT_DIR, COPY_PNG_TO_GROUPS, SAVE_REPRESENTATIVES, REPS_PER_CLUSTER
     global SAVE_REFERENCE_COMPOSITES, REFERENCE_COMPOSITE_MAX_PX
     global REPRESENTATIVES_ONLY, MIN_CLUSTER_SIZE, MIN_SAMPLES, NOISE_REASSIGN
-    global CLUSTER_SELECTION_METHOD, CLUSTER_SELECTION_EPSILON
+    global CLUSTER_SELECTION_METHOD, CLUSTER_SELECTION_EPSILON, CLUSTER_MERGE_CENTROID_SIM
     global IMG_SIZE, BATCH, NUM_WORKERS, PREFETCH_FACTOR, PROGRESS_EVERY
     global INFER_EMBED_MODE, INFER_BACKBONE_WEIGHT, INFER_PROJ_WEIGHT
     global PRODUCT_FILTER, LINE_FILTER, DATE_FILTER
@@ -893,6 +971,8 @@ def _apply_args():
     ap.add_argument("--noise-reassign", type=str, default=None,
                     choices=["none", "nearest_q80", "nearest_q90", "assign_all"],
                     help="HDBSCAN noise(-1)를 seed cluster centroid에 재배정. 기본 none.")
+    ap.add_argument("--cluster-merge-centroid-sim", type=float, default=None,
+                    help="HDBSCAN 뒤 cluster centroid cosine similarity가 이 값 이상이면 merge. 예: 0.75")
     a = ap.parse_args()
     if a.model:            MODEL_PATH = a.model
     if a.image_roots:      IMAGE_ROOTS = [x.strip() for x in a.image_roots.split(",") if x.strip()]
@@ -924,6 +1004,8 @@ def _apply_args():
         CLUSTER_SELECTION_EPSILON = a.cluster_selection_epsilon
     if a.noise_reassign is not None:
         NOISE_REASSIGN = a.noise_reassign
+    if a.cluster_merge_centroid_sim is not None:
+        CLUSTER_MERGE_CENTROID_SIM = a.cluster_merge_centroid_sim
 
 
 def _pipeline_summary_model(run_dir: Path) -> Path | None:

@@ -17,6 +17,11 @@ Wafer Defect Auto-Clustering (Contrastive + HDBSCAN, Auto-K)
 """
 
 import os, sys, json, time, random, shutil, warnings, platform, logging
+# Windows 콘솔(cp949) 이 em-dash 등 유틸 문자를 못 그려 UnicodeEncodeError로 죽는 걸 방지 —
+# 무인 3일 캠페인에서 exit code 오염(정상 완료를 실패로 오탐) 막는 근본 수정 (260726, team-lead directive).
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        _s.reconfigure(encoding="utf-8", errors="replace")
 from pathlib import Path
 from typing import Dict, Any, List, Tuple
 from collections import defaultdict
@@ -151,6 +156,7 @@ if _os.environ.get("REPRO_NEG"):     CFG["IGNORE_NEG_SIM"] = float(_os.environ["
 if _os.environ.get("REPRO_EPOCHS"):  CFG["EPOCHS"] = int(_os.environ["REPRO_EPOCHS"])
 if _os.environ.get("REPRO_SAMPLING"): CFG["TRAIN_SAMPLING_RATIO"] = float(_os.environ["REPRO_SAMPLING"])
 if _os.environ.get("REPRO_WORKERS"): CFG["NUM_WORKERS"] = int(_os.environ["REPRO_WORKERS"])  # 큰 이미지 decode 가속 (persistent=False 라 leak 안전)
+if _os.environ.get("REPRO_SEED"):    CFG["SEED"] = int(_os.environ["REPRO_SEED"])  # 이미 기본 42 -- paired 비교에서 명시적으로 고정하고 싶을 때만
 
 RUN_TS = datetime.now().strftime("%y%m%d_%H%M%S")
 
@@ -179,6 +185,12 @@ def _fmt_hms(secs: float) -> str:
 def seed_all(x=42):
     random.seed(x); np.random.seed(x); torch.manual_seed(x); torch.cuda.manual_seed_all(x)
 
+# module-level (picklable) replacement for a T.Lambda closure — spawned Windows
+# DataLoader workers pickle the transform pipeline, and lambdas can't be pickled.
+class AddGaussianNoise:
+    def __init__(self, std=0.02): self.std = std
+    def __call__(self, x): return (x + torch.randn_like(x) * self.std).clamp(0, 1)
+
 def tfm(train=True):
     norm = T.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225])
     if train:
@@ -186,7 +198,7 @@ def tfm(train=True):
             T.RandomResizedCrop((CFG["IMAGE_SIZE"], CFG["IMAGE_SIZE"]), scale=(0.94,1.0), ratio=(1.0,1.0), interpolation=T.InterpolationMode.BILINEAR),
             T.RandomAffine(degrees=7, translate=(0.05,0.05), scale=(0.95,1.05)),
             T.ToTensor(),
-            T.Lambda(lambda x: (x + torch.randn_like(x)*0.02).clamp(0,1)),
+            AddGaussianNoise(0.02),
             norm
         ])
     return T.Compose([
@@ -876,6 +888,18 @@ def save_run_info(run_dir: Path, device: torch.device, class_to_idx: Dict[str,in
 
 # ===================== Main =====================
 def main():
+    _gpu_fraction_raw = _os.environ.get("REPRO_GPU_MEMORY_FRACTION")
+    if _gpu_fraction_raw is not None:
+        try:
+            _gpu_fraction = float(_gpu_fraction_raw)
+        except ValueError as exc:
+            raise ValueError("REPRO_GPU_MEMORY_FRACTION must be a float in (0, 1]") from exc
+        if not 0.0 < _gpu_fraction <= 1.0:
+            raise ValueError("REPRO_GPU_MEMORY_FRACTION must be in (0, 1]")
+        if not torch.cuda.is_available():
+            raise RuntimeError("REPRO_GPU_MEMORY_FRACTION was requested but CUDA is unavailable")
+        # Must precede seed_all(), whose manual_seed_all can initialize CUDA.
+        torch.cuda.set_per_process_memory_fraction(_gpu_fraction, device=0)
     seed_all(CFG["SEED"])
     torch.backends.cudnn.benchmark = True
     if hasattr(torch, "set_float32_matmul_precision"):
@@ -1032,6 +1056,13 @@ def main():
         }, ckpt_dir / "last_training.pt")
         logger.info(f"[저장] {(ckpt_dir/'final_infer.pt').resolve()}")
     save_run_info(run_dir, device, class_to_idx)
+    if device.type == "cuda":
+        logger.info(
+            "[gpu-memory] configured_fraction=%s max_allocated_mb=%.1f max_reserved_mb=%.1f",
+            _gpu_fraction_raw,
+            torch.cuda.max_memory_allocated(0) / (1024 ** 2),
+            torch.cuda.max_memory_reserved(0) / (1024 ** 2),
+        )
 
     if _os.environ.get("REPRO_SKIP_FINAL_EMBED") == "1":
         logger.info("[skip] final embedding/HDBSCAN export (epoch checkpoints preserved)")
