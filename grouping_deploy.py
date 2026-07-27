@@ -180,13 +180,27 @@ def collect_pool(pool_dir: str):
 
 def embed_one_checkpoint(paths, backbone, proj, device, batch=32):
     """raw GAP f -> proj -> L2 (학습과 동일 순서; normalize 후 projection 은 버그)."""
-    embs = []
+    import time
+    embs, t0, n = [], time.time(), len(paths)
+    every = max(1, (n // batch) // 20)
     with torch.no_grad():
-        for i in range(0, len(paths), batch):
+        for bi, i in enumerate(range(0, n, batch)):
             x = torch.stack([TF(Image.open(p).convert("RGB")) for p in paths[i:i + batch]]).to(device)
             pool = backbone.forward_features(x).mean(dim=(2, 3))
             embs.append(F.normalize(proj(pool), dim=1).cpu())
+            if bi % every == 0 or i + batch >= n:
+                _progress(min(i + batch, n), n, t0)
     return torch.cat(embs)
+
+
+def _progress(done, total, t0, what="embed"):
+    """긴 임베딩 구간이 멈춘 것처럼 보이지 않게 진행률을 찍는다."""
+    import time
+    el = time.time() - t0
+    rate = done / el if el > 0 else 0
+    eta = (total - done) / rate if rate > 0 else 0
+    print(f"  [{what}] {done}/{total} ({100*done/max(1,total):5.1f}%)  "
+          f"{rate:5.1f} img/s  경과 {el/60:.1f}분  남은 {eta/60:.1f}분", flush=True)
 
 
 def hdbscan_predict(z, mcs, ms, method, eps):
@@ -272,12 +286,16 @@ def main():
         # (사다리 (1) 에서 frozen / TAPT-backbone-only arm 을 재려면 필수)
         print("[model] proj 없음 -> frozen backbone (GAP -> L2)", flush=True)
         tags.append("frozen")
-        _e = []
+        import time
+        _e, _t0, _n = [], time.time(), len(paths)
+        _every = max(1, (_n // a.batch) // 20)
         with torch.no_grad():
-            for _i in range(0, len(paths), a.batch):
+            for _bi, _i in enumerate(range(0, _n, a.batch)):
                 _x = torch.stack([TF(Image.open(pp).convert("RGB"))
                                   for pp in paths[_i:_i + a.batch]]).to(device)
                 _e.append(F.normalize(bb.forward_features(_x).mean(dim=(2, 3)), dim=1).cpu())
+                if _bi % _every == 0 or _i + a.batch >= _n:
+                    _progress(min(_i + a.batch, _n), _n, _t0)
         per_ckpt_embs.append(torch.cat(_e))
     for proj_path in a.proj:
         tag = proj_tag(proj_path)
@@ -292,7 +310,8 @@ def main():
     else:
         z = per_ckpt_embs[0].numpy().astype("float32")
 
-    print(f"[cluster] HDBSCAN mcs={a.mcs} ms={a.ms} method={a.method} eps={a.eps}", flush=True)
+    print(f"[cluster] HDBSCAN mcs={a.mcs} ms={a.ms} method={a.method} eps={a.eps} "
+          f"— n={len(z)} 시작 (큰 pool 이면 수 분 걸린다)", flush=True)
     seed_pred = hdbscan_predict(z, a.mcs, a.ms, a.method, a.eps)
     pred = seed_pred
     n = len(pred)
