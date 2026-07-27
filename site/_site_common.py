@@ -87,10 +87,6 @@ def check_inputs(backbone: str, image_root: str, projs: list[str] | None = None)
     ir = rel(image_root)
     if not ir.exists():
         die(f"image_root 가 없다: {ir}\n  SITE_IMAGE_ROOT 로 지정하거나 Config 의 default 를 고쳐라.")
-    if int(k_hat) < 2:
-        die("K_HAT(예상 불량 종수)은 2 이상이어야 한다.\n"
-            "  모르면 현업에 물어라 — 라벨 없이 다이얼을 고를 방법이 없다는 게 실측으로 확인됐다"
-            "(무라벨 대리지표 Sil/over_merge/stability 전부 arm 에 따라 부호가 뒤집힘).")
     for p in (projs or []):
         if not rel(p).exists():
             die(f"projection head 가 없다: {rel(p)}\n  site/README.md 의 체크포인트 목록 참조.")

@@ -56,6 +56,13 @@ class Config:
     # 폴더명에서 날짜만 뽑는 정규식 (첫 그룹이 정렬 키). 안 맞으면 폴더명 전체 사용.
     TIME_DIR_REGEX = env("SITE_TIME_DIR_REGEX", r"(\d{6,8})")
 
+    # ★ 배치 단위 클러스터링의 최소 그룹 크기.
+    #   step0 의 pool 전체 다이얼을 그대로 쓰면 안 된다 — 배치는 pool 보다 훨씬 작다.
+    #   의미: "한 배치 안에서 몇 장이 뭉치면 신규 그룹 후보로 볼 것인가".
+    #   신규불량은 처음엔 소량으로 나타나므로 pool 다이얼보다 작게 잡는 게 맞다.
+    #   0 이면 배치 크기의 5% (최소 5) 로 자동.
+    BATCH_MIN_GROUP = env("SITE_BATCH_MIN_GROUP", 0)
+
     # ── 운영점 ────────────────────────────────────────────────────────────
     N_CALIB = env("SITE_N_CALIB", 4)       # 앞 N개 배치로 REF + 임계 캘리브레이션
     N_BG = env("SITE_N_BG", 4)             # 그 다음 N개는 "신규불량 없음"으로 아는 구간 -> FAR 측정
@@ -123,7 +130,6 @@ def main() -> int:
     s0 = load("step0")
     if not s0:
         die("step0 결과가 없다. 먼저:  python site/step0_prepare.py")
-    mcs, ms = s0["dial"]["mcs"], s0["dial"]["ms"]
     check_inputs(Config.BACKBONE, s0["image_root"])
 
     sys.path.insert(0, str(REPO))
@@ -141,6 +147,20 @@ def main() -> int:
         print(f"    {name}: {len(idx)} 장")
     if len(batches) > 12:
         print(f"    ... 외 {len(batches)-12} 배치")
+
+    # ── 배치 다이얼 (pool 다이얼과 별개) ──────────────────────────────────
+    med_batch = sorted(len(idx) for _, idx in batches)[len(batches) // 2]
+    if int(Config.BATCH_MIN_GROUP) > 0:
+        mcs = max(3, int(Config.BATCH_MIN_GROUP))
+    else:
+        mcs = max(3, int(round(med_batch * 0.05)))
+    ms = max(2, mcs // 4)
+    print(f"\n[dial] 배치 단위: mcs={mcs} ms={ms}  (배치 중앙값 {med_batch} 장의 "
+          f"{100*mcs/max(1,med_batch):.1f}%)")
+    print(f"       pool 전체 다이얼(mcs={s0['dial']['mcs']}) 과 별개다 — 배치가 훨씬 작다.")
+    if med_batch < mcs * 3:
+        print(f"  ⚠ 배치당 {med_batch} 장은 mcs={mcs} 에 비해 작다. 클러스터가 잘 안 잡힌다 —")
+        print(f"     SITE_TIME_BATCH_SIZE 를 키우거나 SITE_BATCH_MIN_GROUP 을 줄여라.")
 
     n_cal, n_bg = int(Config.N_CALIB), int(Config.N_BG)
     if len(batches) < n_cal + n_bg + 1:
@@ -181,7 +201,7 @@ def main() -> int:
     per_batch = []
     for name, idx in batches:
         zb = z[idx]
-        if len(idx) < mcs * 2:
+        if len(idx) < mcs * 2 or len(idx) < 5:
             per_batch.append({"name": name, "n": len(idx), "clusters": []})
             continue
         pred = gd.hdbscan_predict(zb, mcs, ms, "leaf", 0.06)
@@ -244,21 +264,31 @@ def main() -> int:
                             out.append(i)
                     return out
                 far = len(alarms(bg_f)) / max(1, len(bg_f))
+                # K 가 배경 배치 수에 비해 크면 FAR 0 이 자동으로 나온다(연속 K 회가 불가능).
+                # 그런 셀은 '측정 불가'로 표시해 권장 후보에서 뺀다.
+                unreliable = len(bg_f) < 2 * K
                 oa = alarms(ob_f)
                 grid.append({"P": P, "threshold": round(thr, 6), "size_pct": sp,
                              "min_size": floor, "K": K,
                              "FAR_per_bg_batch": round(far, 3),
                              "n_bg_batches": len(bg_f),
                              "obs_alarm_batches": [obs_slice[i]["name"] for i in oa],
-                             "first_alarm": obs_slice[oa[0]]["name"] if oa else None})
+                             "first_alarm": obs_slice[oa[0]]["name"] if oa else None,
+                             "far_unreliable": unreliable})
 
-    zero = [g for g in grid if g["FAR_per_bg_batch"] == 0]
+    zero = [g for g in grid if g["FAR_per_bg_batch"] == 0 and not g["far_unreliable"]]
+    zero_unrel = [g for g in grid if g["FAR_per_bg_batch"] == 0 and g["far_unreliable"]]
+    if zero_unrel:
+        print(f"\n  [주의] FAR 0 으로 보이지만 **측정 불가**인 셀 {len(zero_unrel)}개 —"
+              f" 배경 배치 {len(bg_slice)}개에 K 가 너무 커서 연속 K 회 자체가 불가능하다.")
+        print("         권장 후보에서 제외했다. SITE_N_BG 를 늘려라 (K 최대값의 2배 이상).")
     print("\n" + "=" * 78)
     print(f"[격자] FAR = 배경 {len(bg_slice)} 배치 기준 오경보/배치")
     print("=" * 78)
     print(f"  {'P':<5} {'size_pct':<9} {'min_size':<9} {'K':<4} {'FAR':<8} first_alarm")
     for g in grid:
-        mark = " ★" if g["FAR_per_bg_batch"] == 0 else ""
+        mark = (" (측정불가)" if g["far_unreliable"] and g["FAR_per_bg_batch"] == 0
+                else (" ★" if g["FAR_per_bg_batch"] == 0 else ""))
         print(f"  {g['P']:<5} {g['size_pct']:<9} {g['min_size']:<9} {g['K']:<4} "
               f"{g['FAR_per_bg_batch']:<8} {g['first_alarm'] or '-'}{mark}")
 
