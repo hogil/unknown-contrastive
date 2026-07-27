@@ -63,18 +63,15 @@ def resolve_dial(n: int, pool_path: str):
             die(f"AUTO_DIAL=1 이면 backbone 이 필요하다: {bb_p}\n"
                 f"  또는 AUTO_DIAL=0 으로 두고 MIN_GROUP_SIZE 만 정해라.")
         paths, _ = gd.collect_pool(str(rel(pool_path)))
-        bb = gd.load_backbone(str(bb_p), Config.DEVICE)
-        tf = gd.T.Compose([gd.T.Resize((384, 384), interpolation=gd.T.InterpolationMode.BILINEAR),
-                           gd.T.ToTensor(),
-                           gd.T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
-        bs, fs = int(Config.BATCH), []
+        # ★ grouping_deploy 와 **같은 경로**로 임베딩한다 (device 진단 / 캐시 /
+        #   스레드 디코드 / UC_PALETTE_MASK 존중). 직접 루프를 돌리면 셋 다 빠진다.
+        dev = gd.resolve_device(Config.DEVICE)
+        bb = gd.maybe_channels_last(gd.load_backbone(str(bb_p), dev))
+        cache = gd.load_cache_for(cache_dir_for(Config.OUT_BASE, Config.CACHE_DIR)
+                                  if Config.CACHE else "", paths)
         print(f"[auto-dial] 임베딩 계산 중 ({len(paths):,} 장)...", flush=True)
-        with torch.no_grad():
-            for i in range(0, len(paths), bs):
-                x = torch.stack([tf(gd.Image.open(q).convert("RGB"))
-                                 for q in paths[i:i + bs]]).to(Config.DEVICE)
-                fs.append(bb.forward_features(x).mean(dim=(2, 3)).float().cpu())
-        z = F.normalize(torch.cat(fs), dim=1).numpy().astype("float32")
+        fs = gd.embed_backbone(paths, bb, dev, int(Config.BATCH), cache, "auto-dial")
+        z = F.normalize(fs, dim=1).numpy().astype("float32")
         scan = dial_scan_range(n, int(Config.MIN_GROUP_SIZE))
         print(f"[auto-dial] 스캔 mcs in {scan}  (bootstrap 안정성 최대 선택, 라벨/k 미사용)")
         mcs, ms, scan_rows = pick_dial_by_stability(
@@ -135,11 +132,13 @@ def main() -> int:
         if n == 0:
             die(f"manifest 에 files 가 없다: {mp}")
         root = Path(man["root"])
+        out_root = rel(Config.OUT_ROOT)
+        # ★ 캐시를 다이얼 결정 **전에** 만든다 — AUTO_DIAL 도 임베딩을 하므로
+        #   순서가 반대면 그 임베딩만 캐시 없이 돌아 디코드대기 89% 가 된다(실측).
+        cdir = build_decode_cache(mp, out_root)
         mcs, ms, scan_rows = resolve_dial(n, str(mp))
         print(f"\n[pool] 기존 manifest 사용: {mp}")
         print(f"[pool] n = {n:,} 장   root = {root}")
-        out_root = rel(Config.OUT_ROOT)
-        cdir = build_decode_cache(mp, out_root)
         save_result(out_root, "step0", {
             "cache_dir": cdir,
             "n_images": n, "min_group_size": int(Config.MIN_GROUP_SIZE),
@@ -182,6 +181,7 @@ def main() -> int:
     mpath = out_root / "site_pool.json"
     mpath.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    cdir = build_decode_cache(mpath, out_root)      # ★ 다이얼 결정 전에 (위 주석 참조)
     mcs, ms, scan_rows = resolve_dial(n, str(mpath))
     print(f"\n[pool] n = {n:,} 장   |   하위폴더 {len(subdirs)}개"
           + (f"  (예: {', '.join(subdirs[:4])}{' ...' if len(subdirs) > 4 else ''})" if subdirs else ""))
@@ -194,7 +194,7 @@ def main() -> int:
         "dial": {"mcs": mcs, "ms": ms, "method": "leaf", "eps": 0.06},
         "config": cfg,
     }
-    payload["cache_dir"] = build_decode_cache(mpath, out_root)
+    payload["cache_dir"] = cdir
     save_result(out_root, "step0", payload)
 
     print("\n다음:  python deploy/step1_zeroshot.py")

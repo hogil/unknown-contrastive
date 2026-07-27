@@ -188,6 +188,55 @@ def resolve_device(requested: str) -> str:
     return dev
 
 
+def embed_backbone(paths, backbone, device, batch=32, cache=None, what="feat"):
+    """raw GAP feature (proj 없이). ★ deploy step 들이 공유하는 **단일 경로**.
+
+    step0(AUTO_DIAL)·step2(채점)·step5(시간축)가 각자 임베딩 루프를 갖고 있었는데
+    셋 다 이것들이 빠져 있었다:
+      (a) 디코드 캐시 미사용   -> 6400x6400 을 매번 다시 디코드 (GPU 가 굶는다)
+      (b) 단일스레드 디코드    -> 코어를 하나만 쓴다
+      (c) UC_PALETTE_MASK 무시 -> ★ 마스킹을 켜고 학습해도 채점은 안 켜진 채 돈다.
+          `Image.open(p).convert("RGB")` 를 직접 부르면 `_open_rgb` 를 우회한다.
+          학습/채점 입력이 달라지는 **정합성 버그**라 결과가 조용히 무의미해진다.
+    같은 코드를 세 벌 두면 또 갈라지므로 여기 하나로 모은다.
+    """
+    import time
+    embs, t0, n = [], time.time(), len(paths)
+    every = max(1, (n // batch) // 20)
+    _reset_timers()
+    with torch.no_grad():
+        for bi, done, x in _iter_batches(paths, batch, cache=cache):
+            g = time.time()
+            with amp_ctx():
+                f = backbone.forward_features(
+                    x.to(device, non_blocking=True)).mean(dim=(2, 3))
+            e = f.float().cpu()
+            _GPU[0] += time.time() - g
+            embs.append(e)
+            if bi % every == 0 or done >= n:
+                _progress(done, n, t0, what)
+    return torch.cat(embs)
+
+
+def load_cache_for(cache_dir, paths):
+    """deploy/build_cache.py 캐시를 현재 palette_mask 설정으로 연다. 없으면 None."""
+    if not cache_dir:
+        return None
+    try:
+        sys.path.append(str(REPO_ROOT / "deploy"))
+        from build_cache import load_cache
+        c = load_cache(cache_dir, paths, _PALETTE_MASK)
+    except Exception as e:
+        print(f"[cache] 로드 실패({type(e).__name__}: {e}) -> 원본을 읽는다", flush=True)
+        return None
+    if c is None:
+        print(f"[cache] {cache_dir} 를 쓸 수 없다 (없거나 pool/palette_mask 불일치) "
+              f"-> 원본을 읽는다", flush=True)
+    else:
+        print(f"[cache] 사용 {cache_dir}  shape={tuple(c.shape)}  디코드 건너뜀", flush=True)
+    return c
+
+
 def proj_tag(proj_path: str) -> str:
     """체크포인트 경로에서 라벨-free 태그 derive (seed는 run_info.json 에서, epoch은 파일명에서)."""
     p = Path(proj_path)

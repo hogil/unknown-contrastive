@@ -155,21 +155,13 @@ def main() -> int:
             f"  SITE_N_CALIB / SITE_N_BG 를 줄이거나 데이터 기간을 늘려라.")
 
     # ── 임베딩 (1회) ──────────────────────────────────────────────────────
-    dev = Config.DEVICE
-    bb = gd.load_backbone(str(rel(Config.BACKBONE)), dev)
-    tf = gd.T.Compose([gd.T.Resize((384, 384), interpolation=gd.T.InterpolationMode.BILINEAR),
-                       gd.T.ToTensor(),
-                       gd.T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
-    bs = int(Config.BATCH)
-    feats = []
-    with torch.no_grad():
-        for i in range(0, len(paths), bs):
-            x = torch.stack([tf(gd.Image.open(p).convert("RGB")) for p in paths[i:i + bs]]).to(dev)
-            # ★ grouping_deploy 와 동일: forward_features -> GAP (bb(x) 는 head norm 이 껴서 다르다)
-            feats.append(bb.forward_features(x).mean(dim=(2, 3)).float().cpu())
-            if i % (bs * 20) == 0:
-                print(f"  [feat] {i}/{len(paths)}", flush=True)
-    raw = torch.cat(feats)
+    # ★ grouping_deploy 와 **같은 경로** (device 진단 / 캐시 / 스레드 디코드 /
+    #   UC_PALETTE_MASK 존중). forward_features -> GAP — bb(x) 는 head norm 이 껴서 다르다.
+    dev = gd.resolve_device(Config.DEVICE)
+    bb = gd.maybe_channels_last(gd.load_backbone(str(rel(Config.BACKBONE)), dev))
+    cache = gd.load_cache_for(s0.get("cache_dir", "") if getattr(Config, "CACHE", True) else "",
+                              paths)
+    raw = gd.embed_backbone(paths, bb, dev, int(Config.BATCH), cache, "feat")
 
     projs = resolve_proj()
     if projs:

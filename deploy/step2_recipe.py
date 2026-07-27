@@ -55,7 +55,7 @@ def load_step0(out_root) -> dict:
 
 
 def score_epochs(pool: str, backbone: str, ckpt_dir: Path, mcs: int, ms: int,
-                 device: str, batch: int) -> list[dict]:
+                 device: str, batch: int, cache_dir: str = "") -> list[dict]:
     """backbone feature 1회 계산 후 epoch head 별 label-free 지표.
 
     라벨을 전혀 쓰지 않는다 (사내엔 없다).
@@ -69,24 +69,16 @@ def score_epochs(pool: str, backbone: str, ckpt_dir: Path, mcs: int, ms: int,
     paths, _ = gd.collect_pool(str(rel(pool)))
     if not paths:
         die(f"pool 에 이미지가 없다: {pool}")
-    bb = gd.load_backbone(str(rel(backbone)), device)
+    device = gd.resolve_device(device)
+    cache = gd.load_cache_for(cache_dir, paths)
+    bb = gd.maybe_channels_last(gd.load_backbone(str(rel(backbone)), device))
 
-    # backbone GAP feature 1회 (proj 없이) — 이후 모든 head 에 재사용
-    tf = gd.T.Compose([gd.T.Resize((384, 384), interpolation=gd.T.InterpolationMode.BILINEAR),
-                       gd.T.ToTensor(),
-                       gd.T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
-    feats = []
-    with torch.no_grad():
-        for i in range(0, len(paths), batch):
-            x = torch.stack([tf(gd.Image.open(p).convert("RGB")) for p in paths[i:i + batch]]).to(device)
-            # ★ grouping_deploy.embed_one_checkpoint 와 동일해야 한다.
-            # bb(x) 는 head norm 을 거쳐 분포가 달라지고(std 1.68 -> 0.23),
-            # proj head 는 forward_features 기준으로 학습됐으므로 클러스터가 붕괴한다.
-            f = bb.forward_features(x).mean(dim=(2, 3))
-            feats.append(f.float().cpu())
-            if i % (batch * 20) == 0:
-                print(f"  [feat] {i}/{len(paths)}", flush=True)
-    raw = torch.cat(feats)
+    # backbone GAP feature 1회 (proj 없이) — 이후 모든 head 에 재사용.
+    # ★ grouping_deploy.embed_backbone 과 **같은 경로**여야 한다.
+    #   bb(x) 는 head norm 을 거쳐 분포가 달라지고(std 1.68 -> 0.23), proj head 는
+    #   forward_features 기준으로 학습됐으므로 클러스터가 붕괴한다.
+    #   직접 루프를 돌리면 캐시·스레드 디코드·UC_PALETTE_MASK 가 전부 빠진다.
+    raw = gd.embed_backbone(paths, bb, device, batch, cache, "feat")
     print(f"  [feat] {len(paths)}/{len(paths)}  dim={raw.shape[1]}", flush=True)
 
     eps_files = sorted(Path(ckpt_dir).glob("proj_ep*.pt"),
@@ -169,7 +161,7 @@ def main() -> int:
 
         print(f"\n--- Rule C 채점 seed={seed} ---")
         rows = score_epochs(pool, Config.BACKBONE, ck, mcs, ms,
-                            Config.DEVICE, int(Config.BATCH))
+                            Config.DEVICE, int(Config.BATCH), _cache)
         sel = rule_c(rows, float(Config.K_PERCENTILE))
         if not sel:
             print(f"[error] seed={seed} Rule C 선택 실패 (유효 epoch 없음)")
