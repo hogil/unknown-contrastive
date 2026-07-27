@@ -254,8 +254,14 @@ def run(cmd: list[str], env_extra: dict | None = None, log_path: Path | None = N
 
 def deploy_cmd(backbone: str, pool: str, out: Path, mcs: int, ms: int,
                projs: list[str] | None, device: str, batch: int,
-               reassign: str) -> list[str]:
-    """grouping_deploy.py 호출 (label-free 산출: summary.json / groups.csv / representatives)."""
+               reassign: str, cache: str = "",
+               no_composites: bool = False) -> list[str]:
+    """grouping_deploy.py 호출 (label-free 산출: summary.json / groups.csv / representatives).
+
+    ★ cache 를 넘기면 디코드를 건너뛴다. step1 은 arm 이 6개라 캐시가 없으면
+      **같은 이미지를 6번 다시 디코드**한다 — 그동안 GPU 는 논다.
+      결과는 비트 단위로 동일하다 (검증: groups.csv/summary.json 완전 일치).
+    """
     cmd = [sys.executable, "grouping_deploy.py",
            "--backbone", str(rel(backbone)),
            "--pool", str(rel(pool)),
@@ -264,9 +270,18 @@ def deploy_cmd(backbone: str, pool: str, out: Path, mcs: int, ms: int,
            "--method", "leaf", "--eps", "0.06",
            "--device", device, "--batch", str(batch),
            "--reassign", reassign]
+    if cache:
+        cmd += ["--cache", str(rel(cache))]
+    if no_composites:
+        cmd += ["--no-composites"]
     if projs:
         cmd += ["--proj", *[str(rel(p)) for p in projs]]
     return cmd
+
+
+def cache_dir_for(out_root, cache_dir: str = "") -> str:
+    """캐시 폴더 경로. 비어 있으면 <OUT_ROOT>/_cache."""
+    return str(rel(cache_dir)) if cache_dir else str(rel(out_root) / "_cache")
 
 
 def train_env(backbone: str, pool: str, out_dir: Path, seed: int, epochs: int,

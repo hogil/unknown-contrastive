@@ -69,6 +69,33 @@ class Runtime:
     DEVICE = env("SITE_DEVICE", "cuda")        # cuda | cpu
     BATCH = env("SITE_BATCH", 128)             # 추론/채점 배치 (H200 여유)
 
+    # ── ★ 디코드 캐시 — H200 을 놀리지 않는 핵심 스위치 ────────────────────
+    # 병목은 GPU 가 아니라 6400x6400 palette PNG 디코드다. 실측(4060 Ti):
+    #     캐시 없음  7.6 img/s   디코드대기 62~79% / GPU 21~38%
+    #     캐시 사용 19.7 img/s   디코드대기  0.4% / GPU 99.5%      ← 2.6x
+    # GPU 가 빠를수록 격차가 커진다. H200 은 forward 가 6~8배 빨라서 캐시 없이는
+    # GPU 비중이 6% 근처로 떨어진다(= 보고된 nvidia-smi 값). 캐시가 있어야 GPU 가 산다.
+    # 게다가 step1 은 arm 이 6개라 **같은 이미지를 6번 다시 디코드**했다 —
+    # 캐시는 그 6번을 1번으로 만든다.
+    # 결과는 원본과 **비트 단위로 동일**하다 (groups.csv/summary.json 완전 일치 확인).
+    # ⚠ 학습에는 쓰지 마라 — RandomResizedCrop 이 원본 해상도를 필요로 한다.
+    CACHE = env("SITE_CACHE", True)            # step0 이 만들고 step1/3/5 가 쓴다
+    CACHE_DIR = env("SITE_CACHE_DIR", "")      # 비우면 <OUT_ROOT>/_cache
+    # 디코드 프로세스 수. 0 = cpu_count 전부. 코어가 많을수록 캐시 생성이 빨라진다.
+    DECODE_WORKERS = env("SITE_DECODE_WORKERS", 0)
+
+    # ── 정밀도 (기본 끔) ──────────────────────────────────────────────────
+    # 실측 배속/오차 (4060 Ti, 임베딩 최대 절대차):
+    #     channels_last  1.03x  9.0e-4
+    #     bf16 + CL      1.54x  6.4e-3   <- 오차가 크다
+    #     fp16 + CL      1.50x  8.5e-4   <- 같은 속도에 오차 1/7
+    # ★ 기본 off 인 이유: 5.5e-4 오차만으로도 HDBSCAN bootstrap 이 뒤집혀
+    #   mean_stability 가 0.9682 -> 0.9624 로 갈린 실측이 있다. 측정 잡음폭이
+    #   ARI ±0.019 / Hom ±0.005 인 프로젝트에서 1.5배 때문에 지표를 흔들 수 없다.
+    #   속도가 급하고 arm 끼리 상대비교만 하면 되면 fp16 을 켜라 (전 arm 동일 설정 필수).
+    AMP = env("SITE_AMP", "off")               # off | fp16 | bf16
+    CHANNELS_LAST = env("SITE_CHANNELS_LAST", False)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 class Cluster:

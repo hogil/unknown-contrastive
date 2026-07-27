@@ -35,6 +35,7 @@ class Config:
     OUT_ROOT = Paths.OUT_ROOT
     BACKBONE = Paths.BACKBONE
     DEVICE = Runtime.DEVICE
+    CACHE = Runtime.CACHE
     BATCH = Runtime.BATCH
     REASSIGN = Cluster.REASSIGN
     SEEDS = Recipe.SEEDS
@@ -136,6 +137,7 @@ def main() -> int:
     pool, mcs, ms = s0["manifest"], s0["dial"]["mcs"], s0["dial"]["ms"]
     check_inputs(Config.BACKBONE, s0["image_root"])
     show_images(s0["image_root"], pool, getattr(Config, "EXTS", ""))
+    _cache = s0.get("cache_dir", "") if getattr(Config, "CACHE", True) else ""   # step0 이 만든 디코드 캐시
     print(f"[step0] pool={pool}  n={s0['n_images']:,}  dial mcs={mcs} ms={ms}\n")
 
     out_root = rel(Config.OUT_ROOT) / "step2_recipe"
@@ -183,7 +185,7 @@ def main() -> int:
         cp = Path(info["ckpt_dir"]) / info["selected"]["ckpt"]
         out = out_root / f"final_seed{seed}"
         run(deploy_cmd(Config.BACKBONE, pool, out, mcs, ms, [str(cp)],
-                       Config.DEVICE, int(Config.BATCH), Config.REASSIGN),
+                       Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache),
             log_path=out_root / f"final_seed{seed}.log")
         finals[f"seed{seed}"] = read_summary(out)
 
@@ -193,7 +195,7 @@ def main() -> int:
     if len(ens_paths) > 1:
         out = out_root / "final_ensemble"
         run(deploy_cmd(Config.BACKBONE, pool, out, mcs, ms, ens_paths,
-                       Config.DEVICE, int(Config.BATCH), Config.REASSIGN),
+                       Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache),
             log_path=out_root / "final_ensemble.log")
         ens = read_summary(out)
         finals["ensemble"] = ens

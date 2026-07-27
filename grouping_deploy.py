@@ -35,7 +35,7 @@ May-dial(mcs12/ms15) 로 stale (5) 라벨 없는 사내 데이터에서도 offli
                runs/sweep/abl_best_s1_B4_260724_111053/checkpoints/proj_ep18.pt \\
         --pool data/pools/unknown_eval100.json \\
         --out result_grouping/unknown_eval_grouping \\
-        --reassign nearest_q90 --device cpu
+        --reassign nearest_q90 --device auto
 
 flat 폴더(사내 실데이터, 하위폴더 없음) 배포:
     python grouping_deploy.py --backbone <pth> --proj <ckpt> \\
@@ -70,6 +70,8 @@ IMG = 384
 EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 TF = T.Compose([T.Resize((IMG, IMG), interpolation=T.InterpolationMode.BILINEAR), T.ToTensor(),
                 T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+_STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
 # ★ 이긴 운영점 다이얼 (real-domain clean546 champion) — 사용자 승인 없이 값 변경 금지, CLI 로 override 만.
 DEFAULT_MCS = 6
@@ -144,6 +146,48 @@ def load_proj(path, device):
     return _Head(proj, ad, d.get("gamma") if isinstance(d, dict) else None).eval().to(device)
 
 
+def resolve_device(requested: str) -> str:
+    """어느 장치로 도는지 **모호함 없이** 찍는다.
+
+    서버에서 "GPU 를 안 쓴다"가 반복돼서 조용한 fallback 을 없앴다. 원인은 셋뿐이다:
+      (A) --device 를 안 줬다        -> 예전 기본값이 cpu 였다. 지금은 auto.
+      (B) CPU-only torch wheel      -> torch.version.cuda 가 None. `pip install torch` 만
+                                       하면 이게 깔린다. CUDA 휠로 다시 깔아야 한다.
+      (C) 드라이버/컨테이너에서 GPU 미노출 -> nvidia-smi 는 되는데 is_available()=False.
+    """
+    built = torch.version.cuda
+    avail = torch.cuda.is_available()
+    print(f"[gpu] torch {torch.__version__} | CUDA 빌드 {built or '없음 (CPU-only wheel)'} "
+          f"| is_available {avail}", flush=True)
+    if avail:
+        i = torch.cuda.current_device()
+        p = torch.cuda.get_device_properties(i)
+        print(f"[gpu] cuda:{i} {p.name}  {p.total_memory / 2**30:.0f}GiB  "
+              f"cc{p.major}.{p.minor}", flush=True)
+
+    dev = "cuda" if (requested in ("auto", "cuda") and avail) else "cpu"
+
+    if requested in ("auto", "cuda") and not avail:
+        print("[gpu] ★ GPU 를 못 쓴다 — CPU 로 돈다. 둘 중 하나다:", flush=True)
+        if not built:
+            print("[gpu]   (B) torch 가 CPU-only wheel 이다. 이게 원인이다. 다시 깔아라:", flush=True)
+            print("[gpu]       pip install --force-reinstall torch torchvision "
+                  "--index-url https://download.pytorch.org/whl/cu124", flush=True)
+        else:
+            print(f"[gpu]   (C) torch 는 CUDA {built} 빌드인데 GPU 가 안 보인다. "
+                  f"nvidia-smi / 컨테이너 --gpus all / CUDA_VISIBLE_DEVICES 를 확인하라.", flush=True)
+    elif dev == "cuda":
+        # 실제로 GPU 에서 연산이 되는지 한 번 돌려본다 (is_available 만으로는 부족).
+        t = torch.randn(2048, 2048, device="cuda")
+        float((t @ t).sum())
+        torch.cuda.synchronize()
+        print(f"[gpu] 자체검사 통과 — VRAM 할당 "
+              f"{torch.cuda.memory_allocated() / 2**20:.0f}MiB", flush=True)
+        del t
+        torch.cuda.empty_cache()
+    return dev
+
+
 def proj_tag(proj_path: str) -> str:
     """체크포인트 경로에서 라벨-free 태그 derive (seed는 run_info.json 에서, epoch은 파일명에서)."""
     p = Path(proj_path)
@@ -179,15 +223,21 @@ def collect_pool(pool_dir: str):
     return paths, labels
 
 
-def embed_one_checkpoint(paths, backbone, proj, device, batch=32):
+def embed_one_checkpoint(paths, backbone, proj, device, batch=32, cache=None):
     """raw GAP f -> proj -> L2 (학습과 동일 순서; normalize 후 projection 은 버그)."""
     import time
     embs, t0, n = [], time.time(), len(paths)
     every = max(1, (n // batch) // 20)
+    _reset_timers()
     with torch.no_grad():
-        for bi, done, x in _iter_batches(paths, batch):
-            pool = backbone.forward_features(x.to(device, non_blocking=True)).mean(dim=(2, 3))
-            embs.append(F.normalize(proj(pool), dim=1).cpu())
+        for bi, done, x in _iter_batches(paths, batch, cache=cache):
+            _g = time.time()
+            with amp_ctx():
+                pool = backbone.forward_features(
+                    x.to(device, non_blocking=True)).mean(dim=(2, 3))
+            e = F.normalize(proj(pool.float()), dim=1).cpu()
+            _GPU[0] += time.time() - _g
+            embs.append(e)
             if bi % every == 0 or done >= n:
                 _progress(done, n, t0)
     return torch.cat(embs)
@@ -218,7 +268,42 @@ def _open_rgb(path):
     return im.convert("RGB")
 
 
-def _iter_batches(paths, batch, workers=None):
+def amp_ctx():
+    """SITE_AMP=fp16|bf16 이면 autocast, 아니면 아무것도 안 함.
+
+    ★ 기본 off. 실측 1.5배지만 임베딩이 8.5e-4(fp16)/6.4e-3(bf16) 어긋난다.
+      5.5e-4 만으로도 HDBSCAN bootstrap 이 뒤집혀 mean_stability 가
+      0.9682 -> 0.9624 로 갈린 적이 있다. 켤 거면 **모든 arm 에 동일하게** 켜라.
+    """
+    import contextlib
+    m = os.environ.get("SITE_AMP", "off").strip().lower()
+    if m in ("fp16", "float16"):
+        return torch.autocast("cuda", dtype=torch.float16)
+    if m in ("bf16", "bfloat16"):
+        return torch.autocast("cuda", dtype=torch.bfloat16)
+    return contextlib.nullcontext()
+
+
+def maybe_channels_last(m):
+    if os.environ.get("SITE_CHANNELS_LAST", "0").strip().lower() in ("1", "true", "yes", "on"):
+        return m.to(memory_format=torch.channels_last)
+    return m
+
+
+def decode_workers() -> int:
+    """디코드 스레드 수.
+
+    ★ 병목은 GPU 가 아니라 6400x6400 palette PNG 디코드다 (실측 배치 시간의 62~79%).
+      H200 처럼 GPU 가 빠를수록 nvidia-smi util 은 오히려 낮게(한 자리) 보인다 —
+      GPU 를 안 쓰는 게 아니라 굶는 것이다. 코어를 다 쓰는 게 유일한 해법이다.
+      예전 상한 16 은 코어 많은 서버에서 그대로 낭비였다. 지금은 상한 없음.
+    """
+    import os
+    n = int(os.environ.get("SITE_DECODE_WORKERS", "0"))
+    return n if n > 0 else max(4, os.cpu_count() or 4)
+
+
+def _iter_batches(paths, batch, workers=None, cache=None):
     """이미지 디코드를 스레드로 병렬화하고 다음 배치를 미리 준비한다.
 
     병목은 GPU 가 아니라 **단일 스레드 PIL 디코드**다 (실측: 배치당 8.25s 중 GPU 0.58s).
@@ -228,30 +313,62 @@ def _iter_batches(paths, batch, workers=None):
     import os
     from concurrent.futures import ThreadPoolExecutor
     if workers is None:
-        workers = int(os.environ.get("SITE_DECODE_WORKERS", "0")) or min(16, (os.cpu_count() or 4))
+        workers = decode_workers()
+    prefetch = max(2, int(os.environ.get("SITE_PREFETCH", "3")))
     idx = list(range(0, len(paths), batch))
 
-    def build(i):
-        return torch.stack([TF(_open_rgb(p)) for p in paths[i:i + batch]])
+    if cache is not None:
+        # ★ 이미 384 로 줄여 놓은 uint8 을 읽는다. 디코드 0 — GPU 가 굶지 않는다.
+        #   픽셀은 원본 경로와 동일하다 (deploy/build_cache.py 참조, 최대 절대차 0).
+        def build(i):
+            a = torch.from_numpy(np.array(cache[i:i + batch]))   # memmap -> 쓰기가능 복사
+            x = a.permute(0, 3, 1, 2).contiguous().float().div_(255.0)
+            # ★ contiguous() 필수. 값이 같아도 레이아웃이 다르면 cuDNN 이 다른 커널을
+            #   골라 임베딩이 5.5e-4 어긋나고, HDBSCAN bootstrap 이 뒤집혀
+            #   stability 가 0.9682 -> 0.9624 로 갈렸다 (실측). 붙이면 비트 단위로 같다.
+            return (x - _MEAN) / _STD
+    else:
+        def build(i):
+            return torch.stack([TF(_open_rgb(p)) for p in paths[i:i + batch]])
 
+    import time
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = [ex.submit(build, i) for i in idx[:2]]      # 앞서 2배치 미리 채움
-        nxt = 2
+        futs = [ex.submit(build, i) for i in idx[:prefetch]]
+        nxt = prefetch
         for k in range(len(idx)):
+            _t = time.time()
             x = futs[k].result()
+            _WAIT[0] += time.time() - _t      # ★ 디코드 대기 = GPU 가 노는 시간
             if nxt < len(idx):
                 futs.append(ex.submit(build, idx[nxt])); nxt += 1
             yield k, min(idx[k] + batch, len(paths)), x
 
 
+# 디코드 대기 / GPU 연산 누적 시간. "GPU util 이 왜 6% 인가"를 추측이 아니라 숫자로 답한다.
+_WAIT = [0.0]
+_GPU = [0.0]
+
+
+def _reset_timers():
+    _WAIT[0] = _GPU[0] = 0.0
+
+
 def _progress(done, total, t0, what="embed"):
-    """긴 임베딩 구간이 멈춘 것처럼 보이지 않게 진행률을 찍는다."""
+    """긴 임베딩 구간이 멈춘 것처럼 보이지 않게 진행률을 찍는다.
+
+    ★ 디코드 대기와 GPU 연산 비율을 같이 찍는다. 6400x6400 palette PNG 디코드가
+      배치 시간의 대부분이라 nvidia-smi util 이 한 자리로 보이는 게 정상이다 —
+      그게 GPU 를 안 쓰는 것과 다르다는 걸 로그에서 바로 구분할 수 있어야 한다.
+    """
     import time
     el = time.time() - t0
     rate = done / el if el > 0 else 0
     eta = (total - done) / rate if rate > 0 else 0
+    split = ""
+    if el > 0 and (_WAIT[0] or _GPU[0]):
+        split = (f"  [디코드대기 {100*_WAIT[0]/el:4.1f}% / GPU {100*_GPU[0]/el:4.1f}%]")
     print(f"  [{what}] {done}/{total} ({100*done/max(1,total):5.1f}%)  "
-          f"{rate:5.1f} img/s  경과 {el/60:.1f}분  남은 {eta/60:.1f}분", flush=True)
+          f"{rate:5.1f} img/s  경과 {el/60:.1f}분  남은 {eta/60:.1f}분{split}", flush=True)
 
 
 def hdbscan_predict(z, mcs, ms, method, eps):
@@ -313,12 +430,19 @@ def main():
     ap.add_argument("--offline-eval", action="store_true",
                      help="★ 명시할 때만 라벨 기반 P1-P4/ARI/AMI 채점 (offline_eval.csv+offline_summary.json). "
                           "기본 OFF — 폴더명이 진짜 라벨이 아니면(사내 실데이터) 가짜 점수 방지.")
-    ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"],
-                     help="기본 cpu. GPU 는 다른 학습이 비어있을 때만 --device cuda 로 명시.")
+    ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"],
+                     help="기본 auto = GPU 있으면 GPU. 강제로 CPU 를 쓰려면 --device cpu.")
     ap.add_argument("--batch", type=int, default=32)
+    ap.add_argument("--no-composites", action="store_true",
+                     help="composite 생략. ★ arm/셀 비교 단계에서는 켜라 — composite 는 "
+                          "원본 6400x6400 을 다시 읽어 arm 당 ~70초를 먹는데, arm 을 "
+                          "고르는 데는 쓰이지 않는다(판정은 seed_noise/k/coherence).")
+    ap.add_argument("--cache", default="",
+                     help="deploy/build_cache.py 로 만든 384 캐시 폴더. 있으면 디코드를 "
+                          "건너뛴다(픽셀 동일). arm 마다 다시 디코드하는 낭비를 없앤다.")
     a = ap.parse_args()
 
-    device = a.device if (a.device == "cpu" or torch.cuda.is_available()) else "cpu"
+    device = resolve_device(a.device)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -327,13 +451,31 @@ def main():
         raise SystemExit(f"[grouping_deploy] no images found under {a.pool} (checked recursively, exts={sorted(EXTS)})")
     n_labeled = sum(1 for l in labels if l is not None)
     import os as _os
-    _w = int(_os.environ.get("SITE_DECODE_WORKERS", "0")) or min(16, (_os.cpu_count() or 4))
+    _w = decode_workers()
     print(f"[run] palette_mask={_PALETTE_MASK} (학습 때와 같아야 한다 — champion/b4 는 off 로 학습됨)", flush=True)
-    print(f"[run] device={device}  decode_workers={_w}  batch={a.batch}", flush=True)
+    print(f"[run] device={device}  decode_workers={_w} (cpu {_os.cpu_count()})  "
+          f"batch={a.batch}  prefetch={_os.environ.get('SITE_PREFETCH', '3')}", flush=True)
     print(f"[data] {len(paths)} imgs ({n_labeled} with a parent-folder label, {len(paths) - n_labeled} flat/root)", flush=True)
 
+    # ★ 디코드 캐시. 병목이 디코드라 arm 마다 다시 읽으면 GPU 가 그만큼 논다.
+    _cache = None
+    _cdir = a.cache or _os.environ.get("SITE_CACHE_DIR", "")
+    if _cdir:
+        try:
+            sys.path.append(str(REPO_ROOT / "deploy"))
+            from build_cache import load_cache
+            _cache = load_cache(_cdir, paths, _PALETTE_MASK)
+        except Exception as e:
+            print(f"[cache] 로드 실패({type(e).__name__}: {e}) -> 원본을 읽는다", flush=True)
+        if _cache is None:
+            print(f"[cache] {_cdir} 를 쓸 수 없다 (없거나 pool/palette_mask 불일치) "
+                  f"-> 원본을 읽는다. 만들려면: python deploy/build_cache.py", flush=True)
+        else:
+            print(f"[cache] 사용 {_cdir}  shape={tuple(_cache.shape)}  "
+                  f"디코드 건너뜀", flush=True)
+
     print(f"[model] backbone={a.backbone}", flush=True)
-    bb = load_backbone(a.backbone, device)
+    bb = maybe_channels_last(load_backbone(a.backbone, device))
     tags = []
     per_ckpt_embs = []
     if not a.proj:
@@ -344,10 +486,16 @@ def main():
         import time
         _e, _t0, _n = [], time.time(), len(paths)
         _every = max(1, (_n // a.batch) // 20)
+        _reset_timers()
         with torch.no_grad():
-            for _bi, _done, _x in _iter_batches(paths, a.batch):
-                _f = bb.forward_features(_x.to(device, non_blocking=True)).mean(dim=(2, 3))
-                _e.append(F.normalize(_f, dim=1).cpu())
+            for _bi, _done, _x in _iter_batches(paths, a.batch, cache=_cache):
+                _g = time.time()
+                with amp_ctx():
+                    _f = bb.forward_features(
+                        _x.to(device, non_blocking=True)).mean(dim=(2, 3))
+                _q = F.normalize(_f.float(), dim=1).cpu()
+                _GPU[0] += time.time() - _g
+                _e.append(_q)
                 if _bi % _every == 0 or _done >= _n:
                     _progress(_done, _n, _t0)
         per_ckpt_embs.append(torch.cat(_e))
@@ -356,7 +504,7 @@ def main():
         tags.append(tag)
         print(f"[model] proj={proj_path} (tag={tag})", flush=True)
         proj = load_proj(proj_path, device)
-        per_ckpt_embs.append(embed_one_checkpoint(paths, bb, proj, device, a.batch))
+        per_ckpt_embs.append(embed_one_checkpoint(paths, bb, proj, device, a.batch, _cache))
 
     if len(per_ckpt_embs) > 1:
         z = F.normalize(torch.cat(per_ckpt_embs, dim=1), dim=1).numpy().astype("float32")
@@ -413,16 +561,20 @@ def main():
         # RGB 평균이 아니라 **palette index 의 grade 빈도**를 쌓아 스칼라 맵으로 만들고
         # colormap 으로 그린다. grade 는 순서형 범주라 색 평균은 의미가 없다.
         # 원본 해상도 유지 / chip 경계는 전부 idx10 회색 / chip 안 bin 번호는 제거된다.
+        # ★ --no-composites 면 건너뛴다. composite 는 임베딩 캐시(384)를 못 쓰고 원본
+        #   6400x6400 을 다시 읽어야 해서 arm 당 ~70초를 먹는데(실측: 임베딩은 5초),
+        #   arm 을 고르는 판정에는 쓰이지 않는다. 고른 뒤 그 arm 만 만들면 된다.
         gdir_c = comp_root / f"group_{c:03d}_n{len(idx)}"
-        try:
-            from deploy.composite import write_group_composites
-        except Exception:
-            sys.path.append(str(REPO_ROOT / "deploy"))
-            from composite import write_group_composites
-        try:
-            write_group_composites([paths[i] for i in idx], gdir_c)
-        except Exception as e:
-            print(f"  [warn] group {c} composite 실패: {e}", flush=True)
+        if not a.no_composites:
+            try:
+                from deploy.composite import write_group_composites
+            except Exception:
+                sys.path.append(str(REPO_ROOT / "deploy"))
+                from composite import write_group_composites
+            try:
+                write_group_composites([paths[i] for i in idx], gdir_c)
+            except Exception as e:
+                print(f"  [warn] group {c} composite 실패: {e}", flush=True)
         # medoid = 그룹 중심에 가장 가까운 **실제 원본** (heatmap 과 대조용)
         gdir_c.mkdir(parents=True, exist_ok=True)
         shutil.copy2(paths[order[0]], gdir_c / f"medoid_{Path(paths[order[0]]).name}")

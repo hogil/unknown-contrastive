@@ -36,6 +36,7 @@ class Config:
     OUT_ROOT = Paths.OUT_ROOT
     BACKBONE = Paths.BACKBONE
     DEVICE = Runtime.DEVICE
+    CACHE = Runtime.CACHE
     BATCH = Runtime.BATCH
     REASSIGN = Cluster.REASSIGN
     EPOCHS = epochs()
@@ -101,6 +102,7 @@ def main() -> int:
     pool, mcs, ms = s0["manifest"], s0["dial"]["mcs"], s0["dial"]["ms"]
     check_inputs(Config.BACKBONE, s0["image_root"])
     show_images(s0["image_root"], pool, getattr(Config, "EXTS", ""))
+    _cache = s0.get("cache_dir", "") if getattr(Config, "CACHE", True) else ""   # step0 이 만든 디코드 캐시
     print(f"[step0] pool={pool}  n={s0['n_images']:,}  dial mcs={mcs} ms={ms}")
 
     cells = [c.strip() for c in str(Config.CELLS).split(",") if c.strip()]
@@ -173,7 +175,7 @@ def main() -> int:
     ck_list += [str(Path(g["ckpt_dir"]) / g["selected"]["ckpt"]) for g in r2.get(final_win, [])]
     out = out_root / "final"
     run(deploy_cmd(Config.BACKBONE, pool, out, mcs, ms, ck_list,
-                   Config.DEVICE, int(Config.BATCH), Config.REASSIGN),
+                   Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, True),
         log_path=out_root / "final.log")
     final_sum = read_summary(out)
 

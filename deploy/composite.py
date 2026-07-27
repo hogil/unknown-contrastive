@@ -204,6 +204,36 @@ def build_lut(stops_hex=None, n: int = 256, positions=None) -> np.ndarray:
     return lut
 
 
+def _decode_indices(paths, workers: int = 0, prefetch: int = 4):
+    """palette index 배열을 **스레드로 미리 디코드**해서 순서대로 흘려준다.
+
+    composite 는 원본 6400x6400 을 그대로 읽어야 해서 (임베딩 캐시는 384 라 못 쓴다)
+    디코드가 비용의 대부분이다 — 실측 24장 12.84s 중 대부분. 누적 자체는 numpy 라
+    GIL 을 놓으므로 디코드만 앞질러 돌려도 그만큼 줄어든다.
+    메모리는 6400^2 uint8 = 41MB * prefetch 만 쓴다.
+    """
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(p):
+        im = Image.open(p)
+        if im.mode != "P":
+            im = im.convert("P", palette=Image.Palette.ADAPTIVE)
+        return np.asarray(im, dtype=np.uint8)
+
+    w = workers or int(os.environ.get("SITE_COMPOSITE_WORKERS", "0")) \
+        or max(2, min(8, (os.cpu_count() or 4)))
+    paths = list(paths)
+    with ThreadPoolExecutor(max_workers=w) as ex:
+        futs = [ex.submit(one, p) for p in paths[:prefetch]]
+        nxt = prefetch
+        for k in range(len(paths)):
+            a = futs[k].result()
+            if nxt < len(paths):
+                futs.append(ex.submit(one, paths[nxt])); nxt += 1
+            yield a
+
+
 def accumulate_sums(paths, num, den, grades=None):
     """원본 해상도 그대로 누적. 리사이즈 없음.
 
@@ -222,11 +252,7 @@ def accumulate_sums(paths, num, den, grades=None):
 
     num_sum = den_sum = cnt = has_grade = border = text = None
     n = 0
-    for p in paths:
-        im = Image.open(p)
-        if im.mode != "P":
-            im = im.convert("P", palette=Image.Palette.ADAPTIVE)
-        a = np.asarray(im, dtype=np.uint8)
+    for a in _decode_indices(paths):
         if num_sum is None:
             num_sum = np.zeros(a.shape, np.float32)
             den_sum = np.zeros(a.shape, np.float32)
@@ -371,13 +397,17 @@ def write_group_composites(paths, out_dir, grades: list[int] | None = None,
         paths, num=num, den=den, grades=grades)
     tag = "" if grades is None else "_" + "".join(str(g) for g in sorted(grades))
     base = base_path or paths[0]
+    # PNG 압축 레벨. 6400x6400 에서 level6 2.32s/36.5MB vs level1 0.91s/54.4MB —
+    # arm 6개 x 그룹 여러 개면 저장만으로 수십 초라 기본을 1 로 둔다.
+    import os
+    _cl = int(os.environ.get("SITE_PNG_COMPRESS", "1"))
     render_composite(wt, m_wt, border, base, text,
                      stops_hex=stops_hex, positions=positions).save(
-        out / f"{prefix}square_weighted_average{tag}.png")
+        out / f"{prefix}square_weighted_average{tag}.png", compress_level=_cl)
     if also_square_average:
         render_composite(sq, m_sq, border, base, text,
                          stops_hex=stops_hex, positions=positions).save(
-            out / f"{prefix}square_average{tag}.png")
+            out / f"{prefix}square_average{tag}.png", compress_level=_cl)
     return {"n": n, "grades": grades, "stops": list(stops_hex),
             "wt_range": [float(wt[m_wt].min()), float(wt[m_wt].max())] if m_wt.any() else None,
             "sq_range": [float(sq[m_sq].min()), float(sq[m_sq].max())] if m_sq.any() else None}

@@ -14,13 +14,14 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (add_path, REPO, banner, dial_from_min_group, dial_scan_range,  # noqa: E402
                           die, env, pick_dial_by_stability, rel, save_result,
-                          show_config, show_images)
+                          show_config, show_images, cache_dir_for)
 
 
 from config import Cluster, Paths, Runtime  # noqa: E402
@@ -34,6 +35,9 @@ class Config:
     OUT_ROOT = Paths.OUT_ROOT
     BACKBONE = Paths.BACKBONE
     DEVICE = Runtime.DEVICE
+    CACHE = Runtime.CACHE
+    CACHE_DIR = Runtime.CACHE_DIR
+    DECODE_WORKERS = Runtime.DECODE_WORKERS
     BATCH = Runtime.BATCH
     MIN_GROUP_SIZE = Cluster.MIN_GROUP_SIZE
     AUTO_DIAL = Cluster.AUTO_DIAL
@@ -86,6 +90,31 @@ def resolve_dial(n: int, pool_path: str):
     return mcs, ms, scan_rows
 
 
+def build_decode_cache(pool_path, out_root) -> str:
+    """★ 디코드 캐시를 여기서 만들어 둔다 — step1~5 가 전부 재사용한다.
+
+    안 만들면 step1 의 arm 6개가 **같은 이미지를 6번 다시 디코드**한다.
+    실측(4060 Ti): 캐시 없음 7.6 img/s(GPU 21~38%) -> 캐시 19.7 img/s(GPU 99.5%).
+    GPU 가 빠를수록 격차가 커진다. 결과는 비트 단위로 동일하다.
+    """
+    if not Config.CACHE:
+        print("[cache] SITE_CACHE=0 -> 캐시 없이 매번 디코드한다 (느리다)\n")
+        return ""
+    from build_cache import build
+    from scripts._common import load_pool_manifest
+    cdir = cache_dir_for(Config.OUT_ROOT, Config.CACHE_DIR)
+    paths = [str(p) for p, _ in sorted(load_pool_manifest(Path(str(rel(pool_path)))),
+                                       key=lambda e: e[0])]
+    pm = str(os.environ.get("UC_PALETTE_MASK", "0")).lower() in ("1", "true", "yes", "on")
+    try:
+        build(paths, cdir, pm, int(Config.DECODE_WORKERS))
+    except Exception as e:
+        print(f"[cache] 생성 실패({type(e).__name__}: {e}) -> 캐시 없이 진행한다", flush=True)
+        return ""
+    return cdir
+
+
+
 def main() -> int:
     banner("STEP 0", "manifest 생성 + pool 기하 -> 권장 다이얼")
     cfg = show_config(Config)
@@ -105,7 +134,9 @@ def main() -> int:
         print(f"\n[pool] 기존 manifest 사용: {mp}")
         print(f"[pool] n = {n:,} 장   root = {root}")
         out_root = rel(Config.OUT_ROOT)
+        cdir = build_decode_cache(mp, out_root)
         save_result(out_root, "step0", {
+            "cache_dir": cdir,
             "n_images": n, "min_group_size": int(Config.MIN_GROUP_SIZE),
             "auto_dial": bool(Config.AUTO_DIAL), "dial_scan": scan_rows,
             "manifest": str(mp.relative_to(REPO)) if mp.is_relative_to(REPO) else str(mp),
@@ -158,6 +189,7 @@ def main() -> int:
         "dial": {"mcs": mcs, "ms": ms, "method": "leaf", "eps": 0.06},
         "config": cfg,
     }
+    payload["cache_dir"] = build_decode_cache(mpath, out_root)
     save_result(out_root, "step0", payload)
 
     print("\n다음:  python deploy/step1_zeroshot.py")

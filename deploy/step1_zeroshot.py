@@ -35,6 +35,7 @@ class Config:
     OUT_ROOT = Paths.OUT_ROOT
     BACKBONE = Paths.BACKBONE
     DEVICE = Runtime.DEVICE
+    CACHE = Runtime.CACHE
     BATCH = Runtime.BATCH
     CHAMPION_PROJ = Paths.CHAMPION_PROJ
     B4_BACKBONE = Paths.B4_BACKBONE
@@ -60,6 +61,10 @@ def main() -> int:
     pool = s0["manifest"]
     mcs, ms = s0["dial"]["mcs"], s0["dial"]["ms"]
     show_images(s0.get("image_root", ""), pool, getattr(Config, "EXTS", ""))
+    # ★ step0 이 만든 디코드 캐시. arm 6개가 각자 다시 디코드하던 걸 없앤다.
+    _cache = s0.get("cache_dir", "") if getattr(Config, "CACHE", True) else ""
+    if _cache:
+        print(f"[cache] {_cache} 재사용 — arm 마다 다시 디코드하지 않는다\n")
     print(f"[step0] pool={pool}  n={s0['n_images']:,}  dial mcs={mcs} ms={ms}\n")
 
     champ = [p.strip() for p in str(Config.CHAMPION_PROJ).split(",") if p.strip()]
@@ -102,7 +107,7 @@ def main() -> int:
         out = out_root / name.replace("(", "_").replace(")", "")
         extra = {"UC_PALETTE_MASK": "1"} if name == "frozen_masked" else {"UC_PALETTE_MASK": "0"}
         rc = run(deploy_cmd(bb, pool, out, mcs, ms, projs,
-                            Config.DEVICE, int(Config.BATCH), Config.REASSIGN),
+                            Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, True),
                  env_extra=extra, log_path=out_root / f"{out.name}.log")
         if rc != 0:
             print(f"[warn] {name} 종료코드 {rc} — summary.json 존재로 판정한다")
