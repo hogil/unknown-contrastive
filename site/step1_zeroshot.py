@@ -80,7 +80,7 @@ def main() -> int:
         print(f"[warn] champion head 없음 -> frozen/z0 만 비교한다. 없는 파일: {missing}")
         print("       체크포인트를 받으면 다시 돌려라. (site/README.md 참조)\n")
 
-    check_inputs(Config.BACKBONE, s0["image_root"], s0["k_hat"],
+    check_inputs(Config.BACKBONE, s0["image_root"],
                  champ if use_champ else None)
 
     out_root = rel(Config.OUT_ROOT) / "step1_zeroshot"

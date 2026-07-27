@@ -4,8 +4,12 @@
 
   python site/step0_prepare.py
 
-여기서 정한 다이얼(mcs/ms)을 이후 step1~5 가 전부 물려 쓴다. 이 값이 틀리면
-그 뒤 모든 결론이 조용히 뒤집힌다(실측 전례 있음) — 반드시 K_HAT 을 현업 값으로 채워라.
+여기서 정한 다이얼(mcs/ms)을 이후 step1~5 가 전부 물려 쓴다.
+
+★ 불량 종수(k)는 입력하지 않는다. 모르는 게 전제이고, HDBSCAN 을 쓰는 이유가 k-free 라서다.
+  다이얼은 **"몇 장 이상 뭉쳐야 하나의 그룹으로 볼 것인가"**(MIN_GROUP_SIZE)로 정한다 —
+  이건 클래스 수가 아니라 **보고 가치가 있는 최소 그룹 크기**라 k 를 몰라도 답할 수 있다.
+  그것도 정하기 싫으면 AUTO_DIAL=1 로 두면 bootstrap 안정성으로 라벨·k 없이 골라준다.
 """
 from __future__ import annotations
 
@@ -14,8 +18,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _site_common import (REPO, banner, dial_search_range, die, env, rel,  # noqa: E402
-                          recommend_dial, save_result, show_config)
+from _site_common import (REPO, banner, dial_from_min_group, dial_scan_range,  # noqa: E402
+                          die, env, pick_dial_by_stability, rel, save_result,
+                          show_config)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -25,9 +30,19 @@ class Config:
     # 사내 이미지 루트. flat(`*.png`) / 중첩(`<any>/<any>/*.png`) 둘 다 됨.
     IMAGE_ROOT = env("SITE_IMAGE_ROOT", "data/site_images")
 
-    # ★ 예상 불량 종수. 현업에서 받아야 한다. 이 값으로 다이얼이 정해진다.
-    #   라벨 없이 다이얼을 고를 방법이 없다는 게 168셀 실측으로 확인됐다.
-    K_HAT = env("SITE_K_HAT", 8)
+    # ★ "몇 장 이상 뭉쳐야 하나의 그룹으로 볼 것인가" = HDBSCAN min_cluster_size.
+    #   불량 종수(k)가 아니다 — k 는 모르는 게 전제다. 이건 운영 판단이라 답할 수 있다:
+    #   "20장쯤 모이면 들여다볼 가치가 있다" 같은 식.
+    MIN_GROUP_SIZE = env("SITE_MIN_GROUP_SIZE", 20)
+
+    # 1 이면 MIN_GROUP_SIZE 주변을 스캔해 **bootstrap 안정성 최대**인 다이얼을 자동 선택.
+    # 라벨도 k 도 안 쓴다. 실측에서 severstal 의 아는 정답(mcs20)을 정확히 집어냈다.
+    AUTO_DIAL = env("SITE_AUTO_DIAL", False)
+
+    # AUTO_DIAL=1 일 때만 필요 (임베딩 계산용). frozen backbone 이면 충분하다.
+    BACKBONE = env("SITE_BACKBONE", "weights/convnextv2_base.fcmae_ft_in22k_in1k_384.pth")
+    DEVICE = env("SITE_DEVICE", "cuda")
+    BATCH = env("SITE_BATCH", 32)
 
     # 산출 루트
     OUT_ROOT = env("SITE_OUT_ROOT", "runs/site")
@@ -45,6 +60,51 @@ class Config:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def resolve_dial(n: int, pool_path: str):
+    """k 를 쓰지 않고 (mcs, ms) 결정.
+       AUTO_DIAL=0 -> MIN_GROUP_SIZE 를 그대로 min_cluster_size 로 사용
+       AUTO_DIAL=1 -> 그 주변을 스캔해 bootstrap 안정성 최대인 값 선택 (라벨/k 무관)
+       SITE_MCS / SITE_MS 를 주면 그게 최우선."""
+    scan_rows = []
+    mcs, ms = dial_from_min_group(int(Config.MIN_GROUP_SIZE))
+    if Config.AUTO_DIAL:
+        import torch
+        import torch.nn.functional as F
+        sys.path.insert(0, str(REPO))
+        import grouping_deploy as gd
+        bb_p = rel(Config.BACKBONE)
+        if not bb_p.exists():
+            die(f"AUTO_DIAL=1 이면 backbone 이 필요하다: {bb_p}\n"
+                f"  또는 AUTO_DIAL=0 으로 두고 MIN_GROUP_SIZE 만 정해라.")
+        paths, _ = gd.collect_pool(str(rel(pool_path)))
+        bb = gd.load_backbone(str(bb_p), Config.DEVICE)
+        tf = gd.T.Compose([gd.T.Resize((384, 384), interpolation=gd.T.InterpolationMode.BILINEAR),
+                           gd.T.ToTensor(),
+                           gd.T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
+        bs, fs = int(Config.BATCH), []
+        print(f"[auto-dial] 임베딩 계산 중 ({len(paths):,} 장)...", flush=True)
+        with torch.no_grad():
+            for i in range(0, len(paths), bs):
+                x = torch.stack([tf(gd.Image.open(q).convert("RGB"))
+                                 for q in paths[i:i + bs]]).to(Config.DEVICE)
+                fs.append(bb.forward_features(x).mean(dim=(2, 3)).float().cpu())
+        z = F.normalize(torch.cat(fs), dim=1).numpy().astype("float32")
+        scan = dial_scan_range(n, int(Config.MIN_GROUP_SIZE))
+        print(f"[auto-dial] 스캔 mcs in {scan}  (bootstrap 안정성 최대 선택, 라벨/k 미사용)")
+        mcs, ms, scan_rows = pick_dial_by_stability(
+            z, scan, gd.hdbscan_predict, gd.per_group_stability)
+        print(f"  {'mcs':<7}{'ms':<6}{'k':<6}{'noise%':<10}stability")
+        for r in scan_rows:
+            mark = "  <-- 선택" if r["mcs"] == mcs else ""
+            print(f"  {r['mcs']:<7}{r['ms']:<6}{r['k']:<6}{r['noise_pct']:<10}"
+                  f"{r['stability']}{mark}")
+    if int(Config.MCS_OVERRIDE) > 0:
+        mcs = int(Config.MCS_OVERRIDE)
+    if int(Config.MS_OVERRIDE) > 0:
+        ms = int(Config.MS_OVERRIDE)
+    return mcs, ms, scan_rows
+
+
 def main() -> int:
     banner("STEP 0", "manifest 생성 + pool 기하 -> 권장 다이얼")
     cfg = show_config(Config)
@@ -59,24 +119,17 @@ def main() -> int:
         if n == 0:
             die(f"manifest 에 files 가 없다: {mp}")
         root = Path(man["root"])
-        k_hat = int(Config.K_HAT)
-        mcs, ms = recommend_dial(n, k_hat)
-        if int(Config.MCS_OVERRIDE) > 0:
-            mcs = int(Config.MCS_OVERRIDE)
-        if int(Config.MS_OVERRIDE) > 0:
-            ms = int(Config.MS_OVERRIDE)
-        per_class = n / k_hat
+        mcs, ms, scan_rows = resolve_dial(n, str(mp))
         print(f"\n[pool] 기존 manifest 사용: {mp}")
         print(f"[pool] n = {n:,} 장   root = {root}")
-        print(f"[pool] k_hat = {k_hat}  ->  클래스당 예상 {per_class:.1f} 장")
-        print(f"\n[dial] ★ 권장  mcs = {mcs} , ms = {ms}   (= n/k 의 {100*mcs/per_class:.1f}%)")
         out_root = rel(Config.OUT_ROOT)
         save_result(out_root, "step0", {
-            "n_images": n, "k_hat": k_hat, "per_class_est": round(per_class, 1),
+            "n_images": n, "min_group_size": int(Config.MIN_GROUP_SIZE),
+            "auto_dial": bool(Config.AUTO_DIAL), "dial_scan": scan_rows,
             "manifest": str(mp.relative_to(REPO)) if mp.is_relative_to(REPO) else str(mp),
             "image_root": root.as_posix(), "subdirs": [],
             "dial": {"mcs": mcs, "ms": ms, "method": "leaf", "eps": 0.06},
-            "dial_search_mcs": dial_search_range(n, k_hat), "config": cfg})
+            "config": cfg})
         print("\n다음:  python site/step1_zeroshot.py")
         print(f"\n[OUT] {out_root}")
         return 0
@@ -111,32 +164,16 @@ def main() -> int:
     mpath = out_root / "site_pool.json"
     mpath.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    k_hat = int(Config.K_HAT)
-    mcs, ms = recommend_dial(n, k_hat)
-    if int(Config.MCS_OVERRIDE) > 0:
-        mcs = int(Config.MCS_OVERRIDE)
-    if int(Config.MS_OVERRIDE) > 0:
-        ms = int(Config.MS_OVERRIDE)
-    search = dial_search_range(n, k_hat)
-
-    per_class = n / k_hat
+    mcs, ms, scan_rows = resolve_dial(n, str(mpath))
     print(f"\n[pool] n = {n:,} 장   |   하위폴더 {len(subdirs)}개"
           + (f"  (예: {', '.join(subdirs[:4])}{' ...' if len(subdirs) > 4 else ''})" if subdirs else ""))
-    print(f"[pool] k_hat = {k_hat}  ->  클래스당 예상 {per_class:.1f} 장")
-    print(f"\n[dial] ★ 권장  mcs = {mcs} , ms = {ms}   (= n/k 의 {100*mcs/per_class:.1f}%)")
-    print(f"[dial] 좁은 sweep 범위(step3 에서 사용): mcs in {search}")
-    print("\n  근거: mcs ~= (n/k)*0.10. mcs6 이 정상 작동한 pool 은 전부 9.9~11.4% 대역이었고,")
-    print("        3.0% 로 어긋난 pool 에서는 결론이 통째로 뒤집혔다(적응이 '품질 희생'으로 잘못 판정).")
-    if per_class < 30:
-        print("\n  ⚠ 클래스당 예상 장수가 30 미만이다. 클러스터가 형성되기 어렵다 —")
-        print("     이미지를 더 모으거나 k_hat 이 과대추정은 아닌지 현업과 확인해라.")
 
     payload = {
-        "n_images": n, "k_hat": k_hat, "per_class_est": round(per_class, 1),
+        "n_images": n, "min_group_size": int(Config.MIN_GROUP_SIZE),
+        "auto_dial": bool(Config.AUTO_DIAL), "dial_scan": scan_rows,
         "manifest": str(mpath.relative_to(REPO)) if mpath.is_relative_to(REPO) else str(mpath),
         "image_root": root.as_posix(), "subdirs": subdirs[:50],
         "dial": {"mcs": mcs, "ms": ms, "method": "leaf", "eps": 0.06},
-        "dial_search_mcs": search,
         "config": cfg,
     }
     save_result(out_root, "step0", payload)

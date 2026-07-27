@@ -133,7 +133,7 @@ def main() -> int:
 
     s0 = load(Config.OUT_ROOT, "step0")
     pool, mcs, ms = s0["manifest"], s0["dial"]["mcs"], s0["dial"]["ms"]
-    check_inputs(Config.BACKBONE, s0["image_root"], s0["k_hat"])
+    check_inputs(Config.BACKBONE, s0["image_root"])
     print(f"[step0] pool={pool}  n={s0['n_images']:,}  dial mcs={mcs} ms={ms}")
 
     cells = [c.strip() for c in str(Config.CELLS).split(",") if c.strip()]

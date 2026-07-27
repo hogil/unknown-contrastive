@@ -98,7 +98,7 @@ champion(FCMAE + 2 head) 과 b4(자체 backbone + 1 head) 중 어느 쪽이 사�
 ```bash
 # 사내 이미지를 프로젝트 안에 두거나 경로를 지정
 export SITE_IMAGE_ROOT=data/site_images     # 기본값
-export SITE_K_HAT=8                         # ★ 예상 불량 종수 (현업에서 받아야 함)
+export SITE_MIN_GROUP_SIZE=20               # 몇 장 이상 뭉치면 그룹으로 볼지 (k 아님)
 
 python site/step0_prepare.py     # manifest + pool 기하 -> 권장 다이얼
 python site/step1_zeroshot.py    # 사다리 ① 학습 0.  frozen / z0 / champion 3-arm
@@ -118,33 +118,46 @@ python site/step5_temporal.py    # ★ 최종 산출물: 시간축 신규불량 
 
 ---
 
-## 2. `SITE_K_HAT` 이 왜 필수인가
+## 2. 불량 종수(k)는 입력하지 않는다
 
-HDBSCAN 다이얼(`mcs`)이 pool 기하에 안 맞으면 **결론이 통째로 뒤집힌다.**
-실측 규칙은 `mcs ≈ (n / k) × 0.10` 이고, 이건 **k(불량 종수)를 알아야 쓴다.**
+**k 는 모르는 게 전제다.** HDBSCAN 을 쓰는 이유가 바로 k-free 라서고, k 를 입력으로 받으면
+그 이유가 사라진다. 대신 정하는 건 이것 하나다:
 
-| pool | n | k | n/k | mcs6 은 몇 %? | 맞는 mcs |
-|---|--:|--:|--:|--:|--:|
-| clean546 | 546 | 9 | 60.7 | 9.9% | 6 ✅ |
-| anchor | 2260 | 43 | 52.6 | 11.4% | 5 ✅ |
-| severstal | 995 | 5 | 199.0 | **3.0%** ❌ | **20** |
+```
+SITE_MIN_GROUP_SIZE = 20      # "몇 장 이상 뭉쳐야 하나의 그룹으로 볼 것인가"
+```
 
-severstal 에 mcs6 을 그대로 썼다가 **"적응이 품질을 희생한다"** 는 정반대 결론이 나왔다.
-mcs20 으로 고치니 P1 3/4 vs 2/4, ARI 0.840 vs 0.522 로 **전 지표 압승**이었다.
+이건 클래스 수가 아니라 **보고 가치가 있는 최소 그룹 크기**다. "20장쯤 모이면 들여다볼
+가치가 있다" 는 운영 판단이고, 불량이 몇 종인지 몰라도 답할 수 있다.
+HDBSCAN `min_cluster_size` 의 원래 의미 그대로다.
 
-**라벨 없이 다이얼을 고르는 방법은 실측으로 없다는 게 확인됐다** (168셀 스윕):
-`Sil` 은 arm 에 따라 부호가 뒤집히고, `over_merge` 게이트는 k=2 병합 치팅을 못 잡고,
-frozen 은 k 와 ARI 가 ρ −0.96 이라 noise 최소화가 곧장 축퇴 해로 걸어간다.
-→ **k̂ 는 현업에서 받아야 한다.** 대략이어도 된다(±50% 면 충분).
+### 그것도 정하기 싫으면 자동
 
----
+```
+SITE_AUTO_DIAL=1
+```
+
+MIN_GROUP_SIZE 주변을 스캔해 **bootstrap 군집 안정성이 최대인 값**을 고른다.
+라벨도 k 도 쓰지 않는다. 실측 검증:
+
+| pool | 아는 정답 | DBCV | **stability(채택)** | ARI 최대(라벨 필요) |
+|---|--:|--:|--:|--:|
+| severstal | 20 | 15 | **20 ✓** | 60 (k=2 병합 치팅) |
+
+ARI 최대화는 **전부 한 덩어리로 병합하는 축퇴 해**로 걸어간다(mcs60 에서 k=2).
+안정성 기준은 그 함정을 피하면서 정답을 집었다.
+
+⚠ 다이얼이 결과에 거의 영향 없는 pool 도 있다 — clean546 은 mcs 5~44 에서 ARI 가
+0.63~0.70 으로 평탄했다. AUTO 모드는 스캔 표를 함께 출력하니 민감도를 눈으로 확인하라.
+표가 평탄하면 아무 값이나 써도 되고, 급격하면 그 pool 은 다이얼이 중요하다는 뜻이다.
 
 ## 3. 주요 환경변수
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `SITE_IMAGE_ROOT` | `data/site_images` | 사내 이미지 루트 (flat/중첩 둘 다) |
-| `SITE_K_HAT` | `8` | ★ 예상 불량 종수 |
+| `SITE_MIN_GROUP_SIZE` | `20` | 그룹으로 볼 최소 장수 (k 아님) |
+| `SITE_AUTO_DIAL` | `0` | `1` 이면 안정성으로 다이얼 자동 선택 |
 | `SITE_OUT_ROOT` | `runs/site` | 산출 루트 |
 | `SITE_BACKBONE` | `weights/convnextv2_base...pth` | frozen backbone |
 | `SITE_CHAMPION_PROJ` | `weights/champion/proj_s42_ep20.pt,weights/champion/proj_s1_ep18.pt` | 콤마 구분 2개 |

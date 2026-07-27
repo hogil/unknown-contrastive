@@ -10,8 +10,10 @@
 
 여기 담긴 판정 규칙은 260726 실측 도출. 근거: docs/GOAL_AND_LADDER.md
   1. 사내엔 라벨이 없다 -> 모든 선택은 label-free.
-  2. 다이얼(HDBSCAN mcs/ms)은 pool 기하에 맞춘다: mcs ~= (n/k_hat) * 0.10.
-     다른 pool 값 이식 금지. mcs6 을 그대로 썼다가 결론이 뒤집힌 전례가 있다.
+  2. ★ 불량 종수(k)는 모른다 — 그게 전제다. HDBSCAN 을 쓰는 이유가 k-free 라서다.
+     다이얼은 k 가 아니라 **"몇 장 이상 뭉쳐야 그룹으로 볼 것인가"**(MIN_GROUP_SIZE)로 정한다.
+     그것도 정하기 싫으면 AUTO 모드가 bootstrap 안정성으로 라벨·k 없이 고른다.
+     다른 pool 의 다이얼 값 이식은 금지 — mcs6 을 그대로 썼다가 결론이 뒤집힌 전례가 있다.
   3. 대조군은 frozen 이 아니라 z0(랜덤 head), 용량(head 수)도 맞춘다.
   4. reassign 전/후를 분리 보고. 후처리 후 noise 는 어떤 임베딩에든 나오는 바닥값이다.
 """
@@ -76,7 +78,7 @@ def show_config(C) -> dict:
     return d
 
 
-def check_inputs(backbone: str, image_root: str, k_hat: int, projs: list[str] | None = None):
+def check_inputs(backbone: str, image_root: str, projs: list[str] | None = None):
     bb = rel(backbone)
     if not bb.exists():
         die(f"backbone 이 없다: {bb}\n"
@@ -95,30 +97,60 @@ def check_inputs(backbone: str, image_root: str, k_hat: int, projs: list[str] | 
 
 
 # ── 다이얼 ────────────────────────────────────────────────────────────────
-def recommend_dial(n: int, k_hat: int) -> tuple[int, int]:
-    """pool 기하 -> HDBSCAN 다이얼.  mcs ~= (n/k) * 0.10
+def dial_from_min_group(min_group_size: int) -> tuple[int, int]:
+    """★ k 를 쓰지 않는다. HDBSCAN 의 min_cluster_size 는 원래 의미 그대로 쓴다:
+    **"몇 장 이상 뭉쳐야 하나의 그룹으로 볼 것인가"** — 운영자가 답할 수 있는 값이다.
 
-      clean546   546/9  = 60.7  -> mcs 6  (9.9%)   mcs6 정상 작동
-      anchor    2260/43 = 52.6  -> mcs 5  (11.4%)  mcs6 정상 작동
-      severstal  995/5  = 199.0 -> mcs 20 (10.1%)  <- 168셀 스윕 승자와 일치
-    mcs6 을 severstal(3.0%)에 그대로 이식했다가 "적응이 품질을 희생한다"는
-    정반대 결론이 나왔던 전례가 있다. ms 는 승자 조합(mcs20/ms5)에서 mcs/4.
+    불량 종수(k)는 모른다는 게 이 과제의 전제다. HDBSCAN 을 고른 이유가 바로 그것이고,
+    k 를 입력으로 받으면 그 이유가 사라진다. min_cluster_size 는 클래스 수가 아니라
+    **보고 가치가 있는 최소 그룹 크기**이므로 k 와 무관하게 정할 수 있다.
+
+    ms = mcs/4 는 실측 승자 조합(mcs20/ms5)에서 왔다.
     """
-    per_class = n / max(1, int(k_hat))
-    mcs = max(5, int(round(per_class * 0.10)))
-    ms = max(3, int(round(mcs / 4)))
-    return mcs, ms
+    mcs = max(5, int(min_group_size))
+    return mcs, max(3, mcs // 4)
 
 
-def dial_search_range(n: int, k_hat: int, n_points: int = 4) -> list[int]:
-    """좁은 sweep 범위 n/(15k) ~ n/(8k). 단일값으로 확신하지 마라."""
-    per_class = n / max(1, int(k_hat))
-    lo = max(5, int(round(per_class / 15)))
-    hi = max(lo + 1, int(round(per_class / 8)))
-    if n_points <= 1:
-        return [lo]
-    step = max(1, (hi - lo) // (n_points - 1))
-    return sorted({min(hi, lo + i * step) for i in range(n_points)})
+def dial_scan_range(n: int, min_group_size: int, n_points: int = 8) -> list[int]:
+    """운영값 주변 + 데이터 크기 상한으로 스캔 범위. k 를 쓰지 않는다."""
+    base = max(5, int(min_group_size))
+    cand = {base, max(5, base // 2), max(5, int(base * 0.75)),
+            int(base * 1.5), base * 2, base * 3}
+    cand |= {max(5, int(n * f)) for f in (0.005, 0.01, 0.02, 0.04)}
+    cand = sorted(c for c in cand if 5 <= c <= max(5, n // 4))
+    if len(cand) > n_points:
+        step = len(cand) / n_points
+        cand = [cand[int(i * step)] for i in range(n_points)]
+    return sorted(set(cand))
+
+
+def pick_dial_by_stability(z, scan: list[int], hdbscan_predict, per_group_stability,
+                           method: str = "leaf", eps: float = 0.06,
+                           min_k: int = 2) -> tuple[int, int, list[dict]]:
+    """★ 라벨도 k 도 안 쓰고 다이얼을 고른다 — bootstrap 군집 안정성 최대.
+
+    실측: severstal 에서 아는 정답(mcs20)을 정확히 집어냈다. DBCV 는 15 를 골라 빗나갔고,
+    ARI 최대화는 k=2 병합 치팅(mcs60)으로 걸어갔다.
+    ⚠ 다이얼이 결과에 거의 영향 없는 pool 도 있다(clean546 은 mcs 5~44 에서 ARI 0.63~0.70 평탄).
+      그런 pool 에선 어느 값을 골라도 무방하므로 스캔 표를 함께 보고 판단하라.
+    """
+    rows = []
+    for mcs in scan:
+        ms = max(3, mcs // 4)
+        pred = hdbscan_predict(z, mcs, ms, method, eps)
+        k = len({int(c) for c in pred if c >= 0})
+        noise = float((pred == -1).sum()) / len(pred) * 100.0
+        if k < min_k:
+            rows.append({"mcs": mcs, "ms": ms, "k": k, "noise_pct": round(noise, 2),
+                         "stability": 0.0, "skipped": "k<min_k"})
+            continue
+        st = per_group_stability(z, pred, mcs, ms, method, eps)
+        stab = sum(st.values()) / len(st) if st else 0.0
+        rows.append({"mcs": mcs, "ms": ms, "k": k, "noise_pct": round(noise, 2),
+                     "stability": round(float(stab), 4)})
+    ok = [r for r in rows if not r.get("skipped")]
+    best = max(ok, key=lambda r: r["stability"]) if ok else rows[0]
+    return best["mcs"], best["ms"], rows
 
 
 # ── 실행 ─────────────────────────────────────────────────────────────────

@@ -124,7 +124,7 @@ def main() -> int:
     if not s0:
         die("step0 결과가 없다. 먼저:  python site/step0_prepare.py")
     mcs, ms = s0["dial"]["mcs"], s0["dial"]["ms"]
-    check_inputs(Config.BACKBONE, s0["image_root"], s0["k_hat"])
+    check_inputs(Config.BACKBONE, s0["image_root"])
 
     sys.path.insert(0, str(REPO))
     import numpy as np
