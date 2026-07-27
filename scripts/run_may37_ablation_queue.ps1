@@ -7,6 +7,7 @@ $Root = "D:\project\unknown-contrastive"
 $Log = Join-Path $Root "_may37_ablation_queue.log"
 $KnownCnnPid = 24628
 $Runner = Join-Path $Root "scripts\run_may37_ablation.py"
+$ResultsRoot = Join-Path $Root "runs\may37_manifest_reproduction"
 
 function Write-QueueLog([string]$Message) {
     $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
@@ -40,6 +41,16 @@ function Wait-ForGpu {
     }
 }
 
+function Test-Completed([string]$Backbone, [string]$Cell) {
+    $suffix = "_may37_{0}_{1}" -f $Backbone, $Cell.ToLower()
+    $matches = @(Get-ChildItem -Path $ResultsRoot -Directory -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Name -like "*$suffix" -and
+            (Test-Path (Join-Path $_.FullName "contrastive\may37_epoch_metrics.csv"))
+        })
+    return $matches.Count -gt 0
+}
+
 Set-Location -LiteralPath $Root
 $env:PYTHONIOENCODING = "utf-8"
 $env:HF_HUB_OFFLINE = "1"
@@ -53,6 +64,10 @@ Wait-ForGpu
 $cells = @("FROZEN", "B0", "B1", "B2", "B3", "B4", "B5")
 foreach ($backbone in @("cnn_tapt", "nocnn")) {
     foreach ($cell in $cells) {
+        if (Test-Completed $backbone $cell) {
+            Write-QueueLog "SKIP completed backbone=$backbone cell=$cell"
+            continue
+        }
         Write-QueueLog "START backbone=$backbone cell=$cell"
         & python -u $Runner --backbone $backbone --cell $cell *>> $Log
         if ($LASTEXITCODE -ne 0) {

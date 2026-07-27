@@ -6,8 +6,8 @@ No CUDA_VISIBLE_DEVICES is set here. Set it outside this script if needed.
 Typical:
   python scripts/run_embedding_sweep.py \
     --backbone runs/<CNN_RUN>/cnn/best_model.pth \
-    --train-dirs data/images/wm811k_50/train \
-    --eval-dir data/images/wm811k_50/eval
+    --train-dirs E:/data/images/wm811k_50/train \
+    --eval-dir E:/data/images/wm811k_50/eval
 """
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ except Exception:
     pass
 
 
-DEFAULT_TRAIN_DIRS = "data/images/wm811k_50/train"
-DEFAULT_EVAL_DIR = "data/images/wm811k_50/eval"
+DEFAULT_TRAIN_DIRS = "E:/data/images/wm811k_50/train"
+DEFAULT_EVAL_DIR = "E:/data/images/wm811k_50/eval"
 
 
 CONDITIONS = [

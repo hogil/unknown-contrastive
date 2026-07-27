@@ -315,10 +315,14 @@ def render_composite(value_map, mask, border, base_path, text=None,
     idx = np.asarray(base, np.uint8)
     rgb = pal[idx]
 
-    # ★ text 선삭제. base 에 남은 글자를 grade0 색으로 메운 뒤 heat 로 덮는다.
+    # ★ text 선삭제. base 에 남은 글자/텍스트 마스킹 픽셀은 흰색 처리.
     #   전 장이 text 인 픽셀(mask 밖)도 여기서 흰색이 되어 글자가 남지 않는다.
     t = (idx == TEXT_IDX) if text is None else (text | (idx == TEXT_IDX))
-    rgb[t] = pal[0]
+    rgb[t] = 255
+
+    # 요청 기준: 배경도 사라져야 하므로 background/transparent는 흰색으로 통일.
+    rgb[idx == BG_IDX] = 255
+    rgb[idx == TRANSPARENT_IDX] = 255
 
     # 경계: 전체 union 을 한 색으로. base 에 없던 줄도 여기서 채워진다.
     rgb[border] = pal[BORDER_IDX]

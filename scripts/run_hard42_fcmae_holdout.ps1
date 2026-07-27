@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = "D:\project\unknown-contrastive"
-$Holdout = Join-Path $Root "data\images\unknown_holdout_100_260713"
+$Holdout = Join-Path $Root "data\pools\unknown_holdout_100_260713.json"
 $Embeddings = Join-Path $Root "result_grouping\_hard42_holdout_260713\embeddings"
 $Scores = Join-Path $Root "docs\paper\canonical_rescore_260713\unknown_holdout_260713"
 $Log = Join-Path $Scores "fcmae_holdout_queue.log"
@@ -34,9 +34,6 @@ Set-Location -LiteralPath $Root
 New-Item -ItemType Directory -Force -Path $Embeddings, $Scores | Out-Null
 $env:PYTHONIOENCODING = "utf-8"
 $env:HF_HUB_OFFLINE = "1"
-
-& python -u scripts\make_unknown_holdout_260713.py *>> $Log
-if ($LASTEXITCODE -ne 0) { throw "holdout construction failed with exit $LASTEXITCODE" }
 
 Wait-ForKnownCnn
 $dino = Join-Path $Embeddings "dino_frozen_holdout.npy"

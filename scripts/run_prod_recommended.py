@@ -6,8 +6,8 @@ CUDA_VISIBLE_DEVICES 는 여기서 설정하지 않는다. 스케줄러/쉘에�
 사용 예:
   python scripts/run_prod_recommended.py \
     --backbone runs/<CNN_RUN>/cnn/best_model.pth \
-    --prod-train-dirs data/images/prod_train_A,data/images/prod_train_B \
-    --prod-pred-dirs data/images/prod_pred_A,data/images/prod_pred_B
+    --prod-train-dirs E:/data/images/prod_train_A,E:/data/images/prod_train_B \
+    --prod-pred-dirs E:/data/images/prod_pred_A,E:/data/images/prod_pred_B
 
 폴더를 기본값으로 맞춰두면 아래 한 줄만:
   python scripts/run_prod_recommended.py --backbone runs/<CNN_RUN>/cnn/best_model.pth
@@ -20,8 +20,8 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_PROD_TRAIN_DIRS = "data/images/prod_train"
-DEFAULT_PROD_PRED_DIRS = "data/images/prod_pred"
+DEFAULT_PROD_TRAIN_DIRS = "E:/data/images/prod_train"
+DEFAULT_PROD_PRED_DIRS = "E:/data/images/prod_pred"
 
 
 def _resolve_cnn_best(repo: Path, raw: str | None) -> Path:

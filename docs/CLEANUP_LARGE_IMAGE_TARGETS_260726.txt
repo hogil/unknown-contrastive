@@ -1,0 +1,9 @@
+D:\project\unknown-contrastive\runs\260711_152858_base_nocnn\contrastive\representatives|130|1595408143
+D:\project\unknown-contrastive\runs\260711_152858_base_nocnn\contrastive\wrong|674|8639886967
+D:\project\unknown-contrastive\runs\260711_162947_4tool_nocnn\contrastive\representatives|15|198915057
+D:\project\unknown-contrastive\runs\260711_162947_4tool_nocnn\contrastive\wrong|1201|15086848552
+D:\project\unknown-contrastive\runs\260711_173722_base_cnn_tapt\contrastive\representatives|85|1062488236
+D:\project\unknown-contrastive\runs\260711_173722_base_cnn_tapt\contrastive\wrong|908|11560600325
+D:\project\unknown-contrastive\runs\260711_194355_4tool_cnn_tapt\contrastive\representatives|15|198222971
+D:\project\unknown-contrastive\runs\260711_194355_4tool_cnn_tapt\contrastive\wrong|1200|15071328528
+D:\project\unknown-contrastive\result_grouping\_production_review_260713\hard42_nv050_blend086_finch_p2\representatives|561|6459956894

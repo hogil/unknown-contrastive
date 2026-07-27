@@ -76,9 +76,9 @@ def load_trainer_module():
 def _clusterer() -> hdbscan.HDBSCAN:
     return hdbscan.HDBSCAN(
         min_cluster_size=12,
-        min_samples=3,
-        cluster_selection_method="eom",
-        cluster_selection_epsilon=0.0,
+        min_samples=15,
+        cluster_selection_method="leaf",
+        cluster_selection_epsilon=0.06,
         metric="euclidean",
     )
 
@@ -136,11 +136,29 @@ def _summarize_predictions(
     }
 
 
+def _expand_ignored(labels_array: np.ndarray, ignored: set[str]) -> set[str]:
+    """★ 260721: Full_*/Normal* 도 배경 제외 (사용자: normal/full 은 채점에서 뺀다)."""
+    extra = {c for c in set(labels_array.tolist()) if c.startswith(("Full", "Normal"))}
+    return set(ignored) | extra
+
+
+def _drop_megaclusters(pred: np.ndarray, frac: float = 0.20) -> np.ndarray:
+    """★ 260721: 전체의 frac(20%) 이상인 단일 클러스터는 garbage(Normal/Full 뭉침)로 보고 noise(-1) 처리."""
+    pred = pred.copy()
+    n = len(pred)
+    for c in set(pred.tolist()):
+        if c != -1 and (pred == c).sum() >= frac * n:
+            pred[pred == c] = -1
+    return pred
+
+
 def calculate_metrics(emb: np.ndarray, labels: list[str], ignored: set[str]) -> dict[str, float | int]:
     """Operational metric: cluster the full pool, then exclude background targets."""
     labels_array = np.asarray(labels)
+    ignored = _expand_ignored(labels_array, ignored)          # ★ Full/Normal 제외
     measured = ~np.isin(labels_array, list(ignored))
     full_pred = _clusterer().fit_predict(emb)
+    full_pred = _drop_megaclusters(full_pred, frac=0.20)      # ★ 20% 초대형 클러스터 제거
     return _summarize_predictions(
         emb[measured],
         labels_array[measured],
@@ -157,6 +175,7 @@ def calculate_defect_only_metrics(
 ) -> dict[str, float | int]:
     """May Tier1 geometry: remove background before fitting HDBSCAN."""
     labels_array = np.asarray(labels)
+    ignored = _expand_ignored(labels_array, ignored)          # ★ Full/Normal 제외
     measured = ~np.isin(labels_array, list(ignored))
     defect_emb = emb[measured]
     defect_labels = labels_array[measured]

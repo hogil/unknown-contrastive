@@ -23,8 +23,22 @@ class PaletteMaskTest(unittest.TestCase):
 
         self.assertEqual(tuple(rgb[0, 0]), (155, 155, 155))
         self.assertEqual(tuple(rgb[0, 1]), (255, 255, 255))
-        self.assertEqual(tuple(rgb[1, 0]), (255, 255, 255))
+        self.assertEqual(tuple(rgb[1, 0]), (190, 190, 190))
         self.assertEqual(tuple(rgb[1, 1]), (255, 255, 255))
+
+    def test_keep_background_option(self):
+        arr = np.asarray([[8, 10]], dtype=np.uint8)
+        img = Image.frombytes("P", (2, 1), arr.tobytes())
+        palette = []
+        for i in range(256):
+            palette.extend([i, i, i])
+        palette[8 * 3:8 * 3 + 3] = [220, 238, 255]
+        palette[10 * 3:10 * 3 + 3] = [190, 190, 190]
+        img.putpalette(palette)
+
+        rgb = np.asarray(mask_palette_non_grade_to_white(img, keep_background=True).convert("RGB"))
+        self.assertEqual(tuple(rgb[0, 0]), (220, 238, 255))
+        self.assertEqual(tuple(rgb[0, 1]), (190, 190, 190))
 
 
 if __name__ == "__main__":

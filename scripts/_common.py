@@ -47,14 +47,14 @@ def resolve_path(p) -> Path:
 
 
 def mask_palette_non_grade_to_white(img, enabled: bool = True, keep_background: bool | None = None):
-    """Palette PNG 입력에서 grade 0~7만 색을 유지하고 나머지 index는 흰색 처리.
+    """Palette PNG 입력에서 grade 0~7와 경계(index 10)만 색을 유지하고 나머지 index는 흰색 처리.
 
     원본 파일은 건드리지 않고, Image.open(...) 뒤 convert("RGB") 직전에만 in-memory palette를
     바꾼다. wafer border/background/invalid 계열 색이 학습 shortcut이 되는 것을 막기 위함.
 
     UC_PALETTE_MODE:
-      - grade_only: index 0~7만 유지 (default)
-      - grade_bg: index 0~8 유지. unknown palette background 보존 실험용.
+        - grade_only: index 0~7 + 경계(10) 유지 (default)
+        - grade_bg: index 0~8 + 경계(10) 유지. unknown palette background 보존 실험용.
       - raw: palette를 그대로 둠.
     """
     if not enabled or getattr(img, "mode", None) != "P":
@@ -64,15 +64,20 @@ def mask_palette_non_grade_to_white(img, enabled: bool = True, keep_background: 
         return img
     if keep_background is None:
         keep_background = mode in {"grade_bg", "grade_background", "background"}
+    border_idx = 10
+    bg_idx = 8
     palette = img.getpalette()
     if not palette:
         return img
     pal = list(palette)
     if len(pal) < 768:
         pal.extend([0] * (768 - len(pal)))
-    first_white = 9 if keep_background else 8
-    for idx in range(first_white, 256):
-        pal[idx * 3:idx * 3 + 3] = [255, 255, 255]
+    keep = set(range(8)) | {border_idx}
+    if keep_background:
+        keep.add(bg_idx)
+    for idx in range(256):
+        if idx not in keep:
+            pal[idx * 3:idx * 3 + 3] = [255, 255, 255]
     img.putpalette(pal[:768])
     return img
 

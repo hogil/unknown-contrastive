@@ -142,14 +142,17 @@ def write_outputs(rows: list[dict[str, Any]], baseline_rows: list[dict[str, Any]
         f.write(f"- eval classes: `{', '.join(classes)}`\n")
         f.write("- data: WM-811K class-disjoint v1, not generated synthetic wafer\n")
         f.write("- eval embedding: full 1024-dim backbone feature, L2-normalized\n")
-        f.write("- primary metric: k-means(k=3) ARI on held-out novel classes\n\n")
-        f.write("| Stage | Method | ARI | NMI | AMI | P1 capture | P2 noise | P3 comp | P4 homog | top1 | k5 | k9 | dist ratio | HDB ARI |\n")
-        f.write("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+        f.write("- primary metric: k-means(k=3) ARI on held-out novel classes\n")
+        f.write("- P1 capture: fraction of eval classes that own at least one dominant-class cluster\n")
+        f.write("- image cap: auxiliary dominant-class image coverage\n\n")
+        f.write("| Stage | Method | ARI | NMI | AMI | P1 capture | image cap | P2 noise | P3 comp | P4 homog | top1 | k5 | k9 | dist ratio | HDB ARI |\n")
+        f.write("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
         for row in all_rows:
             f.write(
                 f"| {row['stage']} | {row['method']} | {float(row.get('kmeans_ari') or 0):.4f} | "
                 f"{float(row.get('kmeans_nmi') or 0):.4f} | {float(row.get('kmeans_ami') or 0):.4f} | "
-                f"{float(row.get('p1_class_capture_rate') or 0):.4f} | "
+                f"{float(row.get('p1_capture_rate') or 0):.4f} | "
+                f"{float(row.get('p1_image_capture_rate') or 0):.4f} | "
                 f"{float(row.get('p2_noise_pct') or 0):.2f}% | "
                 f"{float(row.get('p3_completeness') or 0):.4f} | "
                 f"{float(row.get('p4_homogeneity') or 0):.4f} | "

@@ -3,13 +3,17 @@
 pool directory, resolved against a single master dataset directory.
 
 사용자 지시(260726): "데이터셋은 1개로 운영하고 코드에서 선택하는 걸로 바꿔라."
-파생 pool(예: unknown_eval100)의 파일 목록을 마스터(data/images/unknown_train_all)
+파생 pool(예: unknown_eval100)의 파일 목록을 마스터(E:/data/images/unknown)
 기준 상대경로로 기록 — 물리 복사본 없이 --pool <manifest.json> 으로 동일 결과 재현
 (scripts/_common.py::resolve_pool 이 소비).
 
-사용:
-  python scripts/make_pool_manifest.py --source data/images/unknown_eval100 \
-      --master data/images/unknown_train_all --out data/pools/unknown_eval100.json
+마이그레이션 시 사용:
+  python scripts/make_pool_manifest.py --source <기존_파생_pool> \
+      --master E:/data/images/unknown --out data/pools/<pool_name>.json
+
+전체 클래스 선택:
+  python scripts/make_pool_manifest.py --classes Normal,RingDots \
+      --master E:/data/images/unknown --out data/pools/<pool_name>.json
 
 기본은 파일 크기로 저비용 검증(모든 파일, stat()만 — CPU/IO 최소). --verify-md5 로
 content-hash 전수검증(느림, 큰 pool 엔 비권장).
@@ -36,18 +40,58 @@ def md5_file(path: Path) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--source", required=True, help="existing derived pool directory (class-subdir layout)")
+    ap.add_argument("--source", help="existing derived pool directory (class-subdir layout)")
     ap.add_argument("--master", required=True, help="single master dataset directory (same class-subdir layout)")
     ap.add_argument("--out", required=True, help="output manifest .json path")
+    ap.add_argument(
+        "--classes",
+        help="comma-separated master class names; selects whole classes without a derived directory",
+    )
     ap.add_argument("--verify-md5", action="store_true",
                      help="full content-hash verify every file against master (slow/CPU-heavy). "
                           "Default off: verifies file size only (cheap, stat()-only).")
     a = ap.parse_args()
 
-    source = resolve_path(a.source).resolve(strict=True)
     master = resolve_path(a.master).resolve(strict=True)
     out_path = resolve_path(a.out)
 
+    selected_classes = [name.strip() for name in (a.classes or "").split(",") if name.strip()]
+    if selected_classes:
+        if a.source:
+            raise ValueError("--source and --classes are mutually exclusive")
+        entries = []
+        missing_classes = []
+        for label in selected_classes:
+            class_dir = master / label
+            if not class_dir.is_dir():
+                missing_classes.append(label)
+                continue
+            for path in sorted(
+                p for p in class_dir.rglob("*")
+                if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+            ):
+                entries.append({"path": path.relative_to(master).as_posix(), "label": label})
+        if missing_classes:
+            raise ValueError(f"class(es) missing under --master: {', '.join(missing_classes)}")
+        if not entries:
+            raise ValueError("no image files selected by --classes")
+        manifest = {
+            "root": master.relative_to(REPO).as_posix() if master.is_relative_to(REPO) else str(master),
+            "source_pool": None,
+            "selection": {"classes": selected_classes},
+            "n_files": len(entries),
+            "verify": "master-direct",
+            "files": entries,
+        }
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(f"[make_pool_manifest] {len(entries)} files -> {out_path}")
+        print(f"[OUT] {out_path}")
+        return
+
+    if not a.source:
+        raise ValueError("one of --source or --classes is required")
+    source = resolve_path(a.source).resolve(strict=True)
     files = sorted(p for p in source.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS)
     if not files:
         raise ValueError(f"no image files found under --source: {source}")

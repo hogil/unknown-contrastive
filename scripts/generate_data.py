@@ -6,7 +6,7 @@
   → wafer-level 알고리즘 자체 작성 X. known-cnn 의 정본 (_sample_gen / _sample_canvas_gen)
     그대로 호출. heatmap 의존도 mirror.
 
-산출: data/images/unknown/<class>/wafer_<idx>.png
+산출: E:/data/images/unknown/<class>/wafer_<idx>.png
 """
 from __future__ import annotations
 

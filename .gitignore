@@ -1,3 +1,7 @@
+# ★ .gitignore 에서 '#' 은 **줄 맨 앞에서만** 주석이다.
+#   `foo/    # 설명` 은 주석이 아니라 패턴의 일부라 아무것도 매치하지 않는다.
+#   실제로 chip_multilabel/ · sota_h100/ 규칙이 그렇게 죽어 있었다 (260728 발견).
+#   설명은 반드시 **윗줄에** 따로 쓴다.
 # ===== large or per-run output (절대 commit 금지, 절대 삭제 금지) =====
 outputs/
 outputs_contrastive_*/
@@ -13,9 +17,12 @@ _dispatch_logs/
 data/
 
 # ===== 다른 repo 으로 이관된 모듈 (절대 commit 금지) =====
-chip_multilabel/             # → known-cnn 으로 이관 (CLAUDE.md:383)
-docs/chip-multilabel/        # → known-cnn 으로 이관 (문서도 같이)
-sota_h100/                   # unknown-contrastive 와 무관 (chip multi-label)
+# → known-cnn 으로 이관 (CLAUDE.md:383)
+chip_multilabel/
+# → known-cnn 으로 이관 (문서도 같이)
+docs/chip-multilabel/
+# unknown-contrastive 와 무관 (chip multi-label)
+sota_h100/
 _watch_tmp/
 
 # ===== 자매 repo(known-cnn) 가 정본인 것 =====
@@ -61,3 +68,22 @@ _guard_hidden.vbs
 
 # ===== 분석 중간산출 =====
 *.parquet
+
+# ===== 절대 commit 금지 (실측으로 확인, 260728) =====
+# 체크포인트 전송 꾸러미 2.0GB (.pth + .zip)
+_send_to_server/
+# 외부 repo vendoring — 자체 .git 을 갖는다 (TorqueClustering)
+_ext/
+# Claude 메모리 로컬 사본. 정본은 ~/.claude/projects/
+memory/
+temp.jsonl
+*.zip
+*.bak
+scripts/.cache/
+# 트레이너 백업 스냅샷 (재생성 가능)
+docs/_trainer_backup_*/
+
+# 채점 대상 파일목록 스냅샷 (1MB+ 생성 데이터. 문서가 아니다)
+# docs/archive/data_manifests_260726/ 의 3KB 짜리 요약 manifest 는 유지한다.
+*_eval_manifest.json
+**/holdout_eval_manifest.json

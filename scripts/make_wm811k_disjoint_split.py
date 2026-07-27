@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 from pathlib import Path
 
@@ -33,14 +32,11 @@ def parse_classes(s: str | None, default: list[str]) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
 
 
-def link_or_copy(src: Path, dst: Path):
+def copy_file(src: Path, dst: Path):
     dst.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        if dst.exists():
-            dst.unlink()
-        os.link(src, dst)
-    except OSError:
-        shutil.copy2(src, dst)
+    if dst.exists():
+        dst.unlink()
+    shutil.copy2(src, dst)
 
 
 def class_images(src_all: Path, cls: str) -> list[Path]:
@@ -56,7 +52,7 @@ def write_imagefolder(src_all: Path, dst_root: Path, classes: list[str]) -> dict
         imgs = class_images(src_all, cls)
         counts[cls] = len(imgs)
         for src in imgs:
-            link_or_copy(src, dst_root / cls / src.name)
+            copy_file(src, dst_root / cls / src.name)
     return counts
 
 
@@ -68,7 +64,7 @@ def write_flat(src_all: Path, dst_root: Path, classes: list[str]) -> dict[str, i
         counts[cls] = len(imgs)
         for i, src in enumerate(imgs):
             dst_name = f"{cls}___{i:05d}___{src.name}"
-            link_or_copy(src, dst_root / dst_name)
+            copy_file(src, dst_root / dst_name)
     return counts
 
 

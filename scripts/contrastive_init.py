@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import platform
 import random
 import shutil
@@ -45,9 +44,9 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 
 CFG: dict[str, Any] = {
-    "TRAIN_DIR": "/home/sr5/ho.choi/project/unknown-contrastive-main/data/images/P3WN/train",
-    "UNKNOWN_DIR": "/home/sr5/ho.choi/project/unknown-contrastive-main/data/images/P3WN/eval",
-    "OVERLAY_DIR": "/home/sr5/ho.choi/project/unknown-contrastive-main/data/images/P3WN/train",
+    "TRAIN_DIR": "E:/data/images/P3WN/train",
+    "UNKNOWN_DIR": "E:/data/images/P3WN/eval",
+    "OVERLAY_DIR": "E:/data/images/P3WN/train",
     "OUTPUT_DIR": "/home/sr5/ho.choi/project/wafer-defect-clustering/outputs_hdbscan",
     "IMAGE_SIZE": 384,
     "BACKBONE_NAME": "convnextv2_base.fcmae_ft_in22k_in1k_384",
@@ -345,15 +344,12 @@ def parse_fields(path_str: str):
     return toks
 
 
-def link_or_copy(src: Path, dst: Path):
+def copy_file(src: Path, dst: Path):
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
-        os.link(src, dst)
-    except Exception:
-        try:
-            shutil.copy2(src, dst)
-        except shutil.SameFileError:
-            pass
+        shutil.copy2(src, dst)
+    except shutil.SameFileError:
+        pass
 
 
 @torch.no_grad()
@@ -420,7 +416,7 @@ def cluster_and_save_hdbscan(emb, files, classes, run_dir: Path, logger):
         dist = np.linalg.norm(emb[idxs] - center, axis=1)
         rep = int(idxs[int(np.argmin(dist))])
         rep_src = _pick_export_src(files[rep])
-        link_or_copy(rep_src, medoid_dir / f"{tag}__{classes[rep]}__medoid_dist{float(dist.min()):.4f}{rep_src.suffix}")
+        copy_file(rep_src, medoid_dir / f"{tag}__{classes[rep]}__medoid_dist{float(dist.min()):.4f}{rep_src.suffix}")
 
         with (cdir / f"{tag}.txt").open("w", encoding="utf-8") as f:
             f.write(f"[Cluster {cid:03d}] size={len(idxs)} mean_prob={float(np.mean(probs[idxs])):.3f}\n")
@@ -429,7 +425,7 @@ def cluster_and_save_hdbscan(emb, files, classes, run_dir: Path, logger):
             f.write("\nclass\troot\tstep\twafer\tyyyymmdd\thhmmss\n")
             for i in idxs:
                 src = _pick_export_src(files[i])
-                link_or_copy(src, cdir / f"{classes[i]}_{src.name}")
+                copy_file(src, cdir / f"{classes[i]}_{src.name}")
                 fields = parse_fields(files[i])
                 f.write(f"{classes[i]}\t" + "\t".join(fields) + "\n")
                 global_rows.append((f"{cid:03d}", classes[i], *fields))

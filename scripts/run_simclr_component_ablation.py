@@ -33,6 +33,13 @@ from sklearn.metrics import (
     normalized_mutual_info_score,
 )
 
+from build_simclr_component_report import (
+    P_COLS,
+    filter_eval_embedding,
+    hdbscan_metrics as report_hdbscan_metrics,
+    kmeans_metrics as report_kmeans_metrics,
+)
+
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
@@ -40,8 +47,8 @@ except Exception:
 
 
 REPO = Path(__file__).resolve().parents[1]
-TRAIN_DIR = REPO / "data" / "images" / "wm811k_novel_disjoint_v1" / "cnn_seen_train"
-EVAL_DIR = REPO / "data" / "images" / "wm811k_novel_disjoint_v1" / "novel_eval"
+TRAIN_DIR = Path("E:/data/images/wm811k_novel_disjoint_v1/cnn_seen_train")
+EVAL_DIR = Path("E:/data/images/wm811k_novel_disjoint_v1/novel_eval")
 DOC_DIR = REPO / "docs" / "contrastive-eval"
 OUT_CSV = DOC_DIR / "SIMCLR_COMPONENT_ABLATION.csv"
 OUT_MD = DOC_DIR / "SIMCLR_COMPONENT_ABLATION.md"
@@ -231,22 +238,15 @@ def train_condition(cond: dict[str, Any], epochs: int, batch: int, img_size: int
     cl_dir = run_dir / "contrastive"
     emb_path = cl_dir / "embeddings.npy"
     paths_path = cl_dir / "paths.json"
-    tier1_path = cl_dir / "tier1.json"
     hist_path = cl_dir / "history.json"
     if not emb_path.exists():
         raise RuntimeError(f"missing embeddings: {emb_path.resolve()}")
 
-    emb = l2(np.load(emb_path).astype(np.float32, copy=False))
-    y, classes = list_labels(EVAL_DIR)
-    if len(y) != emb.shape[0] and paths_path.exists():
-        meta = json.loads(paths_path.read_text(encoding="utf-8"))
-        labels = meta.get("labels", [])
-        c2i = {c: i for i, c in enumerate(sorted(set(labels)))}
-        y = np.array([c2i[x] for x in labels], dtype=np.int64)
-        classes = sorted(c2i)
-    km = kmeans_metrics(emb, y)
+    emb_all = l2(np.load(emb_path).astype(np.float32, copy=False))
+    emb, y, classes = filter_eval_embedding(emb_all, paths_path if paths_path.exists() else None)
+    km = report_kmeans_metrics(emb, y)
     kn = knn_same_rates(emb, y)
-    tier1 = json.loads(tier1_path.read_text(encoding="utf-8")) if tier1_path.exists() else {}
+    hdb = report_hdbscan_metrics(emb, y)
     history = json.loads(hist_path.read_text(encoding="utf-8")) if hist_path.exists() else []
     final_loss = history[-1] if history else {}
     return {
@@ -262,23 +262,16 @@ def train_condition(cond: dict[str, Any], epochs: int, batch: int, img_size: int
         "nce": final_loss.get("nce"),
         "local": final_loss.get("local"),
         "neco": final_loss.get("neco"),
-        "kmeans_ari": km["ari"],
-        "kmeans_nmi": km["nmi"],
-        "kmeans_ami": km["ami"],
+        "kmeans_ari": km["kmeans_ari"],
+        "kmeans_nmi": km["kmeans_nmi"],
+        "kmeans_ami": km["kmeans_ami"],
         "top1": kn["1"],
         "k3": kn["3"],
         "k5": kn["5"],
         "k7": kn["7"],
         "k9": kn["9"],
         "dist_ratio": distance_ratio(emb, y),
-        "p1_class_capture_rate": tier1.get("class_capture_rate"),
-        "p2_noise_pct": tier1.get("noise_pct"),
-        "p3_completeness": tier1.get("completeness"),
-        "p4_homogeneity": tier1.get("homogeneity"),
-        "hdbscan_ari": tier1.get("ari"),
-        "hdbscan_ami": tier1.get("ami"),
-        "hdbscan_noise_pct": tier1.get("noise_pct"),
-        "hdbscan_clusters": tier1.get("n_clusters"),
+        **hdb,
     }
 
 
@@ -286,7 +279,7 @@ def write_outputs(rows: list[dict[str, Any]]) -> None:
     DOC_DIR.mkdir(parents=True, exist_ok=True)
     cols = [
         "stage", "method", "kmeans_ari", "kmeans_nmi", "kmeans_ami",
-        "p1_class_capture_rate", "p2_noise_pct", "p3_completeness", "p4_homogeneity",
+        *P_COLS,
         "top1", "k3", "k5", "k7", "k9", "dist_ratio",
         "hdbscan_ari", "hdbscan_ami", "hdbscan_noise_pct", "hdbscan_clusters",
         "loss", "nce", "local", "neco", "run_dir", "model_path",
@@ -305,13 +298,14 @@ def write_outputs(rows: list[dict[str, Any]]) -> None:
         f.write("- backbone: `hf_hub:timm/convnext_base.dinov3_lvd1689m`\n")
         f.write("- eval embedding: backbone feature\n")
         f.write("- primary metric: k-means(k=3) ARI on held-out novel classes\n\n")
-        f.write("| Stage | Method | ARI | NMI | AMI | P1 capture | P2 noise | P3 comp | P4 homog | top1 | k5 | k9 | dist ratio | HDB ARI |\n")
-        f.write("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+        f.write("| Stage | Method | ARI | NMI | AMI | P1 capture | image cap | P2 noise | P3 comp | P4 homog | top1 | k5 | k9 | dist ratio | HDB ARI |\n")
+        f.write("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
         for r in rows:
             f.write(
                 f"| {r['stage']} | {r['method']} | {r['kmeans_ari']:.4f} | "
                 f"{r['kmeans_nmi']:.4f} | {r['kmeans_ami']:.4f} | "
-                f"{float(r.get('p1_class_capture_rate') or 0):.4f} | "
+                f"{float(r.get('p1_capture_rate') or 0):.4f} | "
+                f"{float(r.get('p1_image_capture_rate') or 0):.4f} | "
                 f"{float(r.get('p2_noise_pct') or 0):.2f}% | "
                 f"{float(r.get('p3_completeness') or 0):.4f} | "
                 f"{float(r.get('p4_homogeneity') or 0):.4f} | "

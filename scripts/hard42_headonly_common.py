@@ -14,9 +14,12 @@ import torch.nn as nn
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = ROOT / "scripts"
-TRAIN_ROOT = ROOT / "data" / "images" / "unknown_train_defectaware_260710"
-DEV_ROOT = ROOT / "data" / "images" / "unknown_eval100"
-HOLDOUT_ROOT = ROOT / "data" / "images" / "unknown_holdout_100_260713"
+sys.path.insert(0, str(SCRIPT_DIR))
+from _common import resolve_pool  # noqa: E402
+
+TRAIN_ROOT = ROOT / "data" / "pools" / "unknown_train_defectaware_260710.json"
+DEV_ROOT = ROOT / "data" / "pools" / "unknown_eval100.json"
+HOLDOUT_ROOT = ROOT / "data" / "pools" / "unknown_holdout_100_260713.json"
 TAPT_CKPT = Path(r"D:\project\known-cnn\models\iter116J_frozen\best_model.pth")
 FCMAE_CKPT = ROOT / "weights" / "convnextv2_base.fcmae_ft_in22k_in1k_384.pth"
 BACKBONE_NAME = "convnextv2_base.fcmae_ft_in22k_in1k_384"
@@ -55,12 +58,19 @@ def sha256_file(path: Path) -> str:
 def inventory(root: Path) -> dict:
     rows = []
     counts: dict[str, int] = {}
-    for path in sorted(p for p in root.rglob("*") if p.is_file()):
-        if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}:
-            continue
-        label = path.parent.name
+    extensions = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
+    if root.is_file() and root.suffix.lower() == ".json":
+        paths, labels = resolve_pool(root, extensions=extensions)
+        entries = [(Path(path), label) for path, label in zip(paths, labels)]
+    else:
+        entries = [
+            (path, path.parent.name)
+            for path in sorted(p for p in root.rglob("*") if p.is_file())
+            if path.suffix.lower() in extensions
+        ]
+    for path, label in entries:
         counts[label] = counts.get(label, 0) + 1
-        rows.append({"path": path.relative_to(root).as_posix(), "bytes": path.stat().st_size})
+        rows.append({"path": str(path.resolve()), "bytes": path.stat().st_size})
     encoded = json.dumps(rows, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     return {
         "root": str(root.resolve()),
@@ -174,4 +184,3 @@ def audit_backbone_checkpoint(path: Path) -> dict:
     if matched_numel != expected_numel:
         raise RuntimeError(f"incomplete backbone checkpoint load: {audit}")
     return audit
-

@@ -12,10 +12,10 @@ from __future__ import annotations
 # ===================================================================
 # === CONFIG ===
 # ===================================================================
-SOURCE_ROOT           = "data/images/unknown"             # generate_data.py 출력 (split 의 source)
-CNN_DATA_DIR          = "data/images/cnn_train"           # ↓ 아래 3개는 _split_data.py 가 SOURCE_ROOT 에서 생성
-CL_TRAIN_DIR          = "data/images/contrastive_train"
-CL_EVAL_DIR           = "data/images/contrastive_eval"
+SOURCE_ROOT           = "E:/data/images/unknown"             # generate_data.py 출력 (split 의 source)
+CNN_DATA_DIR          = "E:/data/images/cnn_train"           # ↓ 아래 3개는 _split_data.py 가 SOURCE_ROOT 에서 생성
+CL_TRAIN_DIR          = "E:/data/images/contrastive_train"
+CL_EVAL_DIR           = "E:/data/images/contrastive_eval"
 AUTO_GENERATE         = True                                # SOURCE_ROOT 없으면 generate_data.py 자동 실행
 AUTO_SPLIT            = True                                # split 폴더 없으면 _split_data.py 자동 실행
 
@@ -182,8 +182,6 @@ def _has_class_images(root: Path) -> bool:
 def _find_source_root(repo: Path, resolve_path, source_root: str | None) -> Path | None:
     candidates = [source_root] if source_root else [
         SOURCE_ROOT,
-        "data/images/unknown",
-        "data/unknown",
     ]
     for c in candidates:
         if not c:
@@ -371,10 +369,10 @@ def main():
         src = _find_source_root(repo, resolve_path, args.source_root)
         if src is None:
             if args.no_auto_generate or not AUTO_GENERATE:
-                checked = args.source_root or f"{SOURCE_ROOT}, data/images/unknown, data/unknown"
+                checked = args.source_root or SOURCE_ROOT
                 raise SystemExit(
                     f"SOURCE_ROOT 이미지 없음: {checked}\n"
-                    f"  서버 기준 후보: {resolve_path(SOURCE_ROOT)}, {repo / 'data' / 'images' / 'unknown'}, {repo / 'data' / 'unknown'}")
+                    f"  E: 원본 경로: {resolve_path(SOURCE_ROOT)}")
             src = _generate_source(repo, resolve_path, SOURCE_ROOT, args.generate_workers, log_line=log_line)
         else:
             log_line(f"[source] existing unknown 사용: {src}")

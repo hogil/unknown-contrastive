@@ -23,12 +23,16 @@ from scripts.campaign_checkpoint import (
 )
 from scripts.run_unknown_campaign import (
     Registry,
+    Campaign,
     evaluate_gate,
     check_allowlist,
     check_disk_guard,
     build_command,
+    preflight,
     sha256_obj,
     DEFAULT_GATES,
+    validate_panel_dispatch,
+    recompute_contract,
 )
 
 # ===================== fixtures: synthetic checkpoints =====================
@@ -261,6 +265,37 @@ class TestEvaluateGate:
 
 # ===================== allowlist / disk guard =====================
 class TestSafetyGuards:
+    @pytest.mark.parametrize("field,reason", [
+        ("source_snapshot_sha256", "panel_source_binding_drift"),
+        ("data_snapshot_sha256", "panel_data_binding_drift"),
+        ("backbone_snapshot_sha256", "panel_backbone_binding_drift"),
+        ("env_snapshot_sha256", "panel_env_binding_drift"),
+    ])
+    def test_recomputed_binding_mutations_fail_closed(self, monkeypatch, tmp_path, field, reason):
+        item={"id":"base","tier":3,"step":"base","seed":42}
+        binding={"config_snapshot_sha256":"config","ordered_queue_sha256":"queue","source_snapshot_sha256":"source","data_snapshot_sha256":"data","backbone_snapshot_sha256":"backbone","env_snapshot_sha256":"env"}
+        monkeypatch.setattr("scripts.run_unknown_campaign.validate_panel_bundle",lambda *_:(True,"ok",{}))
+        monkeypatch.setattr("scripts.run_unknown_campaign.read_json",lambda _:{"action":"experiment_design","proposed_queue":[item],"binding":binding})
+        monkeypatch.setattr("scripts.run_unknown_campaign.sha256_obj",lambda _:"queue")
+        current=dict(binding); current[field]="mutated"
+        monkeypatch.setattr("scripts.run_unknown_campaign.recompute_contract",lambda *_:current)
+        cfg={"outer_loop":{"initial_queue":{"cells":[item]}}}
+        ok,got=validate_panel_dispatch(tmp_path/"r3.json",None,item,"experiment_design","config",cfg,tmp_path/"c")
+        assert not ok and got==reason
+
+
+@pytest.mark.parametrize("queue", [[], [{"id":"base","tier":3,"step":"base","seed":42},{"id":"base","tier":3,"step":"base","seed":42}], [{"id":"other","tier":3,"step":"base","seed":42}]])
+def test_panel_dispatch_rejects_queue_subset_duplicate_or_wrong_item(monkeypatch, tmp_path, queue):
+    expected=[{"id":"base","tier":3,"step":"base","seed":42},{"id":"lr","tier":3,"step":"lr","seed":42}]
+    evidence={"action":"experiment_design","proposed_queue":queue,"binding":{"config_snapshot_sha256":"c","ordered_queue_sha256":sha256_obj(queue)}}
+    monkeypatch.setattr("scripts.run_unknown_campaign.validate_panel_bundle",lambda *_:(True,"ok",{}))
+    monkeypatch.setattr("scripts.run_unknown_campaign.read_json",lambda _:evidence)
+    ok,reason=validate_panel_dispatch(tmp_path/"r3",None,expected[0],"experiment_design","c",{"outer_loop":{"initial_queue":{"cells":expected}}})
+    assert not ok and reason in {"panel_queue_not_exact_config_order","panel_queue_ids_invalid"}
+
+    def test_full_campaign_cli_is_explicitly_disabled(self):
+        with pytest.raises(SystemExit, match="full campaign CLI is disabled"):
+            Campaign().run(resume=True,max_tier=None,stop_after_current=False)
     def test_allowlist_accepts_subpath(self, tmp_path):
         root = tmp_path / "unknown"
         sub = root / "BrokenRing"
@@ -387,6 +422,84 @@ class TestBuildEnv:
         step = {"env": {"REPRO_SEED": "{nope}"}}
         with pytest.raises(ValueError):
             build_env(step, {"python": "python"})
+
+
+class TestCampaignDependenciesAndSealing:
+    def test_same_seed_dependency_uses_recorded_checkpoint(self, tmp_path):
+        checkpoint = tmp_path / "seed42.pt"
+        checkpoint.write_bytes(b"checkpoint")
+        registry = tmp_path / "registry.jsonl"
+        campaign = Campaign(registry_path=registry)
+        _, producer = campaign._find_step(2, "train_frozen_recipe")
+        Registry(registry).append({
+            "campaign_id": campaign.campaign_id,
+            "config_snapshot_sha256": campaign.config_snapshot_sha256,
+            "step_fingerprint": campaign._step_fingerprint(2, producer, 42),
+            "tier": 2, "step": "train_frozen_recipe", "seed": 42,
+            "status": "completed", "produced_checkpoint_path": str(checkpoint),
+            "artifact_path": str(checkpoint), "artifact_sha256": sha256_file(checkpoint)})
+        context, error = campaign._dependency_context(
+            {"depends_on": {"tier": 2, "step": "train_frozen_recipe", "same_seed": True}}, 42)
+        assert error is None
+        assert context["dependency_checkpoint"] == str(checkpoint.resolve())
+        assert context["dependency_seed"] == 42
+
+    def test_missing_dependency_checkpoint_fails_closed(self, tmp_path):
+        registry = tmp_path / "registry.jsonl"
+        campaign = Campaign(registry_path=registry)
+        _, error = campaign._dependency_context(
+            {"depends_on": {"tier": 2, "step": "train_frozen_recipe", "same_seed": True}}, 1)
+        assert error == "dependency_not_completed"
+
+    def test_aggregate_requires_three_distinct_completed_seed_records(self, tmp_path):
+        registry = tmp_path / "registry.jsonl"
+        ledger = Registry(registry)
+        campaign = Campaign(registry_path=registry)
+        _, producer = campaign._find_step(2, "select_epoch_label_free")
+        for seed in (1, 2, 42):
+            artifact = tmp_path / f"s{seed}.json"
+            artifact.write_text("{}", encoding="utf-8")
+            ledger.append({
+                "campaign_id": campaign.campaign_id,
+                "config_snapshot_sha256": campaign.config_snapshot_sha256,
+                "step_fingerprint": campaign._step_fingerprint(2, producer, seed),
+                "tier": 2, "step": "select_epoch_label_free", "seed": seed,
+                "status": "completed", "run_id": f"s{seed}",
+                "artifact_path": str(artifact), "artifact_sha256": sha256_file(artifact)})
+        records = campaign._aggregate_seed_records(
+            {"tier": 2, "step": "select_epoch_label_free", "seeds": [1, 2, 42]})
+        assert [record["run_id"] for record in records] == ["s1", "s2", "s42"]
+
+    def test_sealed_test_reference_fails_before_manifest_access(self, tmp_path):
+        sealed = tmp_path / "sealed.json"  # deliberately not created/read
+        cfg = {"sealed_test_pools": {"unknown": str(sealed)}, "safety": {"min_free_gb": {"D": 0.001}}}
+        ok, blockers, detail = preflight({"manifest": str(sealed), "pool": str(sealed)}, cfg)
+        assert ok is False and blockers == ["sealed_test_reference"]
+        assert detail["sealed_test"] == "fail_closed"
+
+
+class TestSupervisorQueue:
+    def test_post_gate_cells_are_not_materialized_until_explicit_pass(self):
+        from scripts.run_unknown_supervisor import initial_state, materialize_initial_queue, materialize_post_gate_queue
+        cfg = {"outer_loop": {"initial_queue": {"cells": [{"id": "base"}]},
+                              "post_gate_cells": [{"id": "a"}, {"id": "b"}]}}
+        state = initial_state(cfg)
+        materialize_initial_queue(state)
+        assert state["queue"] == []
+        state["panel"] = {"approved": True, "action": "experiment_design",
+                          "r3_artifact_path": "r3.json", "evidence_packet_sha": "abc"}
+        materialize_initial_queue(state)
+        materialize_post_gate_queue(state)
+        assert [item["id"] for item in state["queue"]] == ["base"]
+        state["initial_gate_passed"] = True
+        state["initial_design_approval_sha"] = "abc"
+        state["completed"] = [{"id": "base"}]
+        materialize_post_gate_queue(state)
+        assert [item["id"] for item in state["queue"]] == ["base"]
+        state["panel"] = {"approved": True, "action": "next_queue",
+                          "r3_artifact_path": "next-r3.json", "evidence_packet_sha": "next"}
+        materialize_post_gate_queue(state)
+        assert [item["id"] for item in state["queue"]] == ["base", "a", "b"]
 
 
 # ===================== new: baseline-diff metrics adapter =====================
@@ -553,3 +666,70 @@ class TestResolveTrainerOutputDir:
         (tmp_path / "may_repro" / "abl_campaign_t2_s2_B4_260726_120000").mkdir(parents=True)
         with pytest.raises(RuntimeError, match="no trainer output dir found"):
             resolve_trainer_output_dir(tmp_path, "_campaign_t2_s1", "B4", before)
+@pytest.mark.parametrize("tamper,reason", [
+    ("manifest", "split overlap audit manifest binding mismatch"),
+    ("content", "split overlap audit image-content binding mismatch"),
+    ("tool", "split overlap audit tool binding mismatch"),
+])
+def test_recompute_contract_rejects_tampered_split_audit_binding(monkeypatch, tmp_path, tamper, reason):
+    import hashlib
+    from types import SimpleNamespace
+    root = tmp_path / "root"; root.mkdir(); (root / "train.bin").write_bytes(b"train"); (root / "validation.bin").write_bytes(b"validation")
+    train, validation = tmp_path / "train.json", tmp_path / "validation.json"
+    train.write_text(json.dumps({"root": str(root), "files": ["train.bin"]})); validation.write_text(json.dumps({"root": str(root), "files": ["validation.bin"]}))
+    tool = tmp_path / "scripts" / "audit_manifest_overlap.py"; tool.parent.mkdir(); tool.write_text("# audit")
+    train_rows=[("train.bin", hashlib.sha256(b"train").hexdigest())]; validation_rows=[("validation.bin", hashlib.sha256(b"validation").hexdigest())]
+    report={"schema_version":"manifest_overlap_audit.v1","status":"clear","review_required":False,
+            "inputs":{"train":{"path":str(train),"manifest_sha256":sha256_file(train),"image_content_sha256":sha256_obj(train_rows)},"validation":{"path":str(validation),"manifest_sha256":sha256_file(validation),"image_content_sha256":sha256_obj(validation_rows)}},
+            "exact":{"content_pair_count":0,"same_resolved_path_count":0},"near":{"threshold":8,"candidate_pair_count":0},"tool_sha256":sha256_file(tool)}
+    if tamper == "manifest": report["inputs"]["train"]["manifest_sha256"]="bad"
+    elif tamper == "content": report["inputs"]["validation"]["image_content_sha256"]="bad"
+    else: report["tool_sha256"]="bad"
+    audit=tmp_path / "audit.json"; audit.write_text(json.dumps(report))
+    cfg={"tiers":[{"tier":1,"steps":[{"name":"cell","recipe":{},"env":{},"command":[],"rule_c":{"unlabeled_pool":"train.json","offline_pool":"validation.json"}}]}],
+         "safety":{"allowlist_roots":[str(root)],"split_overlap_audits":[{"name":"split","train_manifest":"train.json","validation_manifest":"validation.json","artifact":"audit.json","near_threshold":8}]}}
+    config=tmp_path / "config.json"; config.write_text(json.dumps(cfg))
+    monkeypatch.setattr("scripts.run_unknown_campaign.REPO_ROOT", tmp_path)
+    monkeypatch.setattr("scripts.run_unknown_campaign.REPRO_SOURCE_FILES", ())
+    monkeypatch.setattr("scripts.run_unknown_campaign._git_binding", lambda: {})
+    monkeypatch.setattr("scripts.run_unknown_campaign.subprocess.run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=""))
+    with pytest.raises(ValueError, match=reason):
+        recompute_contract(cfg, config, [{"id":"cell","tier":1,"step":"cell","seed":1}])
+
+
+def test_recompute_contract_hashes_shared_physical_content_once(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    root = tmp_path / "root"; root.mkdir()
+    shared, backbone = root / "shared.bin", root / "backbone.bin"
+    shared.write_bytes(b"shared-content"); backbone.write_bytes(b"backbone")
+    manifests = []
+    for name in ("train", "unlabeled", "validation"):
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps({"root": str(root), "files": ["shared.bin"]}))
+        manifests.append(path.name)
+    cfg = {"tiers": [{"tier": 1, "steps": [
+        {"name": name, "recipe": {}, "env": {"REPRO_DATA": manifests[0]}, "command": [],
+         "rule_c": {"unlabeled_pool": manifests[1], "offline_pool": manifests[2], "backbone": "root/backbone.bin"}}
+        for name in ("one", "two")]}], "safety": {"allowlist_roots": [str(root)]}}
+    config = tmp_path / "config.json"; config.write_text(json.dumps(cfg))
+    calls = []
+    import scripts.run_unknown_campaign as campaign
+    real_sha256_file = campaign.sha256_file
+    def counted(path):
+        calls.append(Path(path).resolve())
+        return real_sha256_file(path)
+    monkeypatch.setattr(campaign, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(campaign, "REPRO_SOURCE_FILES", ())
+    monkeypatch.setattr(campaign, "_git_binding", lambda: {})
+    monkeypatch.setattr(campaign, "sha256_file", counted)
+    monkeypatch.setattr(campaign.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=""))
+    result = recompute_contract(cfg, config, [
+        {"id": "one", "tier": 1, "step": "one", "seed": 1},
+        {"id": "two", "tier": 1, "step": "two", "seed": 2},
+    ])
+    assert calls.count(shared.resolve()) == 1
+    assert calls.count(backbone.resolve()) == 1
+    assert result["recompute_contract"]["backbones"] == [
+        {"path": str(backbone.resolve()), "sha256": real_sha256_file(backbone)},
+        {"path": str(backbone.resolve()), "sha256": real_sha256_file(backbone)},
+    ]

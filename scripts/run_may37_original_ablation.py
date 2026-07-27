@@ -539,7 +539,7 @@ def main() -> None:
     parser.add_argument("--cell", choices=sorted(CELLS), required=True)
     parser.add_argument("--anchor", type=Path, required=True)
     parser.add_argument("--control-id", default="may37_protocol_control")
-    parser.add_argument("--output-root", type=Path, default=ROOT / "runs" / "may37_original_reproduction")
+    parser.add_argument("--output-root", type=Path, default=ROOT / "runs" / "may37_original_manifest_reproduction")
     parser.add_argument("--skip-eval", action="store_true")
     args = parser.parse_args()
     anchor = args.anchor.resolve()

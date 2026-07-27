@@ -35,7 +35,7 @@ NORMAL_CLASS        = "Normal"
 NORMAL_CNN_RATIO    = 0.0                                   # CNN 은 defect class만, Normal 은 contrastive 로만
 
 # 이미지 처리
-COPY_MODE           = "link"        # "link" (symlink, 빠름 + disk 절약) or "copy"
+COPY_MODE           = "copy"
 SEED                = 42
 DRY_RUN             = False         # True 면 path 만 print
 # ===================================================================
@@ -64,8 +64,8 @@ def parse_args():
                    help="Contrastive train flat 출력 폴더.")
     p.add_argument("--cl-eval-dir", type=str, default=None,
                    help="Contrastive eval ImageFolder 출력 폴더.")
-    p.add_argument("--copy-mode", type=str, choices=["link", "copy"], default=None,
-                   help="link=hardlink(빠름), copy=복사.")
+    p.add_argument("--copy-mode", type=str, choices=["copy"], default=None,
+                   help="copy=일반 파일 복사(링크 사용 안 함).")
     p.add_argument("--seed", type=int, default=None, help="split seed override.")
     p.add_argument("--normal-cnn-ratio", type=float, default=None,
                    help="Normal 중 CNN stream 으로 보낼 비율. 기본 0.0; 보통 CNN에는 Normal을 넣지 않음.")
@@ -295,21 +295,12 @@ def audit_outputs(items) -> None:
 
 
 def place_file(src, dst, copy_mode, dry_run):
-    """COPY_MODE 따라 link 또는 copy."""
+    """파일을 일반 복사한다."""
     if dry_run:
-        print(f"  {copy_mode}: {src} → {dst}")
+        print(f"  copy: {src} → {dst}")
         return
     if dst.exists(): return
-    if copy_mode == "link":
-        try:
-            import os
-            os.link(src, dst)         # hard link (Windows NTFS 지원)
-        except Exception:
-            import shutil
-            shutil.copy2(src, dst)
-    else:
-        import shutil
-        shutil.copy2(src, dst)
+    shutil.copy2(src, dst)
 
 
 if __name__ == "__main__":

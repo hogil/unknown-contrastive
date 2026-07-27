@@ -11,7 +11,9 @@
 #
 # 다이얼/셀 정의 변경 금지 -- 이 스크립트는 순수 사후분석, runs/clean546/*.json 을 읽기만 한다.
 import glob
+import hashlib
 import json
+import os
 import re
 import sys
 
@@ -23,10 +25,22 @@ ARI_BAND = 0.019
 COMP_BAND = 0.033
 HOM_BAND = 0.005
 RHO_DEPLOY_THRESHOLD = 0.7
+EXPECTED_DIAL = {"mcs": 20, "ms": 5, "eps": 0.06, "method": "leaf"}
+REQUIRED_CELL_TAGS = (
+    "base", "t010", "t030", "neg060", "neg085", "q4096", "q32768", "lr002", "lr008",
+)
+LABEL_FREE_CANDIDATES = ("seed_noise", "k", "stability", "coherence", "over_merge")
+
+
+def sha256(path):
+    return hashlib.sha256(open(path, "rb").read()).hexdigest()
 
 
 def load_cell(tag, path):
+    path = os.path.abspath(path)
     d = json.load(open(path, encoding="utf-8"))
+    if d.get("dial") != EXPECTED_DIAL:
+        raise ValueError(f"{path}: expected dial {EXPECTED_DIAL}, got {d.get('dial')}")
     sel = d.get("selected")
     if not sel:
         return None
@@ -42,42 +56,49 @@ def load_cell(tag, path):
         # (B) 무라벨 후보 -- Rule C 선택(라벨 미사용) epoch 의 label-free 필드 그대로
         "seed_noise": lf["noise_pct"],       # 재배정 전 raw HDBSCAN noise%, 낮을수록 좋음
         "k": lf["k"],
-        "frag": off["frag"],                 # 낮을수록 좋음 (파편화 비용)
         "stability": lf["stability"],        # bootstrap co-assignment, seed(재배정전) 기준, 높을수록 좋음
         "coherence": lf["coherence"],        # 재배정 후 멤버 pairwise cos sim, 높을수록 좋음
-        "Sil": off["Sil"],                   # cosine silhouette, 높을수록 좋음
+        "over_merge": lf["over_merge"],      # 낮을수록 좋음
+        "path": path,
+        "dial": d["dial"],
+        "sha256": sha256(path),
     }
 
 
-def main():
+def collect_cells(clean546=CLEAN546):
+    """Load only the preregistered full-20 mcs20 cell set; never mix mcs6."""
+    paths = {"base": f"{clean546}/severstal_pilot_base_mcs20.json"}
+    for path in glob.glob(f"{clean546}/severstal_pilot_*_mcs20.json"):
+        tag = re.search(r"severstal_pilot_(.+)_mcs20\.json", path).group(1)
+        if tag != "base":
+            paths[tag] = path
+    if set(paths) != set(REQUIRED_CELL_TAGS):
+        raise ValueError(
+            "full20 mcs20 cell set must contain exactly "
+            f"{list(REQUIRED_CELL_TAGS)}; found {sorted(paths)}"
+        )
     cells = {}
+    for tag in REQUIRED_CELL_TAGS:
+        cell = load_cell(tag, paths[tag])
+        if cell is None:
+            raise ValueError(f"{paths[tag]}: Rule C selection missing")
+        cells[tag] = cell
+    if len(cells) != 9 or len(set(cells)) != 9:
+        raise ValueError(f"expected exactly 9 unique cells, got {list(cells)}")
+    return cells
 
-    base_path = f"{CLEAN546}/severstal_adapt_ruleC.json"
-    c = load_cell("base(champion,20ep,s42)", base_path)
-    if c is None:
-        print(f"[FATAL] base row gate-failed or missing: {base_path}", file=sys.stderr)
+
+def main():
+    try:
+        cells = collect_cells()
+    except ValueError as exc:
+        print(f"[FATAL] {exc}", file=sys.stderr)
         sys.exit(1)
-    cells[c["tag"]] = c
-
-    pilot_jsons = sorted(glob.glob(f"{CLEAN546}/severstal_pilot_*.json"))
-    skipped = []
-    for jp in pilot_jsons:
-        tag = re.search(r"severstal_pilot_(.+)\.json", jp).group(1)
-        if tag == "base_e8":
-            continue  # 8ep 대조군, 20ep 프로토콜과 다른 축 -- 이 10-cell 세트에서 제외
-        c = load_cell(tag, jp)
-        if c is None:
-            skipped.append(tag)
-            continue
-        cells[tag] = c
-
-    print(f"[cells] n={len(cells)} loaded, tags={list(cells.keys())}")
-    if skipped:
-        print(f"[cells] gate-failed/skipped: {skipped}")
     n = len(cells)
-    if n < 3:
-        print(f"[FATAL] only {n} cells with a valid Rule C selection -- round-1 not finished yet?", file=sys.stderr)
-        sys.exit(1)
+    print(f"[inputs] n={n}; expected_dial={EXPECTED_DIAL}; cells={list(cells)}")
+    for tag in REQUIRED_CELL_TAGS:
+        row = cells[tag]
+        print(f"  {tag}: path={row['path']} sha256={row['sha256']} dial={row['dial']}")
 
     rows = list(cells.values())
     tags = [r["tag"] for r in rows]
@@ -91,26 +112,27 @@ def main():
     # (오리엔티드 score 가 클수록 "좋다"는 뜻이 되도록) =====
     candidates = {
         "seed_noise": {t: -cells[t]["seed_noise"] for t in tags},   # 낮을수록 좋음 -> 부호반전
-        "frag":       {t: -cells[t]["frag"] for t in tags},          # 낮을수록 좋음 -> 부호반전
-        "coherence":  {t: cells[t]["coherence"] for t in tags},      # 높을수록 좋음
+        "k":          {t: cells[t]["k"] for t in tags},              # 높을수록 좋음 (사전등록 후보)
         "stability":  {t: cells[t]["stability"] for t in tags},      # 높을수록 좋음
-        "Sil":        {t: cells[t]["Sil"] for t in tags},            # 높을수록 좋음
+        "coherence":  {t: cells[t]["coherence"] for t in tags},      # 높을수록 좋음
+        "over_merge": {t: -cells[t]["over_merge"] for t in tags},    # 낮을수록 좋음
     }
+    assert tuple(candidates) == LABEL_FREE_CANDIDATES
 
     print("\n=== 채점표 (Rule C 선택 epoch 기준, base 는 20ep 재사용, 나머지 9셀 20ep/seed42 신규) ===")
-    hdr = f"{'tag':22s} selEp  P1     ARI    Comp   Hom    seed_noise  k    frag  stab   coh    Sil"
+    hdr = f"{'tag':22s} selEp  P1     ARI    Comp   Hom    seed_noise  k    over  stab   coh"
     print(hdr)
     for t in rank_A:
         r = cells[t]
         print(f"{t:22s} {str(r['selected_ep']):5s}  {str(r['P1']):6s} {r['ARI']:.4f} {r['Comp']:.4f} "
-              f"{r['Hom']:.4f} {r['seed_noise']:10.2f}  {r['k']:3d}  {r['frag']:.2f}  "
-              f"{r['stability']:.3f}  {r['coherence']:.3f}  {r['Sil']:.3f}")
+              f"{r['Hom']:.4f} {r['seed_noise']:10.2f}  {r['k']:3d}  {r['over_merge']:4d}  "
+              f"{r['stability']:.3f}  {r['coherence']:.3f}")
 
     print(f"\n=== (A) 라벨 순위 (ARI desc, n={n}) ===")
     for i, t in enumerate(rank_A, 1):
         print(f"  {i}. {t}  ARI={ari_by_tag[t]:.4f}")
 
-    print(f"\n=== (A) vs (B) Spearman rho (n={n} cells, CI 넓음 -- 과대해석 금지) ===")
+    print(f"\n=== 사전등록 rho 판정 (rho>={RHO_DEPLOY_THRESHOLD}, n={n}; CI 넓음 -- 과대해석 금지) ===")
     a_vals = [ari_by_tag[t] for t in tags]
     rho_results = {}
     for name, oriented in candidates.items():
@@ -144,7 +166,7 @@ def main():
             rate = concordant / len(pairs)
             print(f"  {name:12s} concordant={concordant}/{len(pairs)} ({rate*100:.1f}%)")
 
-    print(f"\n=== 판정 (사전등록 규칙, task #20) ===")
+    print(f"\n=== 사전등록 판정 (rho 기준만 사용, task #20) ===")
     best_name = max(rho_results, key=lambda k: rho_results[k])
     best_rho = rho_results[best_name]
     any_pass = any(r >= RHO_DEPLOY_THRESHOLD for r in rho_results.values())
@@ -158,6 +180,12 @@ def main():
         print("  -> FIRST-CLASS NEGATIVE: 모든 무라벨 후보 rho<0.7 -- 라벨 없이 레시피 선택 불가. "
               "사내 배포엔 소량 라벨링 예산이 필요하다는 결론.")
     print(f"  (주의: n={n} 셀, rho 신뢰구간 넓음. 위 concordance(잡음폭 밖 쌍 한정)를 같이 봐야 함)")
+    print("\n=== 탐색적 top-1 일치 보고 (사전등록 rho 판정과 분리; 배포 근거 아님) ===")
+    label_top1 = rank_A[0]
+    for name, oriented in candidates.items():
+        unlabeled_top1 = max(tags, key=lambda tag: oriented[tag])
+        print(f"  {name:12s} top1={unlabeled_top1} label_top1={label_top1} "
+              f"match={'YES' if unlabeled_top1 == label_top1 else 'NO'}")
 
 
 if __name__ == "__main__":

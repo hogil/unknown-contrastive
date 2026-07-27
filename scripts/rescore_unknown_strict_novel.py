@@ -25,10 +25,10 @@ from sklearn.metrics import silhouette_score
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EMBEDDINGS = ROOT / "result_grouping" / "_unknown_mixed260710" / "embeddings"
-FROZEN = ROOT / "result_grouping" / "_field_robust" / "embeddings" / "frozen_unknown_dinov3_grade_only_260709.npy"
-FCMAE_FROZEN = EMBEDDINGS / "frozen_unknown_fcmae.npy"
-POOL = ROOT / "data" / "images" / "unknown_eval100"
+EMBEDDINGS = ROOT / "runs" / "fcmae_adapter_ep4_three_seed_260721" / "embeddings"
+FROZEN = ROOT / "result_grouping" / "frozen_fcmae.npy"
+FCMAE_FROZEN = FROZEN
+POOL = ROOT / "data" / "pools" / "unknown_eval100.json"
 OUTPUT = ROOT / "docs" / "paper" / "canonical_rescore_260713" / "unknown_strict_novel"
 EXCLUDED = (
     "Normal,Random,R,Center_bank_boundary,Center_scratch,Donut_bank_boundary,"

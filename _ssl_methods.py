@@ -19,10 +19,10 @@ except Exception:
     pass
 REPO = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO / "scripts"))
-from _common import mask_palette_non_grade_to_white  # noqa
+from _common import mask_palette_non_grade_to_white, resolve_pool  # noqa
 
-TRAIN_DIR = REPO / "data/images/wm811k_novel_disjoint_v1/cnn_seen_train"
-EVAL_DIR = REPO / "data/images/wm811k_novel_disjoint_v1/novel_eval"
+TRAIN_DIR = Path("E:/data/images/wm811k_novel_disjoint_v1/cnn_seen_train")
+EVAL_DIR = Path("E:/data/images/wm811k_novel_disjoint_v1/novel_eval")
 TIMM = "convnext_base.dinov3_lvd1689m"
 IMG = 384
 MOMENTUM_METHODS = {"moco", "byol", "dino"}
@@ -30,6 +30,10 @@ MOMENTUM_METHODS = {"moco", "byol", "dino"}
 
 def list_imgs(d):
     e = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+    d = Path(d)
+    if d.is_file() and d.suffix.lower() == ".json":
+        paths, _ = resolve_pool(d, extensions=tuple(e))
+        return [Path(p) for p in paths]
     return sorted(p for p in d.rglob("*") if p.is_file() and p.suffix.lower() in e)
 
 
@@ -38,7 +42,7 @@ class GaussNoise:  # 260707: lambda → picklable 클래스 (num_workers>0 Windo
     def __call__(self, x): return x + self.sigma * torch.randn_like(x)
 
 
-def aug(natural=False, wafer_rot_deg=5.0, wafer_translate=0.05, wafer_scale_min=0.95):
+def aug(natural=False, wafer_rot_deg=5.0, wafer_translate=0.05, wafer_scale_min=0.95, wafer_crop_min=0.94):
     norm = T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     if natural:  # 자연이미지(DTD/Flowers 등) 표준 SimCLR aug — wafer aug 는 positive 가 거의 동일해 무용
         return T.Compose([T.RandomResizedCrop((IMG, IMG), scale=(0.2, 1.0)),
@@ -47,7 +51,11 @@ def aug(natural=False, wafer_rot_deg=5.0, wafer_translate=0.05, wafer_scale_min=
                           T.RandomGrayscale(p=0.2),
                           T.RandomApply([T.GaussianBlur(23, sigma=(0.1, 2.0))], p=0.5),
                           T.ToTensor(), norm])
-    transforms = [T.RandomResizedCrop((IMG, IMG), scale=(0.94, 1.0), ratio=(1.0, 1.0))]
+    # crop_min>=1.0 → crop 끔 (위치 보존). 아니면 [crop_min,1.0] RandomResizedCrop.
+    if float(wafer_crop_min) >= 1.0:
+        transforms = [T.Resize((IMG, IMG))]
+    else:
+        transforms = [T.RandomResizedCrop((IMG, IMG), scale=(float(wafer_crop_min), 1.0), ratio=(1.0, 1.0))]
     if float(wafer_rot_deg) > 0 or float(wafer_translate) > 0 or float(wafer_scale_min) < 1.0:
         transforms.append(
             T.RandomAffine(
@@ -234,8 +242,8 @@ def main():
     ap.add_argument("--timm", default=None)                  # 백본 init override (백본 2개 비교용)
     ap.add_argument("--dino-tricks", action="store_true")    # DINO 정상화: teacher-proto(EMA)/temp warmup/momentum 스케줄/freeze-proto 1ep
     ap.add_argument("--head", default="mlp")  # mlp|linear|ad|adapter|adapterN<k> (k단 multi-stage adaptive)
-    ap.add_argument("--train-dir", default=None)             # 학습 데이터 dir override (cross-dataset 트랙)
-    ap.add_argument("--eval-dir", default=None)              # 평가(임베딩 대상) dir override
+    ap.add_argument("--train-dir", default=None)             # 학습 dir 또는 data/pools/*.json
+    ap.add_argument("--eval-dir", default=None)              # 평가 dir 또는 data/pools/*.json
     ap.add_argument("--out-dir", default=None)               # 임베딩 저장 dir override
     ap.add_argument("--ckpt-every", type=int, default=1000)  # N step 마다 체크포인트 (백신 kill 대비)
     ap.add_argument("--fresh", action="store_true")          # 기존 ckpt 무시하고 처음부터
@@ -258,6 +266,9 @@ def main():
     ap.add_argument("--wafer-rot-deg", type=float, default=5.0)
     ap.add_argument("--wafer-translate", type=float, default=0.05)
     ap.add_argument("--wafer-scale-min", type=float, default=0.95)
+    ap.add_argument("--wafer-crop-min", type=float, default=0.94)  # >=1.0 이면 crop 끔 (위치 보존 aug 실험)
+    ap.add_argument("--freeze-backbone", action="store_true")      # 백본 동결, projection z 만 학습 (May 프로토콜 = f 불변, z 만 비교)
+    ap.add_argument("--pdim", type=int, default=256)               # projection 차원 (May 재현 parity = 128)
     ap.add_argument("--tag", default="")
     ap.add_argument("--seed", type=int, default=42)          # multi-seed robustness (mean±std)
     args = ap.parse_args()
@@ -278,28 +289,31 @@ def main():
     dl = torch.utils.data.DataLoader(TwoView(paths, aug(natural=args.natural_aug,
                                                           wafer_rot_deg=args.wafer_rot_deg,
                                                           wafer_translate=args.wafer_translate,
-                                                          wafer_scale_min=args.wafer_scale_min)), batch_size=args.batch, shuffle=True,
-                                     num_workers=4, persistent_workers=True, pin_memory=True, drop_last=True)  # ★ 260707: 0→4 (single-thread 로더가 GPU 0↔100% 진동 병목)
-    online = Net(meth, K=args.dino_k, timm_id=args.timm, head=args.head).to(dev).train()
+                                                          wafer_scale_min=args.wafer_scale_min,
+                                                          wafer_crop_min=args.wafer_crop_min)), batch_size=args.batch, shuffle=True,
+                                     num_workers=2, persistent_workers=False, pin_memory=True, drop_last=True)  # ★ 260721: persistent_workers True→False + 4→2 (Windows epoch 누적 leak → ep3-4 silent kill 차단, 안정성 우선)
+    online = Net(meth, pdim=args.pdim, K=args.dino_k, timm_id=args.timm, head=args.head).to(dev).train()
+    if args.freeze_backbone:  # ★ May 프로토콜: 백본 동결 → f 불변, projection z 만 학습
+        for p in online.bb.parameters(): p.requires_grad = False
     target = None
     if meth in MOMENTUM_METHODS:
-        target = Net(meth, K=args.dino_k, timm_id=args.timm, head=args.head).to(dev).eval()
+        target = Net(meth, pdim=args.pdim, K=args.dino_k, timm_id=args.timm, head=args.head).to(dev).eval()
         target.load_state_dict(online.state_dict())
         for p in target.parameters(): p.requires_grad = False
     params = [p for p in online.parameters() if p.requires_grad]
     bb_ids = {id(p) for n, p in online.bb.named_parameters() if p.requires_grad}
     opt = torch.optim.AdamW([{"params": [p for p in params if id(p) in bb_ids], "lr": args.lr_bb},
                              {"params": [p for p in params if id(p) not in bb_ids], "lr": args.lr_head}], weight_decay=1e-6)
-    pdim = 256
+    pdim = args.pdim  # ★ 260721 fix: queue 차원 = projection 차원 (하드코딩 256 → args.pdim). --pdim!=256 시 queue matmul mismatch crash 원인
     queue = F.normalize(torch.randn(args.queue_size, pdim, device=dev), dim=1); qptr = 0
     center = torch.zeros(1, args.dino_k, device=dev)  # dino centering (K 파생 — hardcode 금지)
-    outdir = Path(args.out_dir) if args.out_dir else REPO / "result_grouping/_dinov3_ncd_autoloop/ssl_embeddings"
+    outdir = Path(args.out_dir) if args.out_dir else REPO / "runs/ssl_methods"
     outdir.mkdir(parents=True, exist_ok=True)
     tf = T.Compose([T.Resize((IMG, IMG)), T.ToTensor(), T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
     epaths = list_imgs(eval_dir)
     edl = torch.utils.data.DataLoader(
-        OneView(epaths, tf), batch_size=16, shuffle=False, num_workers=4,
-        persistent_workers=True, pin_memory=True)
+        OneView(epaths, tf), batch_size=16, shuffle=False, num_workers=2,
+        persistent_workers=False, pin_memory=True)
 
     steps_per_ep = max(1, len(dl)); total_steps = args.epochs * steps_per_ep
     gstep = 0  # dino-tricks 스케줄 + 체크포인트 재개용 global step
@@ -486,6 +500,10 @@ def main():
         online.train()
 
     start_ep = gstep // steps_per_ep + 1
+    # ★ 260720 ep0 대조군: 학습 전 random-head z 저장 (aug 효과 vs random-projection 효과 분리용, fresh run 만)
+    if start_ep == 1 and not (outdir / f"{(args.tag or meth)}_ep0_proj.npy").exists():
+        print("[ep0] extracting untrained random-head embeddings (control)", flush=True)
+        extract_embeddings(0)
     previous_ep = start_ep - 1
     previous_out = outdir / f"{(args.tag or meth)}_ep{previous_ep}.npy"
     if previous_ep >= 1 and not previous_out.exists():

@@ -57,6 +57,33 @@ def _cluster_and_save(embeddings: np.ndarray, all_path: list[str], corrupt: list
         metric="euclidean",
     )
     pred = clusterer.fit_predict(embeddings)
+    seed_pred = pred.copy()
+    reassign_info = {
+        "mode": str(pg.NOISE_REASSIGN),
+        "seed_n_noise": int((seed_pred == -1).sum()),
+        "n_reassigned": 0,
+        "assign_quantile": None,
+    }
+    if str(pg.NOISE_REASSIGN).lower() != "none":
+        pred, reassign_info = pg.reassign_noise_to_nearest_cluster(
+            embeddings, pred, pg.NOISE_REASSIGN)
+        print(f"[cluster] noise_reassign={reassign_info['mode']} "
+              f"seed_noise={reassign_info['seed_n_noise']} "
+              f"reassigned={reassign_info['n_reassigned']} "
+              f"final_noise={int((pred == -1).sum())}", flush=True)
+    merge_info = {
+        "enabled": pg.CLUSTER_MERGE_CENTROID_SIM is not None,
+        "threshold": pg.CLUSTER_MERGE_CENTROID_SIM,
+        "before_clusters": int(len(set(p for p in pred if p >= 0))),
+        "after_clusters": int(len(set(p for p in pred if p >= 0))),
+        "n_merged_clusters": 0,
+    }
+    if pg.CLUSTER_MERGE_CENTROID_SIM is not None:
+        pred, merge_info = pg.merge_clusters_by_centroid(
+            embeddings, pred, pg.CLUSTER_MERGE_CENTROID_SIM)
+        print(f"[cluster] centroid_merge threshold={merge_info['threshold']} "
+              f"{merge_info['before_clusters']} -> {merge_info['after_clusters']} "
+              f"(merged={merge_info['n_merged_clusters']})", flush=True)
     n_clusters = len(set(p for p in pred if p >= 0))
     n_noise = int((pred == -1).sum())
     cnts = Counter(pred.tolist())
@@ -78,6 +105,7 @@ def _cluster_and_save(embeddings: np.ndarray, all_path: list[str], corrupt: list
         df = pd.DataFrame({
             "path": all_path,
             "group_id": pred.astype(int),
+            "seed_group_id": seed_pred.astype(int),
             "product": [product] * len(all_path),
             "line": [line] * len(all_path),
             "date": [date] * len(all_path),
@@ -104,6 +132,10 @@ def _cluster_and_save(embeddings: np.ndarray, all_path: list[str], corrupt: list
         "n_clusters": n_clusters,
         "n_noise": n_noise,
         "noise_pct": round(n_noise / len(pred) * 100, 2),
+        "noise_reassign": reassign_info,
+        "cluster_merge": merge_info,
+        "seed_n_noise": int(reassign_info["seed_n_noise"]),
+        "seed_noise_pct": round(int(reassign_info["seed_n_noise"]) / len(seed_pred) * 100, 2),
         "largest_group_size": int(largest_group),
         "largest_group_pct": round(largest_group_pct, 2),
         "top_groups": [

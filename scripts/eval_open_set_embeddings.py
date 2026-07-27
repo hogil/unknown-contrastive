@@ -35,14 +35,31 @@ from sklearn.metrics import (
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _common import ensure_backbone_weights, mask_palette_non_grade_to_white, resolve_path
+from cluster_metrics import capture_metrics
 
 
 BACKBONE = "convnextv2_base.fcmae_ft_in22k_in1k_384"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 
 
+class ResidualAdapter(nn.Module):
+    def __init__(self, dim: int, hidden_dim: int, scale: float = 1.0):
+        super().__init__()
+        self.scale = float(scale)
+        self.net = nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, dim),
+        )
+
+    def forward(self, x):
+        return x + self.scale * self.net(x)
+
+
 class ContrastiveInferModel(nn.Module):
-    def __init__(self, backbone_name: str, proj_dim: int, mode: str):
+    def __init__(self, backbone_name: str, proj_dim: int, mode: str,
+                 adapter_dim: int = 0, adapter_scale: float = 1.0):
         super().__init__()
         import timm
 
@@ -50,6 +67,9 @@ class ContrastiveInferModel(nn.Module):
             backbone_name, pretrained=False, num_classes=0, global_pool="avg"
         )
         feat_dim = self.backbone.num_features
+        self.adapter = None
+        if int(adapter_dim or 0) > 0:
+            self.adapter = ResidualAdapter(feat_dim, int(adapter_dim), adapter_scale)
         self.proj = nn.Sequential(
             nn.Linear(feat_dim, feat_dim),
             nn.GELU(),
@@ -58,14 +78,21 @@ class ContrastiveInferModel(nn.Module):
         self.mode = str(mode).lower()
 
     def forward(self, x):
-        f = F.normalize(self.backbone(x), dim=1)
-        z = F.normalize(self.proj(f), dim=1)
+        f_raw = self.backbone(x)
+        f_adapt = self.adapter(f_raw) if self.adapter is not None else f_raw
+        f = F.normalize(f_raw, dim=1)
+        fa = F.normalize(f_adapt, dim=1)
+        z = F.normalize(self.proj(f_adapt), dim=1)
         if self.mode == "projection":
             return z
         if self.mode == "backbone":
             return f
+        if self.mode == "adapter":
+            return fa
         if self.mode == "weighted_concat":
             return F.normalize(torch.cat([f, z], dim=1), dim=1)
+        if self.mode == "adapter_concat":
+            return F.normalize(torch.cat([fa, z], dim=1), dim=1)
         raise ValueError(f"unsupported contrastive embed mode: {self.mode}")
 
 
@@ -96,7 +123,7 @@ def parse_args():
     p.add_argument(
         "--contrastive-embed-mode",
         default="projection",
-        choices=["projection", "backbone", "weighted_concat"],
+        choices=["projection", "backbone", "adapter", "weighted_concat", "adapter_concat"],
         help="Embedding exported from contrastive checkpoint.",
     )
     p.add_argument("--min-cluster-size", type=int, default=5)
@@ -110,6 +137,12 @@ def parse_args():
         default="none",
         choices=["none", "nearest_q80", "nearest_q90", "assign_all"],
         help="HDBSCAN noise(-1)를 seed cluster centroid에 재배정.",
+    )
+    p.add_argument(
+        "--cluster-merge-centroid-sim",
+        type=float,
+        default=None,
+        help="Merge non-noise HDBSCAN clusters whose L2-normalized centroids have cosine similarity >= threshold.",
     )
     p.add_argument("--no-tsne", action="store_true")
     p.add_argument("--tsne-max", type=int, default=2000)
@@ -239,6 +272,19 @@ def infer_proj_dim(sd: dict[str, Any], default: int = 1024) -> int:
     return int(default)
 
 
+def infer_adapter_dim(sd: dict[str, Any], cfg: dict[str, Any] | None = None) -> int:
+    if cfg and int(cfg.get("ADAPTER_DIM") or 0) > 0:
+        return int(cfg.get("ADAPTER_DIM") or 0)
+    for key in ("adapter.net.2.weight", "module.adapter.net.2.weight"):
+        v = sd.get(key)
+        if hasattr(v, "shape") and len(v.shape) >= 2:
+            return int(v.shape[1])
+    for k, v in sd.items():
+        if str(k).endswith("adapter.net.2.weight") and hasattr(v, "shape") and len(v.shape) >= 2:
+            return int(v.shape[1])
+    return 0
+
+
 def find_contrastive_path(raw: str) -> tuple[str, Path]:
     if "=" in raw:
         label, path = raw.split("=", 1)
@@ -275,7 +321,11 @@ def load_contrastive(ckpt: Path, device, mode: str):
     proj_dim = infer_proj_dim(sd)
     cfg = meta.get("config") if isinstance(meta, dict) else {}
     backbone_name = str((cfg or {}).get("BACKBONE") or BACKBONE)
-    model = ContrastiveInferModel(backbone_name, proj_dim, mode=mode)
+    adapter_dim = infer_adapter_dim(sd, cfg)
+    adapter_scale = float((cfg or {}).get("ADAPTER_SCALE") or 1.0)
+    model = ContrastiveInferModel(
+        backbone_name, proj_dim, mode=mode,
+        adapter_dim=adapter_dim, adapter_scale=adapter_scale)
     load = model.load_state_dict(sd, strict=False)
     bad_missing = [k for k in load.missing_keys if not k.startswith("head.")]
     bad_unexpected = [k for k in load.unexpected_keys if not k.startswith("pred.")]
@@ -291,6 +341,8 @@ def load_contrastive(ckpt: Path, device, mode: str):
         "loaded_epoch": meta.get("epoch"),
         "backbone_name": backbone_name,
         "backbone_source": str(meta.get("backbone_source", "")),
+        "adapter_dim": adapter_dim,
+        "adapter_scale": adapter_scale,
         "classes": [],
     }
 
@@ -492,6 +544,70 @@ def reassign_noise_to_nearest_cluster(emb: np.ndarray, pred: np.ndarray, mode: s
     return out, info
 
 
+def merge_clusters_by_centroid(emb: np.ndarray, pred: np.ndarray, threshold: float | None):
+    info = {
+        "enabled": threshold is not None,
+        "threshold": threshold,
+        "seed_clusters": int(len([x for x in np.unique(pred) if int(x) >= 0])),
+        "merged_pairs": 0,
+        "final_clusters": int(len([x for x in np.unique(pred) if int(x) >= 0])),
+    }
+    if threshold is None:
+        return pred, info
+
+    out = np.asarray(pred, dtype=int).copy()
+    clusters = sorted(int(x) for x in np.unique(out) if int(x) >= 0)
+    if len(clusters) <= 1:
+        return out, info
+
+    z = emb.astype(np.float32, copy=False)
+    z = z / (np.linalg.norm(z, axis=1, keepdims=True) + 1e-12)
+    centers = []
+    for c in clusters:
+        ctr = z[out == c].mean(axis=0)
+        ctr = ctr / (np.linalg.norm(ctr) + 1e-12)
+        centers.append(ctr)
+    centers = np.stack(centers, axis=0).astype(np.float32, copy=False)
+    sims = centers @ centers.T
+
+    parent = list(range(len(clusters)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a: int, b: int) -> bool:
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            return False
+        if clusters[ra] > clusters[rb]:
+            ra, rb = rb, ra
+        parent[rb] = ra
+        return True
+
+    for i in range(len(clusters)):
+        for j in range(i + 1, len(clusters)):
+            if float(sims[i, j]) >= float(threshold):
+                if union(i, j):
+                    info["merged_pairs"] += 1
+
+    root_to_new: dict[int, int] = {}
+    next_id = 0
+    mapping: dict[int, int] = {}
+    for i, c in enumerate(clusters):
+        root = find(i)
+        if root not in root_to_new:
+            root_to_new[root] = next_id
+            next_id += 1
+        mapping[c] = root_to_new[root]
+    for old, new in mapping.items():
+        out[pred == old] = new
+    info["final_clusters"] = int(next_id)
+    return out, info
+
+
 def hdbscan_metrics(emb: np.ndarray, y: np.ndarray, args) -> dict[str, Any]:
     try:
         import hdbscan
@@ -508,28 +624,12 @@ def hdbscan_metrics(emb: np.ndarray, y: np.ndarray, args) -> dict[str, Any]:
     seed_pred = clusterer.fit_predict(emb)
     pred, reassign_info = reassign_noise_to_nearest_cluster(
         emb, seed_pred, args.noise_reassign)
+    pred, merge_info = merge_clusters_by_centroid(
+        emb, pred, args.cluster_merge_centroid_sim)
     noise = int(np.sum(pred == -1))
     clusters = sorted(int(x) for x in np.unique(pred) if int(x) >= 0)
     counts = {str(c): int(np.sum(pred == c)) for c in clusters}
-    class_capture = []
-    class_image_capture = []
-    for cls in sorted(set(int(v) for v in y)):
-        cls_idx = np.where(y == cls)[0]
-        cls_total = int(len(cls_idx))
-        best = 0
-        found = 0
-        for c in clusters:
-            idx = np.where(pred == c)[0]
-            if len(idx) == 0:
-                continue
-            vals, cnts = np.unique(y[idx], return_counts=True)
-            dominant = int(vals[int(np.argmax(cnts))])
-            cls_count = int(np.sum(y[idx] == cls))
-            best = max(best, cls_count)
-            if dominant == cls and cls_count > 0:
-                found = 1
-        class_capture.append(found)
-        class_image_capture.append(best / max(1, cls_total))
+    capture = capture_metrics(pred, y)
     return {
         "skipped": False,
         "params": {
@@ -540,18 +640,23 @@ def hdbscan_metrics(emb: np.ndarray, y: np.ndarray, args) -> dict[str, Any]:
             "cluster_selection_epsilon": args.cluster_selection_epsilon,
             "allow_single_cluster": False,
             "noise_reassign": args.noise_reassign,
+            "cluster_merge_centroid_sim": args.cluster_merge_centroid_sim,
         },
         "seed_noise": int(reassign_info["seed_noise"]),
         "seed_noise_pct": float(reassign_info["seed_noise"] / max(1, len(seed_pred))),
         "noise_reassigned": int(reassign_info["noise_reassigned"]),
         "noise_reassign_mode": reassign_info["mode"],
         "noise_reassign_quantile": reassign_info["assign_quantile"],
+        "cluster_merge": merge_info,
         "n_clusters": len(clusters),
         "noise": noise,
         "noise_pct": float(noise / max(1, len(pred))),
         "cluster_counts": counts,
-        "class_capture_rate": float(np.mean(class_capture)) if class_capture else 0.0,
-        "class_image_capture_rate": float(np.mean(class_image_capture)) if class_image_capture else 0.0,
+        "class_capture_rate": float(capture["capture_rate"]),
+        "class_capture_count": capture["capture_count"],
+        "target_class_count": capture["target_class_count"],
+        "class_image_capture_rate": float(capture["dominant_image_capture_rate"]),
+        "class_coverage_rate": float(capture["class_coverage_rate"]),
         "ari": float(adjusted_rand_score(y, pred)),
         "ami": float(adjusted_mutual_info_score(y, pred)),
         "homogeneity": float(homogeneity_score(y, pred)),

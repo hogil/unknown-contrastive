@@ -240,8 +240,32 @@ def main() -> None:
                 handle.write(f"\nERROR: {type(error).__name__}: {error}\n")
             temporary.unlink(missing_ok=True)
             print(f"[RESULT_AGENT] attempt={attempt} failed: {error}", flush=True)
-            if args.max_attempts > 0 and attempt >= args.max_attempts:
-                raise
+            log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
+            limit_hit = "usage limit" in log_text.lower()
+            give_up = limit_hit or attempt >= max(3, args.max_attempts or 3)
+            if give_up:
+                # ★ 260715: Codex CLI 불가(한도 등) 시 stub 판정 기록 후 통과 — 큐 무한 차단 방지. 분석은 사람이/Claude 가 별도 수행.
+                stub = {
+                    "event_id": identifier, "context": args.context,
+                    "verdict": "inconclusive",
+                    "summary": "analysis agent unavailable (codex usage limit); metrics recorded, manual analysis required",
+                    "metric_comparison": [], "failure_mode": "insufficient_evidence",
+                    "next_experiment": {"action": "continue_required_control", "dataset": "", "backbone": "",
+                                         "parent_run": "", "axis": "", "values": [],
+                                         "reason": "agent unavailable — queue must not block", "acceptance_gate": ""},
+                    "evidence_paths": [str(event_file)], "warnings": ["codex_unavailable"],
+                    "analysis_markdown": "Codex CLI 한도 소진으로 stub 판정. 수동 분석 필요.",
+                    "analyzed_at": datetime.now().isoformat(timespec="seconds"),
+                }
+                decision_path.write_text(json.dumps(stub, ensure_ascii=False, indent=2), encoding="utf-8")
+                report_path.write_text(stub["analysis_markdown"], encoding="utf-8")
+                append_state(state_root, {"event_id": identifier, "context": args.context,
+                                           "event_file": str(event_file), "decision": str(decision_path),
+                                           "report": str(report_path), "verdict": "inconclusive",
+                                           "next_action": "continue_required_control",
+                                           "analyzed_at": stub["analyzed_at"]})
+                print(f"[RESULT_AGENT] STUB decision (agent unavailable) event={identifier}", flush=True)
+                return
             time.sleep(min(300, 30 * attempt))
 
 

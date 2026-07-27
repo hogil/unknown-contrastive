@@ -65,7 +65,7 @@ class ContrastiveInferModel(nn.Module):
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--eval-dir", required=True,
-                   help="ImageFolder eval dir, e.g. data/images/wm811k_50/eval")
+                   help="ImageFolder eval dir, e.g. E:/data/images/wm811k_50/eval")
     p.add_argument("--cnn", required=True,
                    help="CNN best_model.pth")
     p.add_argument("--stage", action="append", default=[],

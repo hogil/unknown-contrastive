@@ -6,7 +6,7 @@ Input:
   - `--download` with configured Kaggle CLI credentials.
 
 Output:
-  data/images/wm811k_small/
+  E:/data/images/wm811k_small/
     all/<class>/*.png
     train/<class>/*.png
     eval/<class>/*.png
@@ -57,7 +57,7 @@ def parse_args():
                    help="download/search directory for LSWMD.pkl")
     p.add_argument("--download", action="store_true",
                    help="download Kaggle qingyi/wm811k-wafer-map into --raw-dir")
-    p.add_argument("--out-root", type=str, default="data/images/wm811k_small",
+    p.add_argument("--out-root", type=str, default="E:/data/images/wm811k_small",
                    help="output root")
     p.add_argument("--classes", type=str, default=",".join(DEFAULT_CLASSES),
                    help="comma-separated failure classes")
@@ -72,8 +72,8 @@ def parse_args():
                    help="remove output root before writing")
     p.add_argument("--show-normal-dies", action="store_true",
                    help="render waferMap value 1 as light gray instead of white")
-    p.add_argument("--copy-mode", choices=["copy", "link"], default="copy",
-                   help="copy/link all->train/eval files")
+    p.add_argument("--copy-mode", choices=["copy"], default="copy",
+                   help="copy all->train/eval files")
     p.add_argument("--exclude-manifest", type=str, default=None,
                    help="manifest.csv whose row_index values are excluded")
     return p.parse_args()
@@ -198,16 +198,8 @@ def _render_wafer_map(wmap: Any, image_size: int, show_normal_dies: bool) -> Ima
     return canvas
 
 
-def _place(src: Path, dst: Path, mode: str) -> None:
+def _place(src: Path, dst: Path, _mode: str) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
-    if mode == "link":
-        try:
-            if dst.exists():
-                dst.unlink()
-            dst.hardlink_to(src)
-            return
-        except Exception:
-            pass
     shutil.copy2(src, dst)
 
 

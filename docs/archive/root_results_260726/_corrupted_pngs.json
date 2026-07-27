@@ -1,0 +1,12 @@
+{
+  "scan_ts": "2026-05-19T11:59:53",
+  "total_scanned": 21144,
+  "corrupted_count": 1,
+  "files": [
+    {
+      "path": "E:/data/images/unknown/Full_invalid_main/CCH016_00C_08_20260501_010000_67.0_0_PT_ENGINEER.png",
+      "class": "Full_invalid_main",
+      "error": "UnidentifiedImageError: cannot identify image file 'E:\\\\data\\\\images\\\\unknown\\\\Full_invalid_main\\\\CCH016"
+    }
+  ]
+}

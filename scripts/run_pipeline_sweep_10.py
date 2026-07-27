@@ -6,8 +6,8 @@ No CUDA_VISIBLE_DEVICES is set here. Set it outside this script if needed.
 Typical:
   python -u scripts/run_pipeline_sweep_10.py \
     --backbone runs/<CNN_RUN>/cnn/best_model.pth \
-    --prod-train-dirs data/images/prod_train_A,data/images/prod_train_B \
-    --prod-pred-dirs data/images/prod_pred_A,data/images/prod_pred_B
+    --prod-train-dirs E:/data/images/prod_train_A,E:/data/images/prod_train_B \
+    --prod-pred-dirs E:/data/images/prod_pred_A,E:/data/images/prod_pred_B
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from datetime import datetime
 from pathlib import Path
 
 
-DEFAULT_PROD_TRAIN_DIRS = "data/images/prod_train"
-DEFAULT_PROD_PRED_DIRS = "data/images/prod_pred"
+DEFAULT_PROD_TRAIN_DIRS = "E:/data/images/prod_train"
+DEFAULT_PROD_PRED_DIRS = "E:/data/images/prod_pred"
 DEFAULT_CL_BATCH = 64
 DEFAULT_GROUPING_BATCH = 128
 DEFAULT_GROUPING_WORKERS = 64

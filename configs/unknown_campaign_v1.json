@@ -1,7 +1,7 @@
 {
   "campaign_id": "unknown_campaign_v1",
   "created": "260726",
-  "updated": "260726 (team-lead follow-up: Tier2 rewired to _may_ablation.py, metrics adapter added)",
+  "updated": "260726 (Tier2 artifact dependency, sealed-test fail-close, 40% GPU hard VRAM cap with guarded coexistence, durable supervisor queue)",
   "owner": "loop-repo (built per team-lead 260726 campaign-runner directive)",
   "notes": [
     "4-tier ladder from the approved plan, expressed entirely as data so scripts/run_unknown_campaign.py",
@@ -21,9 +21,11 @@
     "v2 unknown split (camp-splits, task #8, completed 260726): train 12647 / val 4196 / test 4300",
     "SEALED. Only train/val are referenced by any step below; the test manifest lives under",
     "sealed_test_pools (informational only) and must not be copied into a step's manifest/pool/env field",
-    "until final scoring is explicitly authorized."
+    "until final scoring is explicitly authorized.",
+    "Tier 3 strict-novel B4 cells use REPRO_WORKERS=8 after live Windows guarded-spawn validation: persistent_workers=false; startup cost is expected, but steady-state throughput measured about 1.2 s/batch versus 7.6 s/batch with workers=0, while the 40% GPU VRAM cap remains enforced."
   ],
   "python": "python",
+  "repro_contract": {"train_transform": "RandomResizedCrop scale=(0.94,1.0), ratio=(1,1); RandomAffine degrees=7 translate=(.05,.05) scale=(.95,1.05); GaussianBlur p=.02; ImageNet normalization", "eval_transform": "Resize(384); ImageNet normalization", "rng": "REPRO_SEED; torch/manual CUDA seeds", "determinism": "cudnn benchmark and matmul precision recorded by trainer"},
   "sealed_test_pools": {
     "unknown": "data/pools/v2/unknown/strict_novel_test.json",
     "_note": "SEALED until final scoring (team-lead 260726). Do not reference from any step below."
@@ -44,9 +46,23 @@
       "E:/data/images/hf_flowers102",
       "E:/data/images/hf_resisc45"
     ],
+    "split_overlap_audits": [
+      {
+        "name": "strict_novel_train_vs_val",
+        "train_manifest": "data/pools/v2/unknown/strict_novel_train.json",
+        "validation_manifest": "data/pools/v2/unknown/strict_novel_val.json",
+        "artifact": "runs/campaign_state/audits/strict_novel_train_vs_val.json",
+        "near_threshold": 5,
+        "max_examples": 50
+      }
+    ],
     "gpu_max_concurrent": 1,
     "gpu_min_free_mb": 1024,
-    "max_retries": 2,
+    "gpu_memory_fraction": 0.40,
+    "gpu_headroom_mb": 1024,
+    "gpu_non_compute_process_allowlist": ["dwm.exe", "explorer.exe", "chrome.exe", "msedge.exe", "msedgewebview2.exe", "firefox.exe", "discord.exe", "nvidia share.exe", "nvidia overlay.exe", "crossdeviceresume.exe", "startmenuexperiencehost.exe", "searchhost.exe", "lockapp.exe", "logioptionsplus_agent.exe", "phoneexperiencehost.exe", "textinputhost.exe", "tabtip.exe", "radeonsoftware.exe", "applicationframehost.exe", "windowsterminal.exe", "taskmgr.exe", "dcv2.exe", "systemsettings.exe", "shellexperiencehost.exe", "shellhost.exe", "logonui.exe"],
+    "gpu_coexist_process_allowlist": ["llama-server.exe", "ollama.exe"],
+    "max_retries": 0,
     "heartbeat_sec": 60,
     "run_timeout_sec": 43200
   },
@@ -127,7 +143,7 @@
           "recipe": {
             "trainer": "_may_ablation.py cell B4 -> _may_repro_src.py (rewired 260726 -- real REPRO_SEED support)",
             "cell": "B4",
-            "freeze_backbone": true, "proj_dim": 128, "epochs": 20, "batch": 64,
+            "freeze_backbone": true, "proj_dim": 128, "epochs": 20, "batch": 16,
             "train_sampling_ratio": 0.25, "nce_temp": 0.20, "queue_size": 16384,
             "ignore_neg_sim": 0.72, "local_weight": 0.5,
             "lr_head": 4e-3,
@@ -141,7 +157,9 @@
             "REPRO_QUEUE": "16384",
             "REPRO_IGNORE_NEG_SIM": "0.72",
             "REPRO_SEED": "{seed}",
-            "REPRO_BATCH": "64",
+            "REPRO_BATCH": "16",
+            "REPRO_WORKERS": "0",
+            "REPRO_GPU_MEMORY_FRACTION": "0.40",
             "REPRO_EPOCHS": "20",
             "REPRO_SAMPLING": "0.25",
             "REPRO_LR": "4e-3",
@@ -160,13 +178,15 @@
           "needs_gpu": false,
           "evaluate_gate": false,
           "seeds": [1, 2, 42],
-          "description": "Wire to scripts/label_free_gate.py once (a) the tier-2 training step's actual output dir is resolved (see the top-level 'notes' gap on _may_ablation.py's internal RUN_TS-suffixed path) and (b) per-epoch embeddings are exported from its proj_ep*.pt checkpoints. Placeholder command.",
+          "description": "Consumes the completed same-seed train_frozen_recipe artifact. The executor resolves dependency_checkpoint from the append-only registry and fail-closes if it is absent, so evaluation cannot fall back to another seed's checkpoint.",
+          "depends_on": {"tier": 2, "step": "train_frozen_recipe", "same_seed": true},
+          "manifest": "data/pools/v2/unknown/strict_novel_val.json",
+          "pool": "data/pools/v2/unknown/strict_novel_val.json",
           "command": [
-            "{python}", "scripts/label_free_gate.py",
-            "--paths-manifest", "data/pools/v2/unknown/strict_novel_val.json",
-            "--frozen-embedding", "{run_dir}/frozen_embedding.npy",
-            "--adapted-embedding", "{run_dir}/adapted_embedding.npy",
-            "--out", "{run_dir}/label_free_gate.json"
+            "{python}", "scripts/run_label_free_grouping.py",
+            "--pool", "data/pools/v2/unknown/strict_novel_val.json",
+            "--out-dir", "{run_dir}", "--device", "cpu",
+            "--adapted-mode", "projection", "--adapted-checkpoint", "{dependency_checkpoint}"
           ]
         }
       ]
@@ -174,28 +194,10 @@
     {
       "tier": 3,
       "name": "recipe_and_grouping_sweep",
-      "description": "1-seed/4-epoch pilot (10 cells) -> top4 full 20ep -> top2 3-seed. HDBSCAN dial grid on cached embeddings (validation only, no re-training). Temporal threshold sweep. Wafer 4-dataset shortlist then HF 3-dataset transfer check.",
+      "description": "The approved first screen is exactly base then lr008, each seed42 for 20 epochs. After their mandatory stop, seven dormant 20-epoch seed42 candidates may be materialized only by a distinct next_queue panel bundle. HDBSCAN dials remain validation-only.",
       "checkpoint_type": "projection-only",
       "n_seeds_min": 3,
       "manifest": "data/pools/v2/unknown/strict_novel_train.json",
-      "pilot_cells": [
-        {"name": "baseline",          "recipe": {}},
-        {"name": "lr_3e-4",           "recipe": {"lr_head": 3e-4}},
-        {"name": "lr_3e-3",           "recipe": {"lr_head": 3e-3}},
-        {"name": "temp_0.10",         "recipe": {"nce_temp": 0.10}},
-        {"name": "temp_0.30",         "recipe": {"nce_temp": 0.30}},
-        {"name": "ignore_neg_0.60",   "recipe": {"ignore_neg_sim": 0.60}},
-        {"name": "ignore_neg_0.66",   "recipe": {"ignore_neg_sim": 0.66}},
-        {"name": "queue_32768",       "recipe": {"queue_size": 32768}},
-        {"name": "local_off",         "recipe": {"local_weight": 0.0}},
-        {"name": "residual_adapter",  "recipe": {"adapter": true}}
-      ],
-      "pilot_epochs": 4,
-      "pilot_seeds": [42],
-      "promote_top4_epochs": 20,
-      "promote_top2_seeds": [1, 2, 42],
-      "selection": "manual_top_n",
-      "selection_note": "The runner does not auto-rank pilot cells -- inspect runs/campaign_registry.jsonl for the 10 pilot records (tier=3, step name matches a pilot_cells[].name), pick the top 4 by the label-free gate (coherence/bootstrap-stability/noise/fragmentation, scripts/label_free_gate.py), add 4 explicit tier-3 steps at 20 epochs, then top 2 at 3 seeds. This keeps an untested auto-selection heuristic out of an unmanned multi-day loop.",
       "cluster_sweep_grid": {
         "note": "Validation-only, operates on already-embedded pools (no re-training) via grouping_deploy.py --mcs/--ms/--eps/--reassign/--method. Not auto-expanded into concrete steps yet -- do that once a tier-2 or tier-3 champion embedding exists to sweep over.",
         "mcs": [6, 9, 12], "ms": [1, 3], "eps": [0.03, 0.06, 0.09],
@@ -205,7 +207,80 @@
       "wafer_shortlist_then_hf_transfer": {
         "note": "Pick 4 wafer datasets from the tier-3 result, then confirm the same recipe/dial transfers to hf_dtd/hf_flowers102/hf_resisc45 before promotion consideration."
       },
-      "steps": []
+      "steps": [
+        {
+          "name": "strict_novel_base_seed42", "seeds": [42], "needs_gpu": true, "decision_required_action": "experiment_design",
+          "manifest": "data/pools/v2/unknown/strict_novel_train.json",
+          "recipe": {"cell": "B4", "epochs": 20, "batch": 16, "lr_head": 0.004, "nce_temp": 0.20, "queue_size": 16384, "ignore_neg_sim": 0.72},
+          "env": {"REPRO_DATA": "data/pools/v2/unknown/strict_novel_train.json", "REPRO_SEED": "{seed}", "REPRO_BATCH": "16", "REPRO_WORKERS": "8", "REPRO_GPU_MEMORY_FRACTION": "0.40", "REPRO_EPOCHS": "20", "REPRO_SAMPLING": "0.25", "REPRO_LR": "0.004", "REPRO_TEMP": "0.20", "REPRO_QUEUE": "16384", "REPRO_IGNORE_NEG_SIM": "0.72", "REPRO_TAG": "_campaign_strict_base_s{seed}", "REPRO_LEAN": "1", "REPRO_SKIP_FINAL_EMBED": "1"},
+          "resolve_output_glob_cell": "B4", "command": ["{python}", "_may_ablation.py", "B4"],
+          "rule_c": {"backbone": "_b4_backbone.pth", "device": "cuda", "batch_size": 16, "unlabeled_pool": "data/pools/v2/unknown/strict_novel_val_unlabeled.json", "offline_pool": "data/pools/v2/unknown/strict_novel_val.json", "ratios": [0.005, 0.010, 0.020], "z0_seeds": [1,2,3,4,5,6,7,8,9,10], "sensitivity_only": {"mcs": 6, "ms": 3, "eps": 0.06, "method": "leaf"}}
+        },
+        {
+          "name": "strict_novel_lr008_seed42", "seeds": [42], "needs_gpu": true, "decision_required_action": "provisional_base_adoption_lr008",
+          "manifest": "data/pools/v2/unknown/strict_novel_train.json",
+          "recipe": {"cell": "B4", "epochs": 20, "batch": 16, "lr_head": 0.008, "nce_temp": 0.20, "queue_size": 16384, "ignore_neg_sim": 0.72},
+          "env": {"REPRO_DATA": "data/pools/v2/unknown/strict_novel_train.json", "REPRO_SEED": "{seed}", "REPRO_BATCH": "16", "REPRO_WORKERS": "8", "REPRO_GPU_MEMORY_FRACTION": "0.40", "REPRO_EPOCHS": "20", "REPRO_SAMPLING": "0.25", "REPRO_LR": "0.008", "REPRO_TEMP": "0.20", "REPRO_QUEUE": "16384", "REPRO_IGNORE_NEG_SIM": "0.72", "REPRO_TAG": "_campaign_strict_lr008_s{seed}", "REPRO_LEAN": "1", "REPRO_SKIP_FINAL_EMBED": "1"},
+          "resolve_output_glob_cell": "B4", "command": ["{python}", "_may_ablation.py", "B4"],
+          "rule_c": {"backbone": "_b4_backbone.pth", "device": "cuda", "batch_size": 16, "unlabeled_pool": "data/pools/v2/unknown/strict_novel_val_unlabeled.json", "offline_pool": "data/pools/v2/unknown/strict_novel_val.json", "v3_r3_binding": "D:\\project\\unknown-contrastive\\runs\\campaign_state\\panels\\unknown-f2c1417e26399999\\r3_C.json", "ratios": [0.005, 0.010, 0.020], "z0_seeds": [1,2,3,4,5,6,7,8,9,10], "sensitivity_only": {"mcs": 6, "ms": 3, "eps": 0.06, "method": "leaf"}}
+        },
+        {
+          "name": "strict_novel_t010_seed42", "seeds": [42], "needs_gpu": true, "decision_required_action": "next_queue",
+          "manifest": "data/pools/v2/unknown/strict_novel_train.json",
+          "recipe": {"cell": "B4", "epochs": 20, "batch": 16, "nce_temp": 0.10},
+          "env": {"REPRO_DATA": "data/pools/v2/unknown/strict_novel_train.json", "REPRO_SEED": "{seed}", "REPRO_BATCH": "16", "REPRO_WORKERS": "8", "REPRO_GPU_MEMORY_FRACTION": "0.40", "REPRO_EPOCHS": "20", "REPRO_SAMPLING": "0.25", "REPRO_LR": "0.004", "REPRO_TEMP": "0.10", "REPRO_QUEUE": "16384", "REPRO_IGNORE_NEG_SIM": "0.72", "REPRO_TAG": "_campaign_strict_t010_s{seed}", "REPRO_LEAN": "1", "REPRO_SKIP_FINAL_EMBED": "1"},
+          "resolve_output_glob_cell": "B4", "command": ["{python}", "_may_ablation.py", "B4"],
+          "rule_c": {"backbone": "_b4_backbone.pth", "device": "cuda", "batch_size": 16, "unlabeled_pool": "data/pools/v2/unknown/strict_novel_val_unlabeled.json", "offline_pool": "data/pools/v2/unknown/strict_novel_val.json", "ratios": [0.005, 0.010, 0.020], "z0_seeds": [1,2,3,4,5,6,7,8,9,10], "sensitivity_only": {"mcs": 6, "ms": 3, "eps": 0.06, "method": "leaf"}}
+        },
+        {
+          "name": "strict_novel_t030_seed42", "seeds": [42], "needs_gpu": true, "decision_required_action": "next_queue",
+          "manifest": "data/pools/v2/unknown/strict_novel_train.json",
+          "recipe": {"cell": "B4", "epochs": 20, "batch": 16, "nce_temp": 0.30},
+          "env": {"REPRO_DATA": "data/pools/v2/unknown/strict_novel_train.json", "REPRO_SEED": "{seed}", "REPRO_BATCH": "16", "REPRO_WORKERS": "8", "REPRO_GPU_MEMORY_FRACTION": "0.40", "REPRO_EPOCHS": "20", "REPRO_SAMPLING": "0.25", "REPRO_LR": "0.004", "REPRO_TEMP": "0.30", "REPRO_QUEUE": "16384", "REPRO_IGNORE_NEG_SIM": "0.72", "REPRO_TAG": "_campaign_strict_t030_s{seed}", "REPRO_LEAN": "1", "REPRO_SKIP_FINAL_EMBED": "1"},
+          "resolve_output_glob_cell": "B4", "command": ["{python}", "_may_ablation.py", "B4"],
+          "rule_c": {"backbone": "_b4_backbone.pth", "device": "cuda", "batch_size": 16, "unlabeled_pool": "data/pools/v2/unknown/strict_novel_val_unlabeled.json", "offline_pool": "data/pools/v2/unknown/strict_novel_val.json", "ratios": [0.005, 0.010, 0.020], "z0_seeds": [1,2,3,4,5,6,7,8,9,10], "sensitivity_only": {"mcs": 6, "ms": 3, "eps": 0.06, "method": "leaf"}}
+        },
+        {
+          "name": "strict_novel_neg060_seed42", "seeds": [42], "needs_gpu": true, "decision_required_action": "next_queue",
+          "manifest": "data/pools/v2/unknown/strict_novel_train.json",
+          "recipe": {"cell": "B4", "epochs": 20, "batch": 16, "ignore_neg_sim": 0.60},
+          "env": {"REPRO_DATA": "data/pools/v2/unknown/strict_novel_train.json", "REPRO_SEED": "{seed}", "REPRO_BATCH": "16", "REPRO_WORKERS": "8", "REPRO_GPU_MEMORY_FRACTION": "0.40", "REPRO_EPOCHS": "20", "REPRO_SAMPLING": "0.25", "REPRO_LR": "0.004", "REPRO_TEMP": "0.20", "REPRO_QUEUE": "16384", "REPRO_IGNORE_NEG_SIM": "0.60", "REPRO_TAG": "_campaign_strict_neg060_s{seed}", "REPRO_LEAN": "1", "REPRO_SKIP_FINAL_EMBED": "1"},
+          "resolve_output_glob_cell": "B4", "command": ["{python}", "_may_ablation.py", "B4"],
+          "rule_c": {"backbone": "_b4_backbone.pth", "device": "cuda", "batch_size": 16, "unlabeled_pool": "data/pools/v2/unknown/strict_novel_val_unlabeled.json", "offline_pool": "data/pools/v2/unknown/strict_novel_val.json", "ratios": [0.005, 0.010, 0.020], "z0_seeds": [1,2,3,4,5,6,7,8,9,10], "sensitivity_only": {"mcs": 6, "ms": 3, "eps": 0.06, "method": "leaf"}}
+        },
+        {
+          "name": "strict_novel_neg085_seed42", "seeds": [42], "needs_gpu": true, "decision_required_action": "next_queue",
+          "manifest": "data/pools/v2/unknown/strict_novel_train.json",
+          "recipe": {"cell": "B4", "epochs": 20, "batch": 16, "ignore_neg_sim": 0.85},
+          "env": {"REPRO_DATA": "data/pools/v2/unknown/strict_novel_train.json", "REPRO_SEED": "{seed}", "REPRO_BATCH": "16", "REPRO_WORKERS": "8", "REPRO_GPU_MEMORY_FRACTION": "0.40", "REPRO_EPOCHS": "20", "REPRO_SAMPLING": "0.25", "REPRO_LR": "0.004", "REPRO_TEMP": "0.20", "REPRO_QUEUE": "16384", "REPRO_IGNORE_NEG_SIM": "0.85", "REPRO_TAG": "_campaign_strict_neg085_s{seed}", "REPRO_LEAN": "1", "REPRO_SKIP_FINAL_EMBED": "1"},
+          "resolve_output_glob_cell": "B4", "command": ["{python}", "_may_ablation.py", "B4"],
+          "rule_c": {"backbone": "_b4_backbone.pth", "device": "cuda", "batch_size": 16, "unlabeled_pool": "data/pools/v2/unknown/strict_novel_val_unlabeled.json", "offline_pool": "data/pools/v2/unknown/strict_novel_val.json", "ratios": [0.005, 0.010, 0.020], "z0_seeds": [1,2,3,4,5,6,7,8,9,10], "sensitivity_only": {"mcs": 6, "ms": 3, "eps": 0.06, "method": "leaf"}}
+        },
+        {
+          "name": "strict_novel_q4096_seed42", "seeds": [42], "needs_gpu": true, "decision_required_action": "next_queue",
+          "manifest": "data/pools/v2/unknown/strict_novel_train.json",
+          "recipe": {"cell": "B4", "epochs": 20, "batch": 16, "queue_size": 4096},
+          "env": {"REPRO_DATA": "data/pools/v2/unknown/strict_novel_train.json", "REPRO_SEED": "{seed}", "REPRO_BATCH": "16", "REPRO_WORKERS": "8", "REPRO_GPU_MEMORY_FRACTION": "0.40", "REPRO_EPOCHS": "20", "REPRO_SAMPLING": "0.25", "REPRO_LR": "0.004", "REPRO_TEMP": "0.20", "REPRO_QUEUE": "4096", "REPRO_IGNORE_NEG_SIM": "0.72", "REPRO_TAG": "_campaign_strict_q4096_s{seed}", "REPRO_LEAN": "1", "REPRO_SKIP_FINAL_EMBED": "1"},
+          "resolve_output_glob_cell": "B4", "command": ["{python}", "_may_ablation.py", "B4"],
+          "rule_c": {"backbone": "_b4_backbone.pth", "device": "cuda", "batch_size": 16, "unlabeled_pool": "data/pools/v2/unknown/strict_novel_val_unlabeled.json", "offline_pool": "data/pools/v2/unknown/strict_novel_val.json", "ratios": [0.005, 0.010, 0.020], "z0_seeds": [1,2,3,4,5,6,7,8,9,10], "sensitivity_only": {"mcs": 6, "ms": 3, "eps": 0.06, "method": "leaf"}}
+        },
+        {
+          "name": "strict_novel_q32768_seed42", "seeds": [42], "needs_gpu": true, "decision_required_action": "next_queue",
+          "manifest": "data/pools/v2/unknown/strict_novel_train.json",
+          "recipe": {"cell": "B4", "epochs": 20, "batch": 16, "queue_size": 32768},
+          "env": {"REPRO_DATA": "data/pools/v2/unknown/strict_novel_train.json", "REPRO_SEED": "{seed}", "REPRO_BATCH": "16", "REPRO_WORKERS": "8", "REPRO_GPU_MEMORY_FRACTION": "0.40", "REPRO_EPOCHS": "20", "REPRO_SAMPLING": "0.25", "REPRO_LR": "0.004", "REPRO_TEMP": "0.20", "REPRO_QUEUE": "32768", "REPRO_IGNORE_NEG_SIM": "0.72", "REPRO_TAG": "_campaign_strict_q32768_s{seed}", "REPRO_LEAN": "1", "REPRO_SKIP_FINAL_EMBED": "1"},
+          "resolve_output_glob_cell": "B4", "command": ["{python}", "_may_ablation.py", "B4"],
+          "rule_c": {"backbone": "_b4_backbone.pth", "device": "cuda", "batch_size": 16, "unlabeled_pool": "data/pools/v2/unknown/strict_novel_val_unlabeled.json", "offline_pool": "data/pools/v2/unknown/strict_novel_val.json", "ratios": [0.005, 0.010, 0.020], "z0_seeds": [1,2,3,4,5,6,7,8,9,10], "sensitivity_only": {"mcs": 6, "ms": 3, "eps": 0.06, "method": "leaf"}}
+        },
+        {
+          "name": "strict_novel_lr002_seed42", "seeds": [42], "needs_gpu": true, "decision_required_action": "next_queue",
+          "manifest": "data/pools/v2/unknown/strict_novel_train.json",
+          "recipe": {"cell": "B4", "epochs": 20, "batch": 16, "lr_head": 0.002},
+          "env": {"REPRO_DATA": "data/pools/v2/unknown/strict_novel_train.json", "REPRO_SEED": "{seed}", "REPRO_BATCH": "16", "REPRO_WORKERS": "8", "REPRO_GPU_MEMORY_FRACTION": "0.40", "REPRO_EPOCHS": "20", "REPRO_SAMPLING": "0.25", "REPRO_LR": "0.002", "REPRO_TEMP": "0.20", "REPRO_QUEUE": "16384", "REPRO_IGNORE_NEG_SIM": "0.72", "REPRO_TAG": "_campaign_strict_lr002_s{seed}", "REPRO_LEAN": "1", "REPRO_SKIP_FINAL_EMBED": "1"},
+          "resolve_output_glob_cell": "B4", "command": ["{python}", "_may_ablation.py", "B4"],
+          "rule_c": {"backbone": "_b4_backbone.pth", "device": "cuda", "batch_size": 16, "unlabeled_pool": "data/pools/v2/unknown/strict_novel_val_unlabeled.json", "offline_pool": "data/pools/v2/unknown/strict_novel_val.json", "ratios": [0.005, 0.010, 0.020], "z0_seeds": [1,2,3,4,5,6,7,8,9,10], "sensitivity_only": {"mcs": 6, "ms": 3, "eps": 0.06, "method": "leaf"}}
+        }
+      ]
     },
     {
       "tier": 4,
@@ -217,5 +292,53 @@
       "backbone_init_note": "classified as type=cnn-tapt by scripts/campaign_checkpoint.py -- valid ONLY as a --backbone-init source (e.g. via _may_repro_src.py's LOCAL_BACKBONE_WEIGHTS / REPRO_BACKBONE, extracting backbone-only weights first), never as a grouping-predictor checkpoint. If retraining known-cnn itself is needed first, novel classes must stay excluded (known-train classes only).",
       "steps": []
     }
-  ]
+  ],
+  "outer_loop": {
+    "state_machine": ["REPAIR_EVIDENCE", "READY", "RUNNING_BATCH", "SCORING", "WAITING_PANEL", "QUEUED_NEXT"],
+    "provisional_base_adoption": {
+      "base": {"id": "strict_novel_base_seed42", "tier": 3, "step": "strict_novel_base_seed42", "seed": 42},
+      "source_config_snapshot_sha256": "94dcaea7b6d4d092e337322855b18221a49a48f3e10b1c311816bb9c228233fe",
+      "receipt": {"path": "D:\\project\\unknown-contrastive\\runs\\campaign_state\\provisional_base_adoption_candidate_260726_2320\\adoption_receipt.json", "sha256": "16bb1c29159279d92947c0d668a118977b266a1435e151a3085b893970a1cd69"},
+      "projection": {"path": "D:\\project\\unknown-contrastive\\runs\\campaign_state\\provisional_base_adoption_candidate_260726_2320\\canonical_completion_projection.json", "sha256": "83018bf95b714444a90ce749e286c1df51bc4869e26b3aaebcde8356a5214bb0"}
+    },
+    "provisional_base_adoption_lr008_queue": [
+      {"id": "strict_novel_lr008_seed42", "tier": 3, "step": "strict_novel_lr008_seed42", "seed": 42}
+    ],
+    "initial_queue": {
+      "gate": "strict_novel_base_vs_lr008_seed42_transfer",
+      "cells": [
+        {"id": "strict_novel_base_seed42", "tier": 3, "step": "strict_novel_base_seed42", "seed": 42},
+        {"id": "strict_novel_lr008_seed42", "tier": 3, "step": "strict_novel_lr008_seed42", "seed": 42}
+      ]
+    },
+    "initial_screen": {
+      "evaluator": "scripts/evaluate_rule_c_screen.py",
+      "bootstrap_seed": 42,
+      "bootstrap_iterations": 2000,
+      "min_explicit_blocks": 20,
+      "promotion_authority": false
+    },
+    "post_gate_cells": [
+      {"id": "strict_novel_t010_seed42", "tier": 3, "step": "strict_novel_t010_seed42", "seed": 42},
+      {"id": "strict_novel_t030_seed42", "tier": 3, "step": "strict_novel_t030_seed42", "seed": 42},
+      {"id": "strict_novel_neg060_seed42", "tier": 3, "step": "strict_novel_neg060_seed42", "seed": 42},
+      {"id": "strict_novel_neg085_seed42", "tier": 3, "step": "strict_novel_neg085_seed42", "seed": 42},
+      {"id": "strict_novel_q4096_seed42", "tier": 3, "step": "strict_novel_q4096_seed42", "seed": 42},
+      {"id": "strict_novel_q32768_seed42", "tier": 3, "step": "strict_novel_q32768_seed42", "seed": 42},
+      {"id": "strict_novel_lr002_seed42", "tier": 3, "step": "strict_novel_lr002_seed42", "seed": 42}
+    ],
+    "supervisor_max_attempts": 1,
+    "panel_contract": {
+      "judges": ["A", "B", "C"],
+      "roles": {
+        "A": {"model": "gpt-5.6-sol", "reasoning_effort": "max"},
+        "B": {"model": "gpt-5.6-terra", "reasoning_effort": "ultra"},
+        "C": {"model": "gpt-5.6-sol", "reasoning_effort": "ultra"}
+      },
+      "rounds": ["R1_blind", "R2_cross_rebuttal", "R3_chair_binding"],
+      "chair": "C",
+      "transition_rule": "WAITING_PANEL->QUEUED_NEXT only when chair C R3 binding conclusion is approve; retain A/B minority and all critical objections"
+    },
+    "policy": "Run only base(.004, 20ep, seed42) then lr008(.008, 20ep, seed42), then stop for a new panel. Dormant post_gate_cells materialize only after a distinct complete approved R1/R2/R3 bundle whose immutable evidence action is next_queue. Queue-empty enters WAITING_PANEL; only STOP_REQUESTED or a resource blocker stops safely. Failures remain registered and require a new panel bundle. Tier 3 B4 dispatches use Windows-guarded REPRO_WORKERS=8 with persistent_workers=false; worker startup cost is accepted for measured steady-state throughput, under the existing 40% VRAM cap."
+  }
 }

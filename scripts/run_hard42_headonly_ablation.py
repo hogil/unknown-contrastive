@@ -76,6 +76,7 @@ def configure(module, args: argparse.Namespace, checkpoint: Path, output_root: P
     module.SPATIAL_ADAPTER = "none"
     module.BATCH_PER_GPU = args.batch
     module.NUM_WORKERS_PER_GPU = args.workers
+    module.NUM_WORKERS = args.workers  # 260720: 실제 상수명은 NUM_WORKERS — 이름 불일치 no-op 가 2일 hang 의 진짜 원인
     module.EPOCHS = 0 if args.frozen else args.epochs
     module.WARMUP_EPOCHS = min(1, module.EPOCHS)
     module.TRAIN_SAMPLING_RATIO = 1.0
@@ -193,7 +194,7 @@ def main() -> None:
     parser.add_argument("--eval-epochs", default="1,2,3,5,8,10")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch", type=int, default=4)
-    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--workers", type=int, default=0)  # 260718: 4->0, Windows spawn DataLoader 데드락 (9h hang 원인)
     parser.add_argument("--eval-batch", type=int, default=32)
     parser.add_argument("--eval-workers", type=int, default=4)
     parser.add_argument("--concat-proj-weights", default="")

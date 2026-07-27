@@ -15,10 +15,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import torch
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = ROOT / "scripts"
-ANCHOR = ROOT / "data" / "images" / "anchor_avg30_repro"
+ANCHOR = ROOT / "data" / "pools" / "anchor_avg30_repro.json"
 TAPT_CKPT = Path(r"D:\project\known-cnn\models\iter116J_frozen\best_model.pth")
 FCMAE_CKPT = ROOT / "weights" / "convnextv2_base.fcmae_ft_in22k_in1k_384.pth"
 
@@ -30,6 +32,11 @@ CELLS = {
     "B3": {"local": 1.0, "queue": True, "ignore": 1.0, "neco": 0.0},
     "B4": {"local": 1.0, "queue": True, "ignore": 0.72, "neco": 0.0},
     "B5": {"local": 1.0, "queue": True, "ignore": 0.72, "neco": 0.2},
+    # ★ 260721 플랜: Local OFF May-best + leave-one-out (additive 누적 대신 최종조합 주변 기여 확인)
+    "MAYBEST":    {"local": 0.0, "queue": True,  "ignore": 0.72, "neco": 0.2},   # 플랜 May-best (Global+NeCo0.2+Queue4096+NEG0.72, Local OFF)
+    "MB_NONECO":  {"local": 0.0, "queue": True,  "ignore": 0.72, "neco": 0.0},   # -NeCo
+    "MB_NOQUEUE": {"local": 0.0, "queue": False, "ignore": 0.72, "neco": 0.2},   # -Queue
+    "MB_NONEG":   {"local": 0.0, "queue": True,  "ignore": 1.0,  "neco": 0.2},   # -NEG(ignore off)
 }
 
 
@@ -58,6 +65,9 @@ def configure(module, backbone: str, cell: str, output_root: Path) -> None:
     values = CELLS[cell]
     module.TRAIN_DATA_DIR = str(ANCHOR)
     module.EVAL_DATA_DIR = str(ANCHOR)
+    # The external evaluator scores every checkpoint under one fixed protocol.
+    # Skip the trainer's final-only evaluator to avoid duplicate extraction.
+    module.NO_EVAL = True
     module.CNN_RUN_DIR = None
     module.BACKBONE_CKPT = str(backbone_ckpt)
     module.BACKBONE = "convnextv2_base.fcmae_ft_in22k_in1k_384"
@@ -110,12 +120,47 @@ def configure(module, backbone: str, cell: str, output_root: Path) -> None:
     module.SAVE_REPRESENTATIVES = False
 
 
+def run_single_process(module) -> None:
+    """Use the DDP trainer's loss loop without Gloo on one Windows GPU."""
+    class SingleProcessDDP(torch.nn.Module):
+        def __init__(self, wrapped, *args, **kwargs) -> None:
+            super().__init__()
+            self.module = wrapped
+
+        def forward(self, *args, **kwargs):
+            return self.module(*args, **kwargs)
+
+    class SingleProcessDist:
+        @staticmethod
+        def broadcast_object_list(*args, **kwargs) -> None:
+            return None
+
+        @staticmethod
+        def barrier() -> None:
+            return None
+
+        @staticmethod
+        def is_initialized() -> bool:
+            return False
+
+    module.DDP = SingleProcessDDP
+    module.dist = SingleProcessDist()
+    module.setup_ddp = lambda rank, world_size: None
+    module.cleanup_ddp = lambda: None
+    module.is_main = lambda rank: rank == 0
+    module.all_reduce_avg = lambda metrics, device: metrics
+    module.all_gather_concat = lambda tensor, device: tensor
+    module.train_worker(0, 1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--backbone", choices=["cnn_tapt", "nocnn"], required=True)
     parser.add_argument("--cell", choices=sorted(CELLS), required=True)
-    parser.add_argument("--output-root", type=Path, default=ROOT / "runs" / "may37_reproduction")
+    parser.add_argument("--output-root", type=Path, default=ROOT / "runs" / "may37_manifest_reproduction")
     parser.add_argument("--skip-eval", action="store_true")
+    parser.add_argument("--seed", type=int, default=None)          # ★ 260722: seed 오버라이드 (3-seed 확인)
+    parser.add_argument("--lr-head", type=float, default=None)     # ★ 260722: head LR 오버라이드 (과적합 안정화 스윕)
     args = parser.parse_args()
     output_root = args.output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
@@ -125,6 +170,11 @@ def main() -> None:
         os.environ["USE_LIBUV"] = "0"
     module = load_trainer()
     configure(module, args.backbone, args.cell, output_root)
+    if args.seed is not None:
+        module.SEED = args.seed
+    if args.lr_head is not None:
+        module.LR_HEAD = args.lr_head
+    module.TAG = f"{module.TAG}_s{module.SEED}_lr{module.LR_HEAD:g}"   # ★ 태그에 seed/lr 반영 (덮어쓰기 방지)
     made: list[Path] = []
     original_make_run_dir = module.make_run_dir
 
@@ -135,7 +185,7 @@ def main() -> None:
 
     module.make_run_dir = tracked_make_run_dir
     print(f"[START] backbone={args.backbone} cell={args.cell} anchor={ANCHOR}", flush=True)
-    module.launch_ddp(module.train_worker, world_size=1)
+    run_single_process(module)
     if len(made) != 1:
         raise RuntimeError(f"expected one run directory, got {made}")
     run_dir = made[0].resolve()
@@ -150,6 +200,8 @@ def main() -> None:
             str(SCRIPT_DIR / "eval_may37_checkpoints.py"),
             "--run-dir", str(run_dir),
             "--eval-root", str(ANCHOR),
+            "--batch", "64",
+            "--workers", "4",
         ]
         subprocess.run(command, check=True)
 

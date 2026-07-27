@@ -13,12 +13,18 @@ import numpy as np
 REPO = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO / "scripts"))
 import cluster_scoring as FP
+from _common import load_pool_manifest  # noqa: E402  (manifest-based --pool selection, backward-compat)
 
 EXCL = {"Normal", "Random", "R"}
 
 
 def labels_pool(pool_dir: Path):
     e = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+    if pool_dir.is_file() and pool_dir.suffix.lower() == ".json":
+        # .json manifest (make_pool_manifest.py 생성) — flat sorted-by-path 순서, 기존과 동일 의미.
+        kept = [(p, lab) for p, lab in load_pool_manifest(pool_dir) if p.suffix.lower() in e]
+        kept.sort(key=lambda t: t[0])
+        return [(lab if lab is not None else p.parent.name) for p, lab in kept]
     paths = sorted(p for p in pool_dir.rglob("*") if p.is_file() and p.suffix.lower() in e)
     return [p.parent.name for p in paths]
 
@@ -74,15 +80,38 @@ def run_finch(z):
     return out
 
 
+def _gpu_knn_cosine(z, k):
+    """GPU cosine kNN (self 제외) — sklearn kneighbors_graph 와 동일 이웃/거리. CUDA 없으면 None."""
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return None
+        t = torch.from_numpy(np.ascontiguousarray(z)).float().cuda()
+        t = torch.nn.functional.normalize(t, dim=1)
+        sim = t @ t.T
+        sim.fill_diagonal_(-2.0)
+        vals, idx = sim.topk(k, dim=1)
+        return (1.0 - vals).cpu().numpy(), idx.cpu().numpy()
+    except Exception:
+        return None
+
+
 def run_louvain(z, res=6.0, k=15):
     import networkx as nx
-    from sklearn.neighbors import kneighbors_graph
-    g = kneighbors_graph(z, k, metric="cosine", mode="distance")
     G = nx.Graph()
     G.add_nodes_from(range(z.shape[0]))
-    cx = g.tocoo()
-    for i, j, d in zip(cx.row, cx.col, cx.data):
-        G.add_edge(int(i), int(j), weight=float(1.0 - d))
+    gpu = _gpu_knn_cosine(z, k)
+    if gpu is not None:  # ★ 260720 GPU 가속 (동일 이웃 구조)
+        dists, idxs = gpu
+        for i in range(z.shape[0]):
+            for j, d in zip(idxs[i], dists[i]):
+                G.add_edge(int(i), int(j), weight=float(1.0 - d))
+    else:
+        from sklearn.neighbors import kneighbors_graph
+        g = kneighbors_graph(z, k, metric="cosine", mode="distance")
+        cx = g.tocoo()
+        for i, j, d in zip(cx.row, cx.col, cx.data):
+            G.add_edge(int(i), int(j), weight=float(1.0 - d))
     comms = nx.community.louvain_communities(G, resolution=res, seed=42)
     pred = np.full(z.shape[0], -1)
     for ci, mem in enumerate(comms):
@@ -96,8 +125,21 @@ def run_louvain(z, res=6.0, k=15):
 
 
 def run_hdbscan_raw(z):
-    """옛 검증 레시피 (scripts/train_contrastive.py): UMAP 없이 raw 위 직접 — mcs12/ms15/leaf/eps0.06."""
+    """옛 검증 레시피 (scripts/train_contrastive.py): UMAP 없이 raw 위 직접 — mcs12/ms15/leaf/eps0.06.
+    260720: 거리행렬을 GPU 로 사전계산 (euclidean, 수학 동일) — 1024-d 트리 대비 대폭 가속. CUDA 없으면 기존 경로."""
     import hdbscan
+    try:
+        import torch
+        if torch.cuda.is_available():
+            t = torch.from_numpy(np.ascontiguousarray(z)).float().cuda()
+            d2 = torch.cdist(t, t, p=2.0).double().cpu().numpy()
+            cl = hdbscan.HDBSCAN(min_cluster_size=12, min_samples=15,
+                                 cluster_selection_method="leaf",
+                                 cluster_selection_epsilon=0.06,
+                                 metric="precomputed").fit(d2)
+            return cl.labels_
+    except Exception:
+        pass
     cl = hdbscan.HDBSCAN(min_cluster_size=12, min_samples=15,
                          cluster_selection_method="leaf",
                          cluster_selection_epsilon=0.06).fit(z.astype(np.float64))
@@ -118,7 +160,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("embs", nargs="+")
     ap.add_argument("--labels-from", choices=["pool", "cache"], default="pool")
-    ap.add_argument("--pool", default="data/images/mixedwm38_pool_mixed29")
+    ap.add_argument("--pool", default="data/pools/unknown_eval100.json")
     ap.add_argument("--cache", default="cache_fmap/mixed29_clean")
     ap.add_argument("--skip-umap", action="store_true")
     ap.add_argument("--exclude-classes", default="Normal,Random,R",

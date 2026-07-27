@@ -1,0 +1,218 @@
+{
+  "created_at": "2026-07-25T07:32:28.699722+09:00",
+  "protocol_id": "4aaba956f57912a625805c459f8303a10bd233e9893ef93c0fc44bef4d43ef42",
+  "gate": {
+    "gate_contract": {
+      "P1": "every seed must preserve the clusterer-specific frozen capture count",
+      "P2": "every seed must not increase target noise",
+      "P3_P4_fragment": "mean non-worse and >=2/3 seeds improve in each clusterer",
+      "recov": "clusterer mean may decline by at most 0.01",
+      "ARI_AMI": "supporting only; excluded from gate"
+    },
+    "clusterers": {
+      "FINCH-p2": {
+        "accepted": false,
+        "checks": {
+          "P1_all_seeds": false,
+          "P2_all_seeds": true,
+          "P3_mean_non_worse": true,
+          "P3_direction_2of3": true,
+          "P4_mean_non_worse": true,
+          "P4_direction_2of3": true,
+          "fragment_mean_non_worse": true,
+          "fragment_direction_2of3": true,
+          "recov_mean_within_0.01": false
+        },
+        "mean_delta": {
+          "recov": -0.014767,
+          "P3_completeness": 0.004367,
+          "P4_homogeneity": 0.004633,
+          "fragment_improvement": 0.064533,
+          "Sil_supporting": 0.0062,
+          "ARI_supporting": 0.0197,
+          "AMI_supporting": 0.004867
+        }
+      },
+      "Louvain-res6": {
+        "accepted": false,
+        "checks": {
+          "P1_all_seeds": false,
+          "P2_all_seeds": true,
+          "P3_mean_non_worse": true,
+          "P3_direction_2of3": true,
+          "P4_mean_non_worse": true,
+          "P4_direction_2of3": true,
+          "fragment_mean_non_worse": true,
+          "fragment_direction_2of3": true,
+          "recov_mean_within_0.01": true
+        },
+        "mean_delta": {
+          "recov": 0.0032,
+          "P3_completeness": 0.007567,
+          "P4_homogeneity": 0.003467,
+          "fragment_improvement": 0.021533,
+          "Sil_supporting": 0.003033,
+          "ARI_supporting": 0.012467,
+          "AMI_supporting": 0.006
+        }
+      }
+    },
+    "accepted": false,
+    "next_axis": "frozen-residual preservation sweep before adding contrastive components"
+  },
+  "audit": {
+    "fixed_epoch": 4,
+    "seeds": [
+      1,
+      3,
+      5
+    ],
+    "train_dir": "D:\\project\\unknown-contrastive\\data\\images\\unknown_train_defectaware_260710",
+    "dev_dir": "D:\\project\\unknown-contrastive\\data\\images\\unknown_eval100",
+    "holdout": {
+      "path": "D:\\project\\unknown-contrastive\\data\\images\\unknown_holdout_100_260713\\manifest_260713.json",
+      "exists": true,
+      "holdout_root": "D:\\project\\unknown-contrastive\\data\\images\\unknown_holdout_100_260713",
+      "sha256": "8f77be25805208353a94c483e310595006fd5976f405f6379ec1020a06890dcb",
+      "protocol": "image-disjoint holdout: source filenames overlapping the development eval are excluded",
+      "seed": "260713",
+      "declared_per_class": 100,
+      "selected_class_count": 41,
+      "image_count": 4100,
+      "class_counts": {
+        "BrokenRing": 100,
+        "CenterCircle": 100,
+        "CenterDonut": 100,
+        "Center_bank_boundary": 100,
+        "Center_fork": 100,
+        "Center_invalid_main": 100,
+        "Center_scratch": 100,
+        "Center_scratch_rot": 100,
+        "CrescentArc": 100,
+        "CrossScratch": 100,
+        "DiagonalSmear": 100,
+        "Donut_bank_boundary": 100,
+        "Donut_fork": 100,
+        "Donut_invalid_main": 100,
+        "Donut_scratch": 100,
+        "Donut_scratch_rot": 100,
+        "Edge-Bottom_bank_boundary": 100,
+        "Edge-Bottom_fork": 100,
+        "Edge-Bottom_invalid_main": 100,
+        "Edge-Bottom_scratch": 100,
+        "Edge-Bottom_scratch_rot": 100,
+        "Edge-Ring_bank_boundary": 100,
+        "Edge-Ring_fork": 100,
+        "Edge-Ring_invalid_main": 100,
+        "Edge-Ring_scratch": 100,
+        "Edge-Ring_scratch_rot": 100,
+        "Edge-Top_bank_boundary": 100,
+        "Edge-Top_fork": 100,
+        "Edge-Top_invalid_main": 100,
+        "Edge-Top_scratch": 100,
+        "Edge-Top_scratch_rot": 100,
+        "Full_bank_boundary": 100,
+        "Full_fork": 100,
+        "Full_invalid_main": 100,
+        "Full_scratch": 100,
+        "Full_scratch_rot": 100,
+        "ParallelScratches": 100,
+        "RingDots": 100,
+        "Row": 100,
+        "Starburst": 100,
+        "Thick-Edge_invalid_main": 100
+      },
+      "image_count_matches_manifest_per_class": true
+    },
+    "frozen_holdout": {
+      "path": "D:\\project\\unknown-contrastive\\result_grouping\\_hard42_holdout_260713\\embeddings\\fcmae_frozen_holdout.npy",
+      "exists": true
+    },
+    "seed_rows": [
+      {
+        "seed": 1,
+        "checkpoint": {
+          "path": "D:\\project\\unknown-contrastive\\runs\\fcmae_adapter_ep4_three_seed_260721\\embeddings\\fcmae_ad1_s1_ckpt.pt",
+          "exists": true,
+          "bytes": 368839474,
+          "mtime": "2026-07-25T02:52:21.680109+09:00",
+          "sha256": "786cfec55153f2f5be335c2eaf102c120ff7c7927ad1c177178a3304f9c81033",
+          "format": "dict",
+          "has_model": true,
+          "gstep": 3296,
+          "config_present": false,
+          "expected_gstep": 3296,
+          "fixed_ep4_complete": true
+        },
+        "dev_embedding": {
+          "path": "D:\\project\\unknown-contrastive\\runs\\fcmae_adapter_ep4_three_seed_260721\\embeddings\\fcmae_ad1_s1_ep4.npy",
+          "exists": true,
+          "bytes": 16994432
+        },
+        "holdout_embedding": {
+          "path": "D:\\project\\unknown-contrastive\\runs\\fcmae_adapter_holdout_validation_260725\\embeddings\\unkda_fcmae_ad1_s1_ep4.npy",
+          "exists": true
+        }
+      },
+      {
+        "seed": 3,
+        "checkpoint": {
+          "path": "D:\\project\\unknown-contrastive\\runs\\fcmae_adapter_ep4_three_seed_260721\\embeddings\\fcmae_ad1_s3_ckpt.pt",
+          "exists": true,
+          "bytes": 368839474,
+          "mtime": "2026-07-25T06:49:07.982901+09:00",
+          "sha256": "b8411b1ed75b5723335a7bb2d31a7327ea418397cb7bc4fc2748a5e80ae81103",
+          "format": "dict",
+          "has_model": true,
+          "gstep": 3296,
+          "config_present": false,
+          "expected_gstep": 3296,
+          "fixed_ep4_complete": true
+        },
+        "dev_embedding": {
+          "path": "D:\\project\\unknown-contrastive\\result_grouping\\_fcmae_adapter260721\\embeddings\\ad1_none_ep4.npy",
+          "exists": true,
+          "bytes": 16994432
+        },
+        "holdout_embedding": {
+          "path": "D:\\project\\unknown-contrastive\\runs\\fcmae_adapter_holdout_validation_260725\\embeddings\\unkda_fcmae_ad1_s3_ep4.npy",
+          "exists": true
+        }
+      },
+      {
+        "seed": 5,
+        "checkpoint": {
+          "path": "D:\\project\\unknown-contrastive\\runs\\fcmae_adapter_ep4_three_seed_260721\\embeddings\\fcmae_ad1_s5_ckpt.pt",
+          "exists": true,
+          "bytes": 368839346,
+          "mtime": "2026-07-25T04:47:04.646319+09:00",
+          "sha256": "c7e5c3949a09cb309f25fd5a7c18a13cb1a5eabd018a0a1cf59db47859a7a7bb",
+          "format": "dict",
+          "has_model": true,
+          "gstep": 3296,
+          "config_present": false,
+          "expected_gstep": 3296,
+          "fixed_ep4_complete": true
+        },
+        "dev_embedding": {
+          "path": "D:\\project\\unknown-contrastive\\runs\\fcmae_adapter_ep4_three_seed_260721\\embeddings\\fcmae_ad1_s5_ep4.npy",
+          "exists": true,
+          "bytes": 16994432
+        },
+        "holdout_embedding": {
+          "path": "D:\\project\\unknown-contrastive\\runs\\fcmae_adapter_holdout_validation_260725\\embeddings\\unkda_fcmae_ad1_s5_ep4.npy",
+          "exists": true
+        }
+      }
+    ],
+    "existing_seed3_dev_state": "D:\\project\\unknown-contrastive\\result_grouping\\_fcmae_adapter260721\\embeddings\\ad1_none_ep4.npy",
+    "extractor": "D:\\project\\unknown-contrastive\\_ssl_methods.py",
+    "fixed_protocol": "D:\\project\\unknown-contrastive\\scripts\\fcmae_fixed_protocol.py",
+    "holdout_evaluator": "D:\\project\\unknown-contrastive\\scripts\\rescore_unknown_strict_novel.py"
+  },
+  "outputs": {
+    "csv": "D:\\project\\unknown-contrastive\\docs\\paper\\FCMAE_ADAPTER_HOLDOUT_260725\\fcmae_adapter_holdout_260725.csv",
+    "md": "D:\\project\\unknown-contrastive\\docs\\paper\\FCMAE_ADAPTER_HOLDOUT_260725\\fcmae_adapter_holdout_260725.md",
+    "gate_json": "D:\\project\\unknown-contrastive\\docs\\paper\\FCMAE_ADAPTER_HOLDOUT_260725\\fcmae_adapter_holdout_260725_gate.json"
+  }
+}

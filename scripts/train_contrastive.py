@@ -71,7 +71,7 @@ CLUSTER_SELECTION_EPSILON = 0.06
 # Data caps (eval set)
 PER_CLASS_CAP         = 500
 NORMAL_CAP            = 2000
-EVAL_IGNORE_CLASSES   = {"Normal"}   # Normal 은 background/noise pool — metric 계산 제외
+EVAL_IGNORE_CLASSES   = {"Normal", "Random", "R"}   # background/noise-like classes — metric 계산 제외
 
 SEED                  = 42
 
@@ -110,6 +110,7 @@ from _common import (
     snapshot_config,
     system_info,
 )
+from cluster_metrics import capture_metrics
 
 
 def seed_all(s=42):
@@ -428,18 +429,7 @@ def hdbscan_eval(embeddings: np.ndarray, true_labels: list[str], cfg: dict):
     cl2i = {c: i for i, c in enumerate(classes)}
     true_idx = np.array([cl2i[c] for c in true_k]) if classes else np.array([], dtype=int)
 
-    # capture: per class, max fraction in any cluster (over clustered subset)
-    cluster_cls = defaultdict(Counter)
-    for p, c in zip(pred_k, true_k):
-        cluster_cls[int(p)][c] += 1
-    cls_total = Counter(labels_arr[measured_mask])  # over measured classes only
-    capture = {}
-    for cls, total in cls_total.items():
-        max_in = max(
-            (cnt for cl, ccnt in cluster_cls.items() for c, cnt in ccnt.items() if c == cls),
-            default=0,
-        )
-        capture[cls] = max_in / total
+    capture = capture_metrics(pred, labels_arr, EVAL_IGNORE_CLASSES)
     can_score = len(true_idx) > 0 and len(set(true_idx.tolist())) > 1 and len(set(pred_k.tolist())) > 1
     return {
         "n_total": int(n_total),
@@ -450,7 +440,11 @@ def hdbscan_eval(embeddings: np.ndarray, true_labels: list[str], cfg: dict):
         "n_clusters": int(len(set(pred_k))),
         "noise_count": n_noise,
         "noise_pct": round(noise_pct, 2),
-        "class_capture_rate": round(float(np.mean(list(capture.values()))), 4) if capture else 0.0,
+        "class_capture_rate": round(float(capture["capture_rate"]), 4),
+        "class_capture_count": capture["capture_count"],
+        "target_class_count": capture["target_class_count"],
+        "class_coverage_rate": round(float(capture["class_coverage_rate"]), 4),
+        "class_image_capture_rate": round(float(capture["dominant_image_capture_rate"]), 4),
         "completeness": round(float(completeness_score(true_idx, pred_k)), 4) if can_score else 0.0,
         "homogeneity": round(float(homogeneity_score(true_idx, pred_k)), 4) if can_score else 0.0,
         "ami": round(float(adjusted_mutual_info_score(true_idx, pred_k)), 4) if can_score else 0.0,

@@ -1,0 +1,59 @@
+{
+  "gate_contract": {
+    "P1": "every seed must preserve the clusterer-specific frozen capture count",
+    "P2": "every seed must not increase target noise",
+    "P3_P4_fragment": "mean non-worse and >=2/3 seeds improve in each clusterer",
+    "recov": "clusterer mean may decline by at most 0.01",
+    "ARI_AMI": "supporting only; excluded from gate"
+  },
+  "clusterers": {
+    "FINCH-p2": {
+      "accepted": false,
+      "checks": {
+        "P1_all_seeds": false,
+        "P2_all_seeds": true,
+        "P3_mean_non_worse": false,
+        "P3_direction_2of3": false,
+        "P4_mean_non_worse": false,
+        "P4_direction_2of3": true,
+        "fragment_mean_non_worse": true,
+        "fragment_direction_2of3": true,
+        "recov_mean_within_0.01": false
+      },
+      "mean_delta": {
+        "recov": -0.040567,
+        "P3_completeness": -0.001767,
+        "P4_homogeneity": -0.000967,
+        "fragment_improvement": 0.010433,
+        "Sil_supporting": 0.002733,
+        "ARI_supporting": -0.012967,
+        "AMI_supporting": -0.0016
+      }
+    },
+    "Louvain-res6": {
+      "accepted": true,
+      "checks": {
+        "P1_all_seeds": true,
+        "P2_all_seeds": true,
+        "P3_mean_non_worse": true,
+        "P3_direction_2of3": true,
+        "P4_mean_non_worse": true,
+        "P4_direction_2of3": true,
+        "fragment_mean_non_worse": true,
+        "fragment_direction_2of3": true,
+        "recov_mean_within_0.01": true
+      },
+      "mean_delta": {
+        "recov": -0.0012,
+        "P3_completeness": 0.003967,
+        "P4_homogeneity": 0.001333,
+        "fragment_improvement": 0.0312,
+        "Sil_supporting": -0.0071,
+        "ARI_supporting": 0.0077,
+        "AMI_supporting": 0.002933
+      }
+    }
+  },
+  "accepted": false,
+  "next_axis": "frozen-residual preservation sweep before adding contrastive components"
+}

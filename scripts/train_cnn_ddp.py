@@ -101,6 +101,16 @@ if os.environ.get("CNN_NUM_WORKERS_PER_GPU"):
     NUM_WORKERS_PER_GPU = int(os.environ["CNN_NUM_WORKERS_PER_GPU"])
 if os.environ.get("CNN_PREFETCH_FACTOR"):
     PREFETCH_FACTOR = int(os.environ["CNN_PREFETCH_FACTOR"])
+if os.environ.get("CNN_BACKBONE_NAME"):
+    BACKBONE = os.environ["CNN_BACKBONE_NAME"]
+if os.environ.get("CNN_IMG_SIZE"):
+    IMG_SIZE = int(os.environ["CNN_IMG_SIZE"])
+if os.environ.get("CNN_LR_BACKBONE"):
+    LR_BACKBONE = float(os.environ["CNN_LR_BACKBONE"])
+if os.environ.get("CNN_LR_HEAD"):
+    LR_HEAD = float(os.environ["CNN_LR_HEAD"])
+if os.environ.get("CNN_TAG"):
+    TAG = os.environ["CNN_TAG"]
 DATA_DIR = os.environ.get("CNN_DATA_DIR") or DATA_DIR
 SOURCE_ROOT = os.environ.get("CNN_SOURCE_ROOT") or SOURCE_ROOT
 
@@ -161,23 +171,26 @@ def build_transforms():
     return train_tf, eval_tf
 
 
-def build_model(num_classes, backbone_path, rank):
+def build_model(num_classes, backbone_path, rank, pretrained_backbone=False):
     import timm
-    m = timm.create_model(BACKBONE, pretrained=False, num_classes=num_classes,
+    m = timm.create_model(BACKBONE, pretrained=pretrained_backbone, num_classes=num_classes,
                           drop_path_rate=STOCHASTIC_DEPTH)
-    full_sd = torch.load(backbone_path, map_location="cpu")
-    if isinstance(full_sd, dict) and "state_dict" in full_sd:
-        full_sd = full_sd["state_dict"]
-    m_sd = m.state_dict()
-    compat = {k: v for k, v in full_sd.items()
-              if k in m_sd and m_sd[k].shape == v.shape}
-    m.load_state_dict(compat, strict=False)
-    # backbone key 가 실제로 로드됐는지 진단 (skipped 가 head 2개보다 많으면 backbone mismatch)
-    bb_loaded = sum(1 for k in compat if not (k.startswith("head.") or k.startswith("fc.")))
-    if is_main(rank):
-        skipped = len(full_sd) - len(compat)
-        print(f"[backbone] loaded {len(compat)} keys ({bb_loaded} backbone), "
-              f"{skipped} skipped, m_sd total {len(m_sd)} (head re-init for {num_classes})")
+    if backbone_path is not None:
+        full_sd = torch.load(backbone_path, map_location="cpu", weights_only=False)
+        if isinstance(full_sd, dict) and "state_dict" in full_sd:
+            full_sd = full_sd["state_dict"]
+        m_sd = m.state_dict()
+        compat = {k: v for k, v in full_sd.items()
+                  if k in m_sd and m_sd[k].shape == v.shape}
+        m.load_state_dict(compat, strict=False)
+        # backbone key 가 실제로 로드됐는지 진단 (skipped 가 head 2개보다 많으면 backbone mismatch)
+        bb_loaded = sum(1 for k in compat if not (k.startswith("head.") or k.startswith("fc.")))
+        if is_main(rank):
+            skipped = len(full_sd) - len(compat)
+            print(f"[backbone] loaded {len(compat)} keys ({bb_loaded} backbone), "
+                  f"{skipped} skipped, m_sd total {len(m_sd)} (head re-init for {num_classes})")
+    elif is_main(rank):
+        print(f"[backbone] timm pretrained={pretrained_backbone} ({BACKBONE})")
 
     # ★ anomaly-detection 조건: head = MLP (Dropout → Linear(in,512) → ReLU → Linear(512,classes))
     #   단일 Linear probe 대신 2-layer head — anomaly 의 빠른 초기 수렴 recipe.
@@ -228,8 +241,6 @@ def has_class_images(root: Path) -> bool:
 def find_source_root(source_root: str | None) -> Path | None:
     candidates = [source_root] if source_root else [
         SOURCE_ROOT,
-        "data/images/unknown",
-        "data/unknown",
     ]
     for c in candidates:
         if not c:
@@ -252,8 +263,8 @@ def ensure_cnn_data_dir(source_root: str | None, clean_split: bool, no_auto_spli
     if src is None:
         raise SystemExit(
             f"DATA_DIR not ready: {data_dir}\n"
-            f"  split 전 원본도 못 찾음. 필요한 구조: data/images/unknown/<class>/*.png\n"
-            f"  후보: {resolve_path(SOURCE_ROOT)}, {Path.cwd() / 'data' / 'images' / 'unknown'}, {Path.cwd() / 'data' / 'unknown'}"
+            f"  split 전 원본도 못 찾음. 필요한 구조: E:/data/images/unknown/<class>/*.png\n"
+            f"  E: 원본 경로: {resolve_path(SOURCE_ROOT)}"
         )
     if src.resolve() == data_dir.resolve():
         raise SystemExit(f"source-root 와 CNN data-dir 가 같음: {src}")
@@ -304,7 +315,7 @@ def preflight_data_dir() -> None:
         raise SystemExit(
             f"DATA_DIR not ready: {data_dir}\n"
             f"  CNN supervised 는 <class>/*.png 구조가 필요함.\n"
-            f"  분리 전 원본만 있으면 --source-root data/images/unknown 을 주거나 AUTO_SPLIT 을 켜세요."
+            f"  분리 전 원본만 있으면 --source-root E:/data/images/unknown 을 주거나 AUTO_SPLIT 을 켜세요."
         )
     class_dirs = [p for p in data_dir.iterdir() if p.is_dir() and p.name not in EXCLUDE_CLASSES]
     if not class_dirs:
@@ -421,7 +432,10 @@ def train_worker(rank: int, world_size: int):
         snapshot_config(run_dir, cfg)
         system_info(run_dir)
 
-    backbone_path = ensure_backbone_weights(WEIGHTS_DIR, BACKBONE)
+    pretrained_backbone = str(BACKBONE).startswith("hf_hub:")
+    backbone_path = None if pretrained_backbone else ensure_backbone_weights(WEIGHTS_DIR, BACKBONE)
+    if is_main(rank):
+        print(f"[backbone] source={BACKBONE if pretrained_backbone else backbone_path}")
     dist.barrier()
 
     active_classes = None
@@ -470,7 +484,8 @@ def train_worker(rank: int, world_size: int):
               f"persistent=train_only", flush=True)
 
     # model
-    model = build_model(n_cls, backbone_path, rank).to(device)
+    model = build_model(n_cls, backbone_path, rank,
+                        pretrained_backbone=pretrained_backbone).to(device)
     model = DDP(model, device_ids=[rank] if torch.cuda.is_available() else None,
                 find_unused_parameters=False, broadcast_buffers=False)
 
@@ -631,7 +646,7 @@ if __name__ == "__main__":
     _ap.add_argument("--data-dir", type=str, default=None,
                      help="CNN ImageFolder train 폴더. 예: E:/data/images/cnn_train_260601_v2")
     _ap.add_argument("--source-root", type=str, default=None,
-                     help="split 전 원본 폴더. 구조: <class>/*.png. 기본: data/images/unknown 자동 탐색")
+                     help="split 전 원본 폴더. 구조: <class>/*.png. 기본: E:/data/images/unknown")
     _ap.add_argument("--clean-split", action="store_true",
                      help="학습 전 _split_data.py --clean-output 실행")
     _ap.add_argument("--no-auto-split", action="store_true",
@@ -640,6 +655,12 @@ if __name__ == "__main__":
     _ap.add_argument("--epochs", type=int, default=None, help="CNN_EPOCHS override.")
     _ap.add_argument("--workers", type=int, default=None, help="CNN_NUM_WORKERS_PER_GPU override.")
     _ap.add_argument("--prefetch", type=int, default=None, help="CNN_PREFETCH_FACTOR override.")
+    _ap.add_argument("--backbone-name", type=str, default=None,
+                     help="timm backbone name override. 예: hf_hub:timm/convnext_base.dinov3_lvd1689m")
+    _ap.add_argument("--img-size", type=int, default=None, help="CNN_IMG_SIZE override.")
+    _ap.add_argument("--lr-backbone", type=float, default=None, help="CNN_LR_BACKBONE override.")
+    _ap.add_argument("--lr-head", type=float, default=None, help="CNN_LR_HEAD override.")
+    _ap.add_argument("--tag", type=str, default=None, help="CNN_TAG/run folder suffix override.")
     _a = _ap.parse_args()
     if _a.data_dir:
         os.environ["CNN_DATA_DIR"] = _a.data_dir
@@ -659,6 +680,21 @@ if __name__ == "__main__":
     if _a.prefetch is not None:
         os.environ["CNN_PREFETCH_FACTOR"] = str(_a.prefetch)
         PREFETCH_FACTOR = _a.prefetch
+    if _a.backbone_name:
+        os.environ["CNN_BACKBONE_NAME"] = _a.backbone_name
+        BACKBONE = _a.backbone_name
+    if _a.img_size is not None:
+        os.environ["CNN_IMG_SIZE"] = str(_a.img_size)
+        IMG_SIZE = _a.img_size
+    if _a.lr_backbone is not None:
+        os.environ["CNN_LR_BACKBONE"] = str(_a.lr_backbone)
+        LR_BACKBONE = _a.lr_backbone
+    if _a.lr_head is not None:
+        os.environ["CNN_LR_HEAD"] = str(_a.lr_head)
+        LR_HEAD = _a.lr_head
+    if _a.tag:
+        os.environ["CNN_TAG"] = _a.tag
+        TAG = _a.tag
     ensure_cnn_data_dir(_a.source_root, _a.clean_split, _a.no_auto_split)
     preflight_data_dir()
     launch_ddp(train_worker)

@@ -6,7 +6,7 @@ eval pool:  clean 1뷰 fmap → <out>/<stem>.npz
 이미 존재하는 파일은 skip → 죽어도 이어서. 이후 _adaptor_train.py 가 소비.
 """
 from __future__ import annotations
-import argparse, sys, time
+import argparse, os, sys, time
 from pathlib import Path
 import numpy as np
 
@@ -56,7 +56,9 @@ def main():
             fm = bb.forward_features(x)                  # [V, C, H, W] (convnext)
             if fm.shape[1] != bb.num_features and fm.shape[-1] == bb.num_features:
                 fm = fm.permute(0, 3, 1, 2)
-            np.savez_compressed(fp, fmap=fm.cpu().numpy().astype(np.float16))
+            tmp = out / f"{stem}.tmp.npz"  # 외부 kill 도중 잘린 npz 방지 — 원자적 교체
+            np.savez_compressed(tmp, fmap=fm.cpu().numpy().astype(np.float16))
+            os.replace(tmp, fp)
             done += 1
             if done % 100 == 0:
                 el = time.time() - t0

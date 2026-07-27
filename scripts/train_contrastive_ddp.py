@@ -27,6 +27,12 @@ TAG                   = "contrastive_ddp"
 
 IMG_SIZE              = 512
 PROJ_DIM              = 1024
+ADAPTER_DIM           = 0      # 0=OFF. >0이면 frozen/last-stage backbone 위 residual bottleneck adapter 학습.
+ADAPTER_SCALE         = 1.0
+SPATIAL_ADAPTER       = "none" # none | fcmae_grn | weak. feature map 위 residual spatial adapter.
+SPATIAL_ADAPTER_REDUCTION = 4
+SPATIAL_ADAPTER_KERNEL = 7
+SPATIAL_ADAPTER_SCALE = 1.0
 BATCH_PER_GPU         = 8
 NUM_WORKERS_PER_GPU   = None         # None = auto: os.cpu_count() // world_size (환경 코어 전부 활용)
 EPOCHS                = 20
@@ -56,7 +62,7 @@ PSEUDO_POS_MIN_SIM    = 0.90    # detached cosine 기준. 이보다 가까운 ba
 PSEUDO_POS_TOPK       = 2       # anchor당 최대 weak-positive 개수.
 PSEUDO_POS_START_EPOCH = 2      # 초기 noisy embedding 보호.
 PSEUDO_POS_SOURCE     = "backbone"  # "backbone"=CNN feature 기준, "projection"=head embedding 기준.
-INFER_EMBED_MODE      = "projection"  # "projection", "backbone", "weighted_concat"
+INFER_EMBED_MODE      = "projection"  # "projection", "backbone", "adapter", "weighted_concat", "adapter_concat"
 INFER_BACKBONE_WEIGHT = 1.0
 INFER_PROJ_WEIGHT     = 0.2
 USE_LOCAL             = False
@@ -78,7 +84,7 @@ CLUSTER_SELECTION_EPSILON = 0.06
 
 PER_CLASS_CAP         = 500
 NORMAL_CAP            = 2000
-EVAL_IGNORE_CLASSES   = {"Normal"}   # Normal 은 background/noise pool — metric 계산 제외
+EVAL_IGNORE_CLASSES   = {"Normal", "Random", "R"}   # background/noise-like classes — metric 계산 제외
 
 SEED                  = 42
 SAVE_WRONG_IMAGES     = True
@@ -113,10 +119,12 @@ from _common import (
     log_stage_metric,
     make_run_dir,
     mask_palette_non_grade_to_white,
+    resolve_pool,
     resolve_path,
     snapshot_config,
     system_info,
 )
+from cluster_metrics import capture_metrics
 from _ddp_utils import (
     all_gather_concat,
     all_reduce_avg,
@@ -139,6 +147,18 @@ if os.environ.get("CL_IMG_SIZE"):
     IMG_SIZE = int(os.environ["CL_IMG_SIZE"])
 if os.environ.get("CL_PROJ_DIM"):
     PROJ_DIM = int(os.environ["CL_PROJ_DIM"])
+if os.environ.get("CL_ADAPTER_DIM"):
+    ADAPTER_DIM = int(os.environ["CL_ADAPTER_DIM"])
+if os.environ.get("CL_ADAPTER_SCALE"):
+    ADAPTER_SCALE = float(os.environ["CL_ADAPTER_SCALE"])
+if os.environ.get("CL_SPATIAL_ADAPTER"):
+    SPATIAL_ADAPTER = os.environ["CL_SPATIAL_ADAPTER"].strip().lower()
+if os.environ.get("CL_SPATIAL_ADAPTER_REDUCTION"):
+    SPATIAL_ADAPTER_REDUCTION = int(os.environ["CL_SPATIAL_ADAPTER_REDUCTION"])
+if os.environ.get("CL_SPATIAL_ADAPTER_KERNEL"):
+    SPATIAL_ADAPTER_KERNEL = int(os.environ["CL_SPATIAL_ADAPTER_KERNEL"])
+if os.environ.get("CL_SPATIAL_ADAPTER_SCALE"):
+    SPATIAL_ADAPTER_SCALE = float(os.environ["CL_SPATIAL_ADAPTER_SCALE"])
 if os.environ.get("CL_FREEZE_BACKBONE"):
     FREEZE_BACKBONE = os.environ["CL_FREEZE_BACKBONE"].strip().lower() in {"1", "true", "yes", "y"}
 if os.environ.get("CL_BACKBONE_TRAIN_MODE"):
@@ -279,9 +299,18 @@ class MultiRootImageFolder(Dataset):
         exclude = exclude or set()
         active = set(active_classes) if active_classes else None
         cls_set = set()
+        manifest_entries = []
         for r in roots:
             if not r.exists():
                 raise SystemExit(f"EVAL dir not found: {r}")
+            if r.is_file() and r.suffix.lower() == ".json":
+                paths, labels = resolve_pool(r, extensions=tuple(IMG_EXTENSIONS))
+                manifest_entries.extend(zip(paths, labels))
+                cls_set.update(
+                    label for label in labels
+                    if label not in exclude and (active is None or label in active)
+                )
+                continue
             for d in sorted(r.iterdir()):
                 if d.is_dir() and d.name not in exclude and (active is None or d.name in active):
                     cls_set.add(d.name)
@@ -289,7 +318,13 @@ class MultiRootImageFolder(Dataset):
         self.class_to_idx = {c: i for i, c in enumerate(self.classes)}
         exts = set(IMG_EXTENSIONS)
         buckets = defaultdict(list)
+        for path, label in manifest_entries:
+            if label in self.class_to_idx:
+                target = self.class_to_idx[label]
+                buckets[target].append((str(path), target))
         for r in roots:
+            if r.is_file() and r.suffix.lower() == ".json":
+                continue
             for c in self.classes:
                 cdir = r / c
                 if not cdir.is_dir():
@@ -333,8 +368,13 @@ class FlatPairDataset(Dataset):
             roots = [roots]
         paths = []
         for r in roots:
-            paths.extend(p for p in Path(r).rglob("*")
-                         if p.is_file() and p.suffix.lower() in self.EXTS)
+            root = Path(r)
+            if root.is_file() and root.suffix.lower() == ".json":
+                manifest_paths, _ = resolve_pool(root, extensions=tuple(self.EXTS))
+                paths.extend(Path(p) for p in manifest_paths)
+            else:
+                paths.extend(p for p in root.rglob("*")
+                             if p.is_file() and p.suffix.lower() in self.EXTS)
         self.paths = sorted(set(paths))
         self.tfm = tfm
     def __len__(self): return len(self.paths)
@@ -568,10 +608,12 @@ def write_contrastive_eval_report(cl_dir: Path, tier1: dict, pred: np.ndarray,
         f.write(f"- noise: {tier1.get('noise_count', 0)} ({tier1.get('noise_pct', 0)}%)\n")
         f.write(f"- clusters: {tier1.get('n_clusters', 0)}\n")
         f.write(f"- class capture rate: {tier1.get('class_capture_rate', 0)}\n")
+        f.write(f"- class image capture rate: {tier1.get('class_image_capture_rate', 0)}\n")
         f.write(f"- homogeneity/completeness/AMI/ARI: {tier1.get('homogeneity', 0)} / {tier1.get('completeness', 0)} / {tier1.get('ami', 0)} / {tier1.get('ari', 0)}\n")
         f.write(f"- representatives: max {reps_per_cluster} images per cluster\n\n")
         f.write("## Meaning\n\n")
-        f.write("- captured: true class 와 같은 dominant_class cluster 에 들어간 샘플 수\n")
+        f.write("- class capture rate: dominant_class 대표 cluster 를 가진 class 종류 비율\n")
+        f.write("- captured: true class 와 같은 dominant_class cluster 에 들어간 샘플 수 (image capture 보조 계산용)\n")
         f.write("- noise: HDBSCAN 이 cluster 로 묶지 못하고 -1 로 둔 샘플 수\n")
         f.write("- clusters_with_class: 해당 class 샘플이 흩어진 non-noise cluster 개수\n")
         f.write("- dominant_clusters: 해당 class 가 dominant_class 인 cluster 개수\n\n")
@@ -613,9 +655,85 @@ def build_eval_tf():
     return T.Compose([T.Resize((IMG_SIZE, IMG_SIZE)), T.ToTensor(), norm])
 
 
+class ResidualAdapter(nn.Module):
+    def __init__(self, dim: int, hidden_dim: int, scale: float = 1.0):
+        super().__init__()
+        self.scale = float(scale)
+        self.net = nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, dim),
+        )
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
+
+    def forward(self, x):
+        return x + self.scale * self.net(x)
+
+
+class LayerNorm2d(nn.Module):
+    def __init__(self, channels: int, eps: float = 1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(channels))
+        self.bias = nn.Parameter(torch.zeros(channels))
+        self.eps = eps
+
+    def forward(self, x):
+        mean = x.mean(dim=1, keepdim=True)
+        var = (x - mean).pow(2).mean(dim=1, keepdim=True)
+        x = (x - mean) / torch.sqrt(var + self.eps)
+        return self.weight[:, None, None] * x + self.bias[:, None, None]
+
+
+class GRN2d(nn.Module):
+    def __init__(self, channels: int, eps: float = 1e-6):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.zeros(1, channels, 1, 1))
+        self.beta = nn.Parameter(torch.zeros(1, channels, 1, 1))
+        self.eps = eps
+
+    def forward(self, x):
+        gx = torch.norm(x, p=2, dim=(2, 3), keepdim=True)
+        nx = gx / (gx.mean(dim=1, keepdim=True) + self.eps)
+        return self.gamma * (x * nx) + self.beta + x
+
+
+class SpatialResidualAdapter(nn.Module):
+    def __init__(self, channels: int, reduction: int = 4, kernel_size: int = 7,
+                 scale: float = 1.0, use_grn: bool = True):
+        super().__init__()
+        hidden = max(1, channels // max(1, int(reduction)))
+        padding = int(kernel_size) // 2
+        self.scale = float(scale)
+        self.norm = LayerNorm2d(channels)
+        self.down = nn.Conv2d(channels, hidden, kernel_size=1)
+        self.act = nn.GELU()
+        self.dwconv = nn.Conv2d(
+            hidden, hidden, kernel_size=int(kernel_size),
+            padding=padding, groups=hidden,
+        )
+        self.grn = GRN2d(hidden) if use_grn else nn.Identity()
+        self.up = nn.Conv2d(hidden, channels, kernel_size=1)
+        self.alpha = nn.Parameter(torch.zeros(1, channels, 1, 1))
+
+    def forward(self, x):
+        y = self.norm(x)
+        y = self.down(y)
+        y = self.act(y)
+        y = self.dwconv(y)
+        y = self.grn(y)
+        y = self.act(y)
+        y = self.up(y)
+        return x + self.scale * self.alpha * y
+
+
 class ContrastiveModel(nn.Module):
     def __init__(self, backbone_name, proj_dim, freeze_backbone, backbone_ckpt,
-                 use_predictor=False, pretrained_backbone=False):
+                 use_predictor=False, pretrained_backbone=False,
+                 adapter_dim=0, adapter_scale=1.0,
+                 spatial_adapter="none", spatial_reduction=4,
+                 spatial_kernel=7, spatial_scale=1.0):
         super().__init__()
         import timm
         self.backbone = timm.create_model(backbone_name, pretrained=pretrained_backbone,
@@ -629,6 +747,22 @@ class ContrastiveModel(nn.Module):
                       if k in m_sd and m_sd[k].shape == v.shape}
             self.backbone.load_state_dict(compat, strict=False)
         feat_dim = self.backbone.num_features
+        self.adapter = None
+        if int(adapter_dim or 0) > 0:
+            self.adapter = ResidualAdapter(feat_dim, int(adapter_dim), adapter_scale)
+        self.spatial_adapter = None
+        spatial_adapter = str(spatial_adapter or "none").lower()
+        if spatial_adapter != "none":
+            if spatial_adapter == "fcmae_grn":
+                self.spatial_adapter = SpatialResidualAdapter(
+                    feat_dim, int(spatial_reduction), int(spatial_kernel),
+                    float(spatial_scale), use_grn=True)
+            elif spatial_adapter == "weak":
+                self.spatial_adapter = SpatialResidualAdapter(
+                    feat_dim, int(spatial_reduction), int(spatial_kernel),
+                    float(spatial_scale), use_grn=False)
+            else:
+                raise ValueError(f"unknown spatial adapter: {spatial_adapter}")
         self.proj = nn.Sequential(
             nn.Linear(feat_dim, feat_dim), nn.GELU(),
             nn.Linear(feat_dim, proj_dim),
@@ -664,30 +798,53 @@ class ContrastiveModel(nn.Module):
             return fm.permute(0, 3, 1, 2).contiguous()
         return fm
 
+    def _adapt_feature_map(self, fm):
+        fm = self._feature_map_nchw(fm)
+        if self.spatial_adapter is None:
+            return fm
+        return self.spatial_adapter(fm)
+
     def _pool_features(self, fm):
+        if self.spatial_adapter is not None:
+            fm = self._adapt_feature_map(fm)
+            return fm.mean(dim=(2, 3))
         if hasattr(self.backbone, "forward_head"):
             return self.backbone.forward_head(fm, pre_logits=True)
         fm = self._feature_map_nchw(fm)
         return fm.mean(dim=(2, 3))
 
+    def _adapt_features(self, f):
+        if self.adapter is None:
+            return f
+        return self.adapter(f)
+
     def _project_patches(self, fm):
-        fm = self._feature_map_nchw(fm)
+        fm = self._adapt_feature_map(fm)
         b, c, h, w = fm.shape
         patches = fm.permute(0, 2, 3, 1).reshape(b * h * w, c)
+        patches = self._adapt_features(patches)
         z = F.normalize(self.proj(patches), dim=1)
         return z.view(b, h * w, -1)
 
-    def _infer_embedding_from_features(self, f, z):
+    def _infer_embedding_from_features(self, f, z, fa=None):
         f = F.normalize(f, dim=1)
+        fa = F.normalize(fa if fa is not None else f, dim=1)
         z = F.normalize(z, dim=1)
         mode = str(INFER_EMBED_MODE).lower()
         if mode == "projection":
             return z
         if mode == "backbone":
             return f
+        if mode == "adapter":
+            return fa
         if mode == "weighted_concat":
             return F.normalize(torch.cat([
                 f * float(INFER_BACKBONE_WEIGHT),
+                z * float(INFER_PROJ_WEIGHT),
+            ], dim=1), dim=1)
+        if mode == "adapter_concat":
+            return F.normalize(torch.cat([
+                fa * float(INFER_BACKBONE_WEIGHT),
                 z * float(INFER_PROJ_WEIGHT),
             ], dim=1), dim=1)
         raise ValueError(f"unknown INFER_EMBED_MODE: {INFER_EMBED_MODE}")
@@ -695,8 +852,9 @@ class ContrastiveModel(nn.Module):
     def infer_embedding(self, x):
         fm = self._forward_features(x)
         f = self._pool_features(fm)
-        z = F.normalize(self.proj(f), dim=1)
-        return self._infer_embedding_from_features(f, z)
+        fa = self._adapt_features(f)
+        z = F.normalize(self.proj(fa), dim=1)
+        return self._infer_embedding_from_features(f, z, fa)
 
     def predict(self, z):
         if self.pred is None:
@@ -706,20 +864,21 @@ class ContrastiveModel(nn.Module):
     def forward(self, x, return_neco=False, return_feature=False, return_pred=False):
         fm = self._forward_features(x)
         f = self._pool_features(fm)
-        z = F.normalize(self.proj(f), dim=1)
+        fa = self._adapt_features(f)
+        z = F.normalize(self.proj(fa), dim=1)
         pred = self.predict(z) if return_pred else None
         if return_neco and return_feature and return_pred:
-            return z, self._project_patches(fm), F.normalize(f, dim=1), pred
+            return z, self._project_patches(fm), F.normalize(fa, dim=1), pred
         if return_neco and return_feature:
-            return z, self._project_patches(fm), F.normalize(f, dim=1)
+            return z, self._project_patches(fm), F.normalize(fa, dim=1)
         if return_neco and return_pred:
             return z, self._project_patches(fm), pred
         if return_neco:
             return z, self._project_patches(fm)
         if return_feature and return_pred:
-            return z, F.normalize(f, dim=1), pred
+            return z, F.normalize(fa, dim=1), pred
         if return_feature:
-            return z, F.normalize(f, dim=1)
+            return z, F.normalize(fa, dim=1)
         if return_pred:
             return z, pred
         return z
@@ -1113,7 +1272,13 @@ def train_worker(rank, world_size):
     # model + DDP wrap. 기본은 backbone 도 작은 LR 로 같이 fine-tune.
     base_model = ContrastiveModel(BACKBONE, PROJ_DIM, FREEZE_BACKBONE, bp,
                                   use_predictor=use_predictor,
-                                  pretrained_backbone=pretrained_backbone).to(device)
+                                  pretrained_backbone=pretrained_backbone,
+                                  adapter_dim=ADAPTER_DIM,
+                                  adapter_scale=ADAPTER_SCALE,
+                                  spatial_adapter=SPATIAL_ADAPTER,
+                                  spatial_reduction=SPATIAL_ADAPTER_REDUCTION,
+                                  spatial_kernel=SPATIAL_ADAPTER_KERNEL,
+                                  spatial_scale=SPATIAL_ADAPTER_SCALE).to(device)
     backbone_train_mode = "frozen" if FREEZE_BACKBONE else BACKBONE_TRAIN_MODE
     backbone_trainable, backbone_total = apply_backbone_train_mode(
         base_model.backbone, backbone_train_mode)
@@ -1125,13 +1290,23 @@ def train_worker(rank, world_size):
     if use_momentum_encoder:
         key_model = ContrastiveModel(BACKBONE, PROJ_DIM, FREEZE_BACKBONE, bp,
                                      use_predictor=False,
-                                     pretrained_backbone=pretrained_backbone).to(device)
+                                     pretrained_backbone=pretrained_backbone,
+                                     adapter_dim=ADAPTER_DIM,
+                                     adapter_scale=ADAPTER_SCALE,
+                                     spatial_adapter=SPATIAL_ADAPTER,
+                                     spatial_reduction=SPATIAL_ADAPTER_REDUCTION,
+                                     spatial_kernel=SPATIAL_ADAPTER_KERNEL,
+                                     spatial_scale=SPATIAL_ADAPTER_SCALE).to(device)
         key_model.load_state_dict(model.module.state_dict(), strict=False)
         for p in key_model.parameters():
             p.requires_grad = False
         key_model.eval()
     backbone_params = [p for p in model.module.backbone.parameters() if p.requires_grad]
     head_params = [p for p in model.module.proj.parameters() if p.requires_grad]
+    if model.module.adapter is not None:
+        head_params += [p for p in model.module.adapter.parameters() if p.requires_grad]
+    if model.module.spatial_adapter is not None:
+        head_params += [p for p in model.module.spatial_adapter.parameters() if p.requires_grad]
     if model.module.pred is not None:
         head_params += [p for p in model.module.pred.parameters() if p.requires_grad]
     param_groups = []
@@ -1162,6 +1337,12 @@ def train_worker(rank, world_size):
             "freeze_backbone": FREEZE_BACKBONE,
             "batch_per_gpu": BATCH_PER_GPU, "total_batch": BATCH_PER_GPU * world_size,
             "proj_dim": PROJ_DIM,
+            "adapter_dim": ADAPTER_DIM,
+            "adapter_scale": ADAPTER_SCALE,
+            "spatial_adapter": SPATIAL_ADAPTER,
+            "spatial_adapter_reduction": SPATIAL_ADAPTER_REDUCTION,
+            "spatial_adapter_kernel": SPATIAL_ADAPTER_KERNEL,
+            "spatial_adapter_scale": SPATIAL_ADAPTER_SCALE,
             "lr_head": LR_HEAD, "lr_backbone": LR_BACKBONE,
             "loss_mode": LOSS_MODE,
             "lr_min": LR_MIN, "lr_backbone_min": LR_BACKBONE_MIN,
@@ -1430,33 +1611,34 @@ def train_worker(rank, world_size):
             json.dumps({"paths": all_path, "labels": all_label}, indent=2), encoding="utf-8")
         print(f"[eval] embed shape={emb.shape}")
 
-        import hdbscan
-        clusterer = hdbscan.HDBSCAN(min_cluster_size=MIN_CLUSTER_SIZE, min_samples=MIN_SAMPLES,
-                                    cluster_selection_method=CLUSTER_SELECTION_METHOD,
-                                    cluster_selection_epsilon=CLUSTER_SELECTION_EPSILON,
-                                    metric="euclidean")
-        pred = clusterer.fit_predict(emb)
-
         from sklearn.metrics import (adjusted_mutual_info_score, adjusted_rand_score,
                                      completeness_score, homogeneity_score)
         labels_arr = np.array(all_label)
         measured_mask = ~np.isin(labels_arr, list(EVAL_IGNORE_CLASSES))
         ignored_counts = Counter(labels_arr[~measured_mask].tolist())
-        keep = (pred != -1) & measured_mask
-        true_k = labels_arr[keep]; pred_k = pred[keep]
+
+        import hdbscan
+        clusterer = hdbscan.HDBSCAN(min_cluster_size=MIN_CLUSTER_SIZE, min_samples=MIN_SAMPLES,
+                                    cluster_selection_method=CLUSTER_SELECTION_METHOD,
+                                    cluster_selection_epsilon=CLUSTER_SELECTION_EPSILON,
+                                    metric="euclidean")
+        pred_measured = clusterer.fit_predict(emb[measured_mask])
+        pred = np.full(len(labels_arr), -1, dtype=int)
+        pred[np.where(measured_mask)[0]] = pred_measured
+
+        keep = pred_measured != -1
+        true_k = labels_arr[measured_mask][keep]
+        pred_k = pred_measured[keep]
         classes_unique = sorted(set(true_k))
         cl2i = {c: i for i, c in enumerate(classes_unique)}
         true_idx = np.array([cl2i[c] for c in true_k]) if classes_unique else np.array([], dtype=int)
         cluster_cls = defaultdict(Counter)
         for p, c in zip(pred_k, true_k):
             cluster_cls[int(p)][c] += 1
-        cls_total = Counter(labels_arr[measured_mask])
-        capture = {}
-        for cls, total in cls_total.items():
-            mx = max((cnt for cl, ccnt in cluster_cls.items() for c, cnt in ccnt.items() if c == cls), default=0)
-            capture[cls] = mx / total
+        capture = capture_metrics(pred, labels_arr, EVAL_IGNORE_CLASSES)
+        cluster_dom = capture["dominant_by_cluster"]
         can_score = len(true_idx) > 0 and len(set(true_idx.tolist())) > 1 and len(set(pred_k.tolist())) > 1
-        measured_noise = int(((pred == -1) & measured_mask).sum())
+        measured_noise = int((pred_measured == -1).sum())
         measured_total = int(measured_mask.sum())
         tier1 = {
             "n_total": measured_total,
@@ -1468,7 +1650,11 @@ def train_worker(rank, world_size):
             "n_clusters": int(len(set(pred_k))),
             "noise_count": measured_noise,
             "noise_pct": round(float(measured_noise / max(1, measured_total) * 100), 2),
-            "class_capture_rate": round(float(np.mean(list(capture.values()))), 4) if capture else 0.0,
+            "class_capture_rate": round(float(capture["capture_rate"]), 4),
+            "class_capture_count": capture["capture_count"],
+            "target_class_count": capture["target_class_count"],
+            "class_image_capture_rate": round(float(capture["dominant_image_capture_rate"]), 4),
+            "class_coverage_rate": round(float(capture["class_coverage_rate"]), 4),
             "completeness": round(float(completeness_score(true_idx, pred_k)), 4) if can_score else 0.0,
             "homogeneity": round(float(homogeneity_score(true_idx, pred_k)), 4) if can_score else 0.0,
             "ami": round(float(adjusted_mutual_info_score(true_idx, pred_k)), 4) if can_score else 0.0,
@@ -1569,15 +1755,28 @@ if __name__ == "__main__":
     _ap.add_argument("--tag", type=str, default=None, help="run 폴더 tag override.")
     _ap.add_argument("--epochs", type=int, default=None)
     _ap.add_argument("--train-dirs", type=str, default=None,
-                     help="학습 폴더 (콤마구분 다중 가능). 예: a/unknown,a/unknown_archive")
+                     help="학습 폴더 또는 pool manifest .json (콤마구분 다중 가능)")
     _ap.add_argument("--eval-dirs", type=str, default=None,
-                     help="eval 폴더 (콤마구분 다중 가능, class 통합). 예: a/eval1,a/eval2")
+                     help="eval 폴더 또는 pool manifest .json (콤마구분 다중 가능, class 통합)")
     _ap.add_argument("--no-eval", action="store_true",
                      help="현업 classless train only. eval/HDBSCAN metric 생략.")
     _ap.add_argument("--batch", type=int, default=None, help="BATCH_PER_GPU override.")
     _ap.add_argument("--img-size", type=int, default=None, help="contrastive input size. 기본 512")
     _ap.add_argument("--proj-dim", type=int, default=None,
                      help="projection embedding dim. 기본 1024")
+    _ap.add_argument("--adapter-dim", type=int, default=None,
+                     help="Residual bottleneck adapter dim. 0이면 OFF.")
+    _ap.add_argument("--adapter-scale", type=float, default=None,
+                     help="Residual adapter scale. 기본 1.0")
+    _ap.add_argument("--spatial-adapter", type=str, default=None,
+                     choices=["none", "fcmae_grn", "weak"],
+                     help="Feature-map residual adapter. fcmae_grn=GRN+DWConv, weak=light DWConv.")
+    _ap.add_argument("--spatial-adapter-reduction", type=int, default=None,
+                     help="Spatial adapter bottleneck reduction. FCMAE 추천 4, DINOv3 추천 8~16.")
+    _ap.add_argument("--spatial-adapter-kernel", type=int, default=None,
+                     help="Spatial adapter depthwise kernel. FCMAE 추천 7, DINOv3 추천 3.")
+    _ap.add_argument("--spatial-adapter-scale", type=float, default=None,
+                     help="Spatial adapter residual scale. 기본 1.0")
     _ap.add_argument("--freeze-backbone", action="store_true",
                      help="backbone 고정(head-only ablation). 기본은 backbone 도 작은 LR 로 학습.")
     _ap.add_argument("--backbone-train-mode", type=str, default=None,
@@ -1601,7 +1800,7 @@ if __name__ == "__main__":
                      choices=["backbone", "projection"],
                      help="pseudo-positive 후보를 고를 embedding. 기본 backbone.")
     _ap.add_argument("--infer-embed-mode", type=str, default=None,
-                     choices=["projection", "backbone", "weighted_concat"],
+                     choices=["projection", "backbone", "adapter", "weighted_concat", "adapter_concat"],
                      help="eval/grouping embedding mode. 기본 projection.")
     _ap.add_argument("--infer-backbone-weight", type=float, default=None,
                      help="weighted_concat backbone weight. 기본 1.0")
@@ -1656,6 +1855,12 @@ if __name__ == "__main__":
     if _a.batch is not None:  os.environ["CL_BATCH_PER_GPU"] = str(_a.batch)
     if _a.img_size is not None: os.environ["CL_IMG_SIZE"] = str(_a.img_size)
     if _a.proj_dim is not None: os.environ["CL_PROJ_DIM"] = str(_a.proj_dim)
+    if _a.adapter_dim is not None: os.environ["CL_ADAPTER_DIM"] = str(_a.adapter_dim)
+    if _a.adapter_scale is not None: os.environ["CL_ADAPTER_SCALE"] = str(_a.adapter_scale)
+    if _a.spatial_adapter is not None: os.environ["CL_SPATIAL_ADAPTER"] = _a.spatial_adapter
+    if _a.spatial_adapter_reduction is not None: os.environ["CL_SPATIAL_ADAPTER_REDUCTION"] = str(_a.spatial_adapter_reduction)
+    if _a.spatial_adapter_kernel is not None: os.environ["CL_SPATIAL_ADAPTER_KERNEL"] = str(_a.spatial_adapter_kernel)
+    if _a.spatial_adapter_scale is not None: os.environ["CL_SPATIAL_ADAPTER_SCALE"] = str(_a.spatial_adapter_scale)
     if _a.freeze_backbone:    os.environ["CL_FREEZE_BACKBONE"] = "1"
     if _a.backbone_train_mode is not None: os.environ["CL_BACKBONE_TRAIN_MODE"] = _a.backbone_train_mode
     if _a.train_sampling_ratio is not None: os.environ["CL_TRAIN_SAMPLING_RATIO"] = str(_a.train_sampling_ratio)
@@ -1699,6 +1904,12 @@ if __name__ == "__main__":
     if _a.batch is not None:  BATCH_PER_GPU = _a.batch
     if _a.img_size is not None: IMG_SIZE = _a.img_size
     if _a.proj_dim is not None: PROJ_DIM = _a.proj_dim
+    if _a.adapter_dim is not None: ADAPTER_DIM = _a.adapter_dim
+    if _a.adapter_scale is not None: ADAPTER_SCALE = _a.adapter_scale
+    if _a.spatial_adapter is not None: SPATIAL_ADAPTER = _a.spatial_adapter
+    if _a.spatial_adapter_reduction is not None: SPATIAL_ADAPTER_REDUCTION = _a.spatial_adapter_reduction
+    if _a.spatial_adapter_kernel is not None: SPATIAL_ADAPTER_KERNEL = _a.spatial_adapter_kernel
+    if _a.spatial_adapter_scale is not None: SPATIAL_ADAPTER_SCALE = _a.spatial_adapter_scale
     if _a.freeze_backbone:    FREEZE_BACKBONE = True
     if _a.backbone_train_mode is not None: BACKBONE_TRAIN_MODE = _a.backbone_train_mode
     if _a.train_sampling_ratio is not None: TRAIN_SAMPLING_RATIO = _a.train_sampling_ratio
