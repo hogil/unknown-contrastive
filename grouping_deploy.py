@@ -201,8 +201,9 @@ def embed_one_checkpoint(paths, backbone, proj, device, batch=32):
 # ★ 단 **학습 때와 반드시 같아야 한다.** champion 과 May b4 는 마스킹 **없이** 학습됐으므로
 #   그 head 에 마스킹을 켜서 넣으면 학습 때와 다른 입력이 되어 결과가 무의미해진다.
 #   그래서 기본값은 off 이고, 켜려면 UC_PALETTE_MASK=1 로 명시해야 한다.
-# composite 해상도. 원본이 6400px 이라도 그룹 수 x 크기만큼 디스크를 먹으니 기본 1024.
-_COMP_SIZE = int(os.environ.get("UC_COMPOSITE_SIZE", "1024"))
+# composite 는 **원본 해상도 그대로** 쓴다. 리사이즈 금지 —
+# chip 경계는 1px 선이라 축소하면 통째로 사라진다 (1024/1600/800 에서 idx10 소멸 실측).
+# 그룹당 30~45MB 를 먹지만 화질을 바꾸지 않는 게 우선이다.
 _PALETTE_MASK = os.environ.get("UC_PALETTE_MASK", "0").strip().lower() in ("1", "true", "yes", "on")
 try:
     from scripts._common import mask_palette_non_grade_to_white as _mask_palette
@@ -411,6 +412,7 @@ def main():
         # composite — mapviewer(api/composite_map.py) 공식 규격.
         # RGB 평균이 아니라 **palette index 의 grade 빈도**를 쌓아 스칼라 맵으로 만들고
         # colormap 으로 그린다. grade 는 순서형 범주라 색 평균은 의미가 없다.
+        # 원본 해상도 유지 / chip 경계는 전부 idx10 회색 / chip 안 bin 번호는 제거된다.
         gdir_c = comp_root / f"group_{c:03d}_n{len(idx)}"
         try:
             from deploy.composite import write_group_composites
@@ -418,7 +420,7 @@ def main():
             sys.path.append(str(REPO_ROOT / "deploy"))
             from composite import write_group_composites
         try:
-            write_group_composites([paths[i] for i in idx], gdir_c, size=_COMP_SIZE)
+            write_group_composites([paths[i] for i in idx], gdir_c)
         except Exception as e:
             print(f"  [warn] group {c} composite 실패: {e}", flush=True)
         # medoid = 그룹 중심에 가장 가까운 **실제 원본** (heatmap 과 대조용)
