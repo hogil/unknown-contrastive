@@ -101,13 +101,44 @@ def load_backbone(path, device):
     return bb.eval().to(device)
 
 
+class _Head(nn.Module):
+    """proj (+ 있으면 residual adapter). 학습 시 forward 와 동일한 순서:
+         pool -> pool + gamma*adapt(pool) -> proj
+    adapter 는 GAP 직후 proj **앞**에 붙는다. 체크포인트에 "adapt" 가 있는데 이걸
+    빼고 proj 만 쓰면 학습 때와 다른 입력을 proj 에 먹이게 된다."""
+
+    def __init__(self, proj, adapt=None, gamma=None):
+        super().__init__()
+        self.proj, self.adapt = proj, adapt
+        self.gamma = gamma if gamma is not None else 0.0
+
+    def forward(self, x):
+        if self.adapt is not None:
+            g = self.gamma
+            g = g.to(x.device) if torch.is_tensor(g) else g
+            x = x + g * self.adapt(x)
+        return self.proj(x)
+
+
+def build_adapter(d=1024, h=None):
+    h = h or d // 8
+    return nn.Sequential(nn.Linear(d, h), nn.GELU(), nn.Linear(h, d))
+
+
 def load_proj(path, device):
     d = torch.load(path, map_location="cpu")
     pj = d["proj"] if isinstance(d, dict) and "proj" in d else d
     pj = {k[len("net."):] if k.startswith("net.") else k: v for k, v in pj.items()}
     proj = build_proj()
     proj.load_state_dict(pj)
-    return proj.eval().to(device)
+    ad = None
+    if isinstance(d, dict) and "adapt" in d:
+        hid = d["adapt"]["0.weight"].shape[0] if "0.weight" in d["adapt"] else None
+        ad = build_adapter(1024, hid)
+        ad.load_state_dict(d["adapt"])
+        print(f"[model] residual adapter 적용 (hidden={hid}, gamma={float(d.get('gamma', 0)):.4f})",
+              flush=True)
+    return _Head(proj, ad, d.get("gamma") if isinstance(d, dict) else None).eval().to(device)
 
 
 def proj_tag(proj_path: str) -> str:

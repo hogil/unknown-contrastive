@@ -27,40 +27,21 @@ from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # n
                           show_config, train_env)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+from config import Cluster, Paths, Recipe, Runtime, epochs, recipe  # noqa: E402
+
+
 class Config:
-    """환경변수 우선, 없으면 default. 경로는 전부 프로젝트 루트 기준 상대경로."""
+    """★ 설정은 site/config.py 한 곳에서 관리한다. 여기는 참조만."""
+    OUT_ROOT = Paths.OUT_ROOT
+    BACKBONE = Paths.BACKBONE
+    DEVICE = Runtime.DEVICE
+    BATCH = Runtime.BATCH
+    REASSIGN = Cluster.REASSIGN
+    SEEDS = Recipe.SEEDS
+    EPOCHS = epochs()
+    K_PERCENTILE = Cluster.RULE_C_K_PERCENTILE
+    SKIP_TRAIN = False
 
-    OUT_ROOT = env("SITE_OUT_ROOT", "runs/site")
-    BACKBONE = env("SITE_BACKBONE", "weights/convnextv2_base.fcmae_ft_in22k_in1k_384.pth")
-
-    DEVICE = env("SITE_DEVICE", "cuda")
-    BATCH = env("SITE_BATCH", 32)                 # 채점(inference) 배치
-    REASSIGN = env("SITE_REASSIGN", "nearest_q90")
-
-    SEEDS = env("SITE_SEEDS", "42,1,2")           # 3-seed 권장. 시간 없으면 "42"
-    EPOCHS = env("SITE_EPOCHS", 20)
-
-    # ── B4 recipe (여기서 만든 레시피) ────────────────────────────────────
-    TEMP = env("SITE_TEMP", 0.20)
-    QUEUE = env("SITE_QUEUE", 16384)
-    IGNORE_NEG = env("SITE_IGNORE_NEG", 0.72)
-    LR_HEAD = env("SITE_LR_HEAD", 0.004)
-    TRAIN_BATCH = env("SITE_TRAIN_BATCH", 64)
-    SAMPLING = env("SITE_SAMPLING", 0.25)
-    USE_LOCAL = env("SITE_USE_LOCAL", True)
-
-    # Rule C
-    K_PERCENTILE = env("SITE_K_PERCENTILE", 75)
-
-    SKIP_TRAIN = env("SITE_SKIP_TRAIN", False)    # 이미 학습돼 있으면 채점만
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-def recipe_dict() -> dict:
-    return {"temp": Config.TEMP, "queue": Config.QUEUE, "ignore_neg": Config.IGNORE_NEG,
-            "lr_head": Config.LR_HEAD, "batch": Config.TRAIN_BATCH,
-            "sampling": Config.SAMPLING, "use_local": bool(Config.USE_LOCAL)}
 
 
 def load_step0(out_root) -> dict:
@@ -167,7 +148,7 @@ def main() -> int:
             print(f"\n--- 학습 seed={seed} (epochs={Config.EPOCHS}) ---")
             rc = run([sys.executable, "-u", "_may_ablation.py", "B4"],
                      env_extra=train_env(Config.BACKBONE, pool, run_dir, seed,
-                                         int(Config.EPOCHS), recipe_dict()),
+                                         int(Config.EPOCHS), recipe()),
                      log_path=run_dir / "train.log")
             if rc != 0:
                 print(f"[warn] 학습 종료코드 {rc} — 체크포인트 존재로 판정한다")
@@ -239,7 +220,7 @@ def main() -> int:
 
     save_result(rel(Config.OUT_ROOT), "step2",
                 {"dial": {"mcs": mcs, "ms": ms}, "per_seed": per_seed,
-                 "finals": finals, "notes": notes, "recipe": recipe_dict(), "config": cfg})
+                 "finals": finals, "notes": notes, "recipe": recipe(), "config": cfg})
     print("\n다음:  python site/step3_sweep.py")
     print(f"\n[OUT] {out_root}")
     return 0

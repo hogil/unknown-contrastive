@@ -23,41 +23,22 @@ from _site_common import (REPO, banner, dial_from_min_group, dial_scan_range,  #
                           show_config)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+from config import Cluster, Paths, Runtime  # noqa: E402
+
+
 class Config:
-    """환경변수가 있으면 그것, 없으면 아래 default. 경로는 전부 프로젝트 루트 기준 상대경로."""
-
-    # 사내 이미지 루트. flat(`*.png`) / 중첩(`<any>/<any>/*.png`) 둘 다 됨.
-    IMAGE_ROOT = env("SITE_IMAGE_ROOT", "data/site_images")
-
-    # ★ "몇 장 이상 뭉쳐야 하나의 그룹으로 볼 것인가" = HDBSCAN min_cluster_size.
-    #   불량 종수(k)가 아니다 — k 는 모르는 게 전제다. 이건 운영 판단이라 답할 수 있다:
-    #   "20장쯤 모이면 들여다볼 가치가 있다" 같은 식.
-    MIN_GROUP_SIZE = env("SITE_MIN_GROUP_SIZE", 20)
-
-    # 1 이면 MIN_GROUP_SIZE 주변을 스캔해 **bootstrap 안정성 최대**인 다이얼을 자동 선택.
-    # 라벨도 k 도 안 쓴다. 실측에서 severstal 의 아는 정답(mcs20)을 정확히 집어냈다.
-    AUTO_DIAL = env("SITE_AUTO_DIAL", False)
-
-    # AUTO_DIAL=1 일 때만 필요 (임베딩 계산용). frozen backbone 이면 충분하다.
-    BACKBONE = env("SITE_BACKBONE", "weights/convnextv2_base.fcmae_ft_in22k_in1k_384.pth")
-    DEVICE = env("SITE_DEVICE", "cuda")
-    BATCH = env("SITE_BATCH", 32)
-
-    # 산출 루트
-    OUT_ROOT = env("SITE_OUT_ROOT", "runs/site")
-
-    # 이미지 확장자
-    EXTS = env("SITE_EXTS", "png,jpg,jpeg,bmp,tif,tiff")
-
-    # 이미 만들어둔 manifest 가 있으면 그걸 쓴다 (스캔 생략). IMAGE_ROOT 는 무시된다.
-    # 사내에서 대상 이미지를 미리 골라둔 경우 유용.
-    POOL_MANIFEST = env("SITE_POOL_MANIFEST", "")
-
-    # 다이얼 수동 고정(0 이면 기하에서 자동 계산). 튜닝 목적 외에는 건드리지 마라.
-    MCS_OVERRIDE = env("SITE_MCS", 0)
-    MS_OVERRIDE = env("SITE_MS", 0)
-# ═══════════════════════════════════════════════════════════════════════════
+    """★ 설정은 site/config.py 한 곳에서 관리한다. 여기는 참조만."""
+    IMAGE_ROOT = Paths.IMAGE_ROOT
+    POOL_MANIFEST = Paths.POOL_MANIFEST
+    EXTS = Paths.EXTS
+    OUT_ROOT = Paths.OUT_ROOT
+    BACKBONE = Paths.BACKBONE
+    DEVICE = Runtime.DEVICE
+    BATCH = Runtime.BATCH
+    MIN_GROUP_SIZE = Cluster.MIN_GROUP_SIZE
+    AUTO_DIAL = Cluster.AUTO_DIAL
+    MCS_OVERRIDE = Cluster.MCS
+    MS_OVERRIDE = Cluster.MS
 
 
 def resolve_dial(n: int, pool_path: str):

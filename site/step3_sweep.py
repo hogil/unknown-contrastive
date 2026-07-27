@@ -28,66 +28,32 @@ from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # n
 from step2_recipe import rule_c, score_epochs  # noqa: E402
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+from config import Cluster, Paths, Runtime, Sweep, epochs, recipe  # noqa: E402
+
+
 class Config:
-    """환경변수 우선, 없으면 default. 경로는 전부 프로젝트 루트 기준 상대경로."""
-
-    OUT_ROOT = env("SITE_OUT_ROOT", "runs/site")
-    BACKBONE = env("SITE_BACKBONE", "weights/convnextv2_base.fcmae_ft_in22k_in1k_384.pth")
-
-    DEVICE = env("SITE_DEVICE", "cuda")
-    BATCH = env("SITE_BATCH", 32)
-    REASSIGN = env("SITE_REASSIGN", "nearest_q90")
-    EPOCHS = env("SITE_EPOCHS", 20)
-    K_PERCENTILE = env("SITE_K_PERCENTILE", 75)
-
-    # base recipe (step2 와 동일). 각 셀은 여기서 1축만 바꾼다.
-    TEMP = env("SITE_TEMP", 0.20)
-    QUEUE = env("SITE_QUEUE", 16384)
-    IGNORE_NEG = env("SITE_IGNORE_NEG", 0.72)
-    LR_HEAD = env("SITE_LR_HEAD", 0.004)
-    TRAIN_BATCH = env("SITE_TRAIN_BATCH", 64)
-    SAMPLING = env("SITE_SAMPLING", 0.25)
-    USE_LOCAL = env("SITE_USE_LOCAL", True)
-
-    # round-1: 1-seed 로 방향 탐색. 셀 이름 콤마 구분, 순서대로 실행.
-    #   lr* 를 앞에 둔 이유 = 우리 실측에서 LR 이 최강 축이었다.
-    CELLS = env("SITE_CELLS", "lr008,lr002,q32768,q4096,t030,t010,neg060,neg085,nolocal")
-    ROUND1_SEED = env("SITE_ROUND1_SEED", 42)
-
-    # round-2: 상위 N 셀만 추가 seed 로 재확인 (0 이면 생략)
-    TOP_N = env("SITE_TOP_N", 3)
-    ROUND2_SEEDS = env("SITE_ROUND2_SEEDS", "1,2")
-# ═══════════════════════════════════════════════════════════════════════════
+    """★ 설정은 site/config.py 한 곳에서 관리한다. 여기는 참조만."""
+    OUT_ROOT = Paths.OUT_ROOT
+    BACKBONE = Paths.BACKBONE
+    DEVICE = Runtime.DEVICE
+    BATCH = Runtime.BATCH
+    REASSIGN = Cluster.REASSIGN
+    EPOCHS = epochs()
+    K_PERCENTILE = Cluster.RULE_C_K_PERCENTILE
+    CELLS = Sweep.CELLS
+    ROUND1_SEED = Sweep.ROUND1_SEED
+    TOP_N = Sweep.TOP_N
+    ROUND2_SEEDS = Sweep.ROUND2_SEEDS
 
 
-# 셀 정의 — 각 셀은 base 에서 **정확히 1축**만 바꾼다.
-CELL_AXES = {
-    "base":    {},
-    "lr002":   {"lr_head": 0.002},
-    "lr008":   {"lr_head": 0.008},
-    "lr016":   {"lr_head": 0.016},
-    "t010":    {"temp": 0.10},
-    "t030":    {"temp": 0.30},
-    "neg060":  {"ignore_neg": 0.60},
-    "neg085":  {"ignore_neg": 0.85},
-    "negoff":  {"ignore_neg": None},
-    "q4096":   {"queue": 4096},
-    "q32768":  {"queue": 32768},
-    "nolocal": {"use_local": False},
-}
+CELL_AXES = Sweep.AXES
 
-
-def base_recipe() -> dict:
-    return {"temp": Config.TEMP, "queue": Config.QUEUE, "ignore_neg": Config.IGNORE_NEG,
-            "lr_head": Config.LR_HEAD, "batch": Config.TRAIN_BATCH,
-            "sampling": Config.SAMPLING, "use_local": bool(Config.USE_LOCAL)}
 
 
 def cell_recipe(cell: str) -> dict:
     if cell not in CELL_AXES:
         die(f"알 수 없는 셀: {cell}\n  사용 가능: {', '.join(CELL_AXES)}")
-    r = base_recipe()
+    r = recipe()
     r.update({k: v for k, v in CELL_AXES[cell].items() if v is not None})
     if CELL_AXES[cell].get("ignore_neg", "keep") is None:
         r["ignore_neg"] = 0.0     # NEG off

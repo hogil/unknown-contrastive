@@ -27,34 +27,21 @@ from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # n
                           save_result, show_config)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+from config import Cluster, Paths, Runtime  # noqa: E402
+
+
 class Config:
-    """환경변수 우선, 없으면 default. 경로는 전부 프로젝트 루트 기준 상대경로."""
-
-    OUT_ROOT = env("SITE_OUT_ROOT", "runs/site")
-
-    # frozen backbone (필수). 보내드릴 체크포인트 1번.
-    BACKBONE = env("SITE_BACKBONE", "weights/convnextv2_base.fcmae_ft_in22k_in1k_384.pth")
-
-    # champion projection head — ★ 2개(concat+L2 앙상블)가 배포 기본값이다.
-    # 콤마로 구분. 보내드릴 체크포인트 2번/3번.
-    CHAMPION_PROJ = env("SITE_CHAMPION_PROJ",
-                        "weights/champion/proj_s42_ep20.pt,weights/champion/proj_s1_ep18.pt")
-
-    # ★ May 배포본 contrastive_b4 (선택). 이건 **자체 backbone 을 갖는 독립 arm** 이다 —
-    #   FCMAE 와 섞을 수 없다(378개 텐서가 전부 다름). 아래 두 파일을 함께 두면 4번째 arm 으로 비교한다.
-    #   추출법:  python site/extract_b4.py  (원본 contrastive_b4.pt 필요)
-    B4_BACKBONE = env("SITE_B4_BACKBONE", "weights/b4_may/b4_backbone.pth")
-    B4_PROJ = env("SITE_B4_PROJ", "weights/b4_may/b4_proj.pt")
-
-    DEVICE = env("SITE_DEVICE", "cuda")          # cuda | cpu
-    BATCH = env("SITE_BATCH", 32)
-    REASSIGN = env("SITE_REASSIGN", "nearest_q90")   # none | nearest_q90 | nearest_q80 | assign_all
-    Z0_SEED = env("SITE_Z0_SEED", 42)
-
-    # champion 체크포인트가 아직 없으면 True 로 두면 frozen/z0 만 비교한다.
-    SKIP_CHAMPION = env("SITE_SKIP_CHAMPION", False)
-# ═══════════════════════════════════════════════════════════════════════════
+    """★ 설정은 site/config.py 한 곳에서 관리한다. 여기는 참조만."""
+    OUT_ROOT = Paths.OUT_ROOT
+    BACKBONE = Paths.BACKBONE
+    DEVICE = Runtime.DEVICE
+    BATCH = Runtime.BATCH
+    CHAMPION_PROJ = Paths.CHAMPION_PROJ
+    B4_BACKBONE = Paths.B4_BACKBONE
+    B4_PROJ = Paths.B4_PROJ
+    REASSIGN = Cluster.REASSIGN
+    Z0_SEED = 42
+    SKIP_CHAMPION = False
 
 
 def load_step0(out_root: Path) -> dict:

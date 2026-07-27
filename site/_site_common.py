@@ -214,6 +214,8 @@ def train_env(backbone: str, pool: str, out_dir: Path, seed: int, epochs: int,
         "REPRO_BATCH": recipe["batch"],
         "REPRO_SAMPLING": recipe["sampling"],
         "REPRO_USE_LOCAL": "1" if recipe.get("use_local", True) else "0",
+        # ★ residual adapter: GAP 직후 proj 앞. gamma=0 초기화라 시작점이 정확히 frozen.
+        "REPRO_ADAPTER": "1" if recipe.get("adapter", False) else "0",
     }
 
 

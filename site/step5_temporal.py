@@ -34,42 +34,25 @@ from _site_common import (REPO, banner, check_inputs, die, env, rel,  # noqa: E4
                           save_result, show_config)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+from config import Paths, Runtime, Temporal  # noqa: E402
+
+
 class Config:
-    """환경변수 우선, 없으면 default. 경로는 전부 프로젝트 루트 기준 상대경로."""
-
-    OUT_ROOT = env("SITE_OUT_ROOT", "runs/site")
-    BACKBONE = env("SITE_BACKBONE", "weights/convnextv2_base.fcmae_ft_in22k_in1k_384.pth")
-
-    # 사용할 head. 비우면 frozen backbone 만. 콤마 구분(앙상블).
-    # 보통 step3 최종 승자 체크포인트를 넣는다. 비워두면 step3 -> step2 -> frozen 순 자동 탐색.
-    PROJ = env("SITE_TEMPORAL_PROJ", "")
-
-    DEVICE = env("SITE_DEVICE", "cuda")
-    BATCH = env("SITE_BATCH", 32)
-
-    # ── 시간 배치 ──────────────────────────────────────────────────────────
-    # by_dir  : 이미지의 상위 폴더명을 배치 키로 (예: 20260701/ 20260702/ ...) — 권장
-    # by_mtime: 파일 수정시각을 정렬해 BATCH_SIZE 장씩 끊음
-    TIME_MODE = env("SITE_TIME_MODE", "by_dir")
-    TIME_BATCH_SIZE = env("SITE_TIME_BATCH_SIZE", 200)   # by_mtime 일 때만
-    # 폴더명에서 날짜만 뽑는 정규식 (첫 그룹이 정렬 키). 안 맞으면 폴더명 전체 사용.
-    TIME_DIR_REGEX = env("SITE_TIME_DIR_REGEX", r"(\d{6,8})")
-
-    # ★ 배치 단위 클러스터링의 최소 그룹 크기.
-    #   step0 의 pool 전체 다이얼을 그대로 쓰면 안 된다 — 배치는 pool 보다 훨씬 작다.
-    #   의미: "한 배치 안에서 몇 장이 뭉치면 신규 그룹 후보로 볼 것인가".
-    #   신규불량은 처음엔 소량으로 나타나므로 pool 다이얼보다 작게 잡는 게 맞다.
-    #   0 이면 배치 크기의 5% (최소 5) 로 자동.
-    BATCH_MIN_GROUP = env("SITE_BATCH_MIN_GROUP", 0)
-
-    # ── 운영점 ────────────────────────────────────────────────────────────
-    N_CALIB = env("SITE_N_CALIB", 4)       # 앞 N개 배치로 REF + 임계 캘리브레이션
-    N_BG = env("SITE_N_BG", 4)             # 그 다음 N개는 "신규불량 없음"으로 아는 구간 -> FAR 측정
-    P_LIST = env("SITE_P_LIST", "10,20")   # 퍼센타일 후보 (★ 1,2 는 불안정하니 쓰지 마라)
-    K_LIST = env("SITE_K_LIST", "1,2,3")   # persistence 후보
-    MIN_SIZE_PCT = env("SITE_MIN_SIZE_PCT", "25,50,75")  # REF 크기 분포의 퍼센타일 -> 크기 하한
-# ═══════════════════════════════════════════════════════════════════════════
+    """★ 설정은 site/config.py 한 곳에서 관리한다. 여기는 참조만."""
+    OUT_ROOT = Paths.OUT_ROOT
+    BACKBONE = Paths.BACKBONE
+    DEVICE = Runtime.DEVICE
+    BATCH = Runtime.BATCH
+    PROJ = Temporal.PROJ
+    TIME_MODE = Temporal.TIME_MODE
+    TIME_BATCH_SIZE = Temporal.TIME_BATCH_SIZE
+    TIME_DIR_REGEX = Temporal.TIME_DIR_REGEX
+    BATCH_MIN_GROUP = Temporal.BATCH_MIN_GROUP
+    N_CALIB = Temporal.N_CALIB
+    N_BG = Temporal.N_BG
+    P_LIST = Temporal.P_LIST
+    K_LIST = Temporal.K_LIST
+    MIN_SIZE_PCT = Temporal.MIN_SIZE_PCT
 
 
 def load(step: str) -> dict:

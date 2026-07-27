@@ -32,20 +32,16 @@ from _site_common import (REPO, banner, die, env, fmt_row, read_summary, rel,  #
                           save_result, show_config)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+from config import Paths, Sweep  # noqa: E402
+
+
 class Config:
-    """환경변수 우선, 없으면 default. 경로는 전부 프로젝트 루트 기준 상대경로."""
-
-    OUT_ROOT = env("SITE_OUT_ROOT", "runs/site")
-
-    # ★ TAPT backbone. 이게 없으면 이 step 은 아무것도 안 하고 안내만 출력한다.
-    TAPT_BACKBONE = env("SITE_TAPT_BACKBONE", "weights/tapt/backbone_tapt.pth")
-
-    # step3 와 동일한 셀 목록을 쓰되, 비용이 크므로 기본은 상위 축만.
-    CELLS = env("SITE_TAPT_CELLS", "lr008,lr002,base")
-    ROUND1_SEED = env("SITE_ROUND1_SEED", 42)
-    TOP_N = env("SITE_TAPT_TOP_N", 0)     # 기본 0 = round-2 생략 (비용)
-# ═══════════════════════════════════════════════════════════════════════════
+    """★ 설정은 site/config.py 한 곳에서 관리한다. 여기는 참조만."""
+    OUT_ROOT = Paths.OUT_ROOT
+    TAPT_BACKBONE = Paths.TAPT_BACKBONE
+    CELLS = "lr008,lr002,base"
+    ROUND1_SEED = Sweep.ROUND1_SEED
+    TOP_N = 0
 
 
 GUIDE = """
