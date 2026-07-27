@@ -408,21 +408,22 @@ def main():
             src = Path(paths[i])
             if src.exists():
                 shutil.copy2(src, gdir / f"rep{rank:02d}_{src.name}")
-        # composite = 그룹 평균 이미지. **모델이 본 것과 같은 픽셀**이어야 의미가 있으므로
-        # _open_rgb(= palette 마스킹 설정 동일)를 쓰고 RGB 를 유지한다.
-        # 예전 코드는 convert("L") 로 흑백화 + 256px 축소라 grade 색이 뭉개졌다.
-        acc, cnt = None, 0
-        for i in idx:
-            im = np.asarray(_open_rgb(paths[i]).resize((_COMP_SIZE, _COMP_SIZE),
-                                                       Image.Resampling.BILINEAR),
-                            dtype=np.float32)
-            acc = im if acc is None else acc + im
-            cnt += 1
-        if cnt:
-            comp = (acc / cnt).clip(0, 255).astype(np.uint8)
-            Image.fromarray(comp).save(comp_root / f"group_{c:03d}_n{len(idx)}.png")
-            # medoid = 그룹 중심에 가장 가까운 **실제 원본** (평균이 흐려 보일 때 대조용)
-            shutil.copy2(paths[order[0]], comp_root / f"group_{c:03d}_n{len(idx)}_medoid.png")
+        # composite — mapviewer(api/composite_map.py) 공식 규격.
+        # RGB 평균이 아니라 **palette index 의 grade 빈도**를 쌓아 스칼라 맵으로 만들고
+        # colormap 으로 그린다. grade 는 순서형 범주라 색 평균은 의미가 없다.
+        gdir_c = comp_root / f"group_{c:03d}_n{len(idx)}"
+        try:
+            from deploy.composite import write_group_composites
+        except Exception:
+            sys.path.append(str(REPO_ROOT / "deploy"))
+            from composite import write_group_composites
+        try:
+            write_group_composites([paths[i] for i in idx], gdir_c, size=_COMP_SIZE)
+        except Exception as e:
+            print(f"  [warn] group {c} composite 실패: {e}", flush=True)
+        # medoid = 그룹 중심에 가장 가까운 **실제 원본** (heatmap 과 대조용)
+        gdir_c.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(paths[order[0]], gdir_c / f"medoid_{Path(paths[order[0]]).name}")
         rows.append({"group_id": c, "group_size": len(idx), "group_stability": round(stab.get(c, 0.0), 4),
                       "group_coherence": round(coh, 4),
                       "review_status": "over_merged_review" if over else "candidate",
