@@ -30,9 +30,19 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def rel(*parts) -> Path:
-    """루트 기준 상대경로 -> 절대 Path. 이미 절대경로면 그대로 둔다."""
+    """루트 기준 상대경로 -> 절대 Path. 이미 절대경로면 그대로 둔다.
+
+    Windows 에서 posix 루트(/data/x)는 is_absolute() 가 False 라 조용히 현재
+    드라이브에 붙는다(D:\\data\\x). 에러 없이 틀린 경로가 되므로 명시 처리한다.
+    Linux 서버에서는 원래대로 절대경로로 인식되므로 이 분기를 타지 않는다.
+    """
     p = Path(*parts)
-    return p if p.is_absolute() else (REPO / p)
+    if p.is_absolute():
+        return p
+    head = str(parts[0]) if parts else ""
+    if head[:1] in ("/", chr(92)):
+        return Path(*parts)          # posix 루트 표기 -> REPO 에 붙이지 않는다
+    return REPO / p
 
 
 def env(name: str, default):
