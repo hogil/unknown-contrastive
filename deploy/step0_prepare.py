@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """STEP 0 — 사내 이미지 폴더 -> manifest + pool 기하 리포트 + 권장 다이얼.
 
-  python site/step0_prepare.py
+  python deploy/step0_prepare.py
 
 여기서 정한 다이얼(mcs/ms)을 이후 step1~5 가 전부 물려 쓴다.
 
@@ -27,7 +27,7 @@ from config import Cluster, Paths, Runtime  # noqa: E402
 
 
 class Config:
-    """★ 설정은 site/config.py 한 곳에서 관리한다. 여기는 참조만."""
+    """★ 설정은 deploy/config.py 한 곳에서 관리한다. 여기는 참조만."""
     IMAGE_ROOT = Paths.IMAGE_ROOT
     POOL_MANIFEST = Paths.POOL_MANIFEST
     EXTS = Paths.EXTS
@@ -111,7 +111,7 @@ def main() -> int:
             "image_root": root.as_posix(), "subdirs": [],
             "dial": {"mcs": mcs, "ms": ms, "method": "leaf", "eps": 0.06},
             "config": cfg})
-        print("\n다음:  python site/step1_zeroshot.py")
+        print("\n다음:  python deploy/step1_zeroshot.py")
         print(f"\n[OUT] {out_root}")
         return 0
 
@@ -159,7 +159,7 @@ def main() -> int:
     }
     save_result(out_root, "step0", payload)
 
-    print("\n다음:  python site/step1_zeroshot.py")
+    print("\n다음:  python deploy/step1_zeroshot.py")
     print("       (step0 결과의 다이얼을 자동으로 물려 쓴다)")
     print(f"\n[OUT] {out_root}")
     return 0

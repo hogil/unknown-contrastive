@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """STEP 3 — 배포 사다리 ③: 여기서 만든 **recipe sweep** 으로 학습 후 predict.
 
-  python site/step3_sweep.py
+  python deploy/step3_sweep.py
 
 step2 의 고정 레시피를 이 pool 에 맞게 스윕한다. 1축씩만 바꾸는 controlled sweep.
 
@@ -32,7 +32,7 @@ from config import Cluster, Paths, Runtime, Sweep, epochs, recipe  # noqa: E402
 
 
 class Config:
-    """★ 설정은 site/config.py 한 곳에서 관리한다. 여기는 참조만."""
+    """★ 설정은 deploy/config.py 한 곳에서 관리한다. 여기는 참조만."""
     OUT_ROOT = Paths.OUT_ROOT
     BACKBONE = Paths.BACKBONE
     DEVICE = Runtime.DEVICE
@@ -194,8 +194,8 @@ def main() -> int:
                  "aggregate": agg, "label_free_winner_round1": win,
                  "final_winner": final_win, "final_recipe": cell_recipe(final_win),
                  "final_summary": final_sum, "config": cfg})
-    print("\n다음:  python site/step5_temporal.py   (신규불량 시간축 감지 — 최종 산출물)")
-    print("       사다리 ④(TAPT)는 ①~③ 이 부족할 때만:  python site/step4_tapt.py")
+    print("\n다음:  python deploy/step5_temporal.py   (신규불량 시간축 감지 — 최종 산출물)")
+    print("       사다리 ④(TAPT)는 ①~③ 이 부족할 때만:  python deploy/step4_tapt.py")
     print(f"\n[OUT] {out_root}")
     return 0
 

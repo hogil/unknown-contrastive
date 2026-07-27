@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """STEP 2 — 배포 사다리 ②: 여기서 만든 **레시피로 학습** 후 predict.
 
-  python site/step2_recipe.py
+  python deploy/step2_recipe.py
 
 절차:
   1. B4 recipe 로 사내 pool 에 contrastive 적응 (seed 여러 개)
@@ -31,7 +31,7 @@ from config import Cluster, Paths, Recipe, Runtime, epochs, recipe  # noqa: E402
 
 
 class Config:
-    """★ 설정은 site/config.py 한 곳에서 관리한다. 여기는 참조만."""
+    """★ 설정은 deploy/config.py 한 곳에서 관리한다. 여기는 참조만."""
     OUT_ROOT = Paths.OUT_ROOT
     BACKBONE = Paths.BACKBONE
     DEVICE = Runtime.DEVICE
@@ -47,7 +47,7 @@ class Config:
 def load_step0(out_root) -> dict:
     p = rel(out_root) / "step0_result.json"
     if not p.exists():
-        die("step0 결과가 없다. 먼저:  python site/step0_prepare.py")
+        die("step0 결과가 없다. 먼저:  python deploy/step0_prepare.py")
     return json.loads(p.read_text(encoding="utf-8"))
 
 
@@ -221,7 +221,7 @@ def main() -> int:
     save_result(rel(Config.OUT_ROOT), "step2",
                 {"dial": {"mcs": mcs, "ms": ms}, "per_seed": per_seed,
                  "finals": finals, "notes": notes, "recipe": recipe(), "config": cfg})
-    print("\n다음:  python site/step3_sweep.py")
+    print("\n다음:  python deploy/step3_sweep.py")
     print(f"\n[OUT] {out_root}")
     return 0
 

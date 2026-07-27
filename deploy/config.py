@@ -48,7 +48,7 @@ class Paths:
                         "weights/champion/proj_s42_ep20.pt,weights/champion/proj_s1_ep18.pt")
 
     # May 배포본 contrastive_b4 — ★ 자체 backbone 을 갖는 독립 arm (FCMAE 와 섞으면 안 됨).
-    #   `python site/extract_b4.py` 로 아래 두 파일을 만든다.
+    #   `python deploy/extract_b4.py` 로 아래 두 파일을 만든다.
     B4_BACKBONE = env("SITE_B4_BACKBONE", "weights/b4_may/b4_backbone.pth")
     B4_PROJ = env("SITE_B4_PROJ", "weights/b4_may/b4_proj.pt")
     B4_BUNDLE = env("SITE_B4_SRC", "weights/b4_may/contrastive_b4.pt")   # extract 입력

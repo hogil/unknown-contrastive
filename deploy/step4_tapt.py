@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """STEP 4 — 배포 사다리 ④: **CNN TAPT** backbone 으로 바꾼 뒤 sweep -> predict.
 
-  python site/step4_tapt.py
+  python deploy/step4_tapt.py
 
 사다리에서 **가장 비싸고 마지막**이다. ①~③ 이 충분하면 여기까지 올 필요 없다.
 
@@ -36,7 +36,7 @@ from config import Paths, Sweep  # noqa: E402
 
 
 class Config:
-    """★ 설정은 site/config.py 한 곳에서 관리한다. 여기는 참조만."""
+    """★ 설정은 deploy/config.py 한 곳에서 관리한다. 여기는 참조만."""
     OUT_ROOT = Paths.OUT_ROOT
     TAPT_BACKBONE = Paths.TAPT_BACKBONE
     CELLS = "lr008,lr002,base"
@@ -73,13 +73,13 @@ def main() -> int:
         save_result(rel(Config.OUT_ROOT), "step4",
                     {"status": "skipped", "reason": "no TAPT backbone",
                      "expected_path": str(tapt), "config": cfg})
-        print("\n사다리 ①~③ 만으로 운영하려면:  python site/step5_temporal.py")
+        print("\n사다리 ①~③ 만으로 운영하려면:  python deploy/step5_temporal.py")
         return 0
 
     s3p = rel(Config.OUT_ROOT) / "step3_result.json"
     if not s3p.exists():
         die("step3 결과가 없다. ④는 ③을 이겨야 의미가 있으므로 먼저 돌려라:\n"
-            "  python site/step3_sweep.py")
+            "  python deploy/step3_sweep.py")
     s3 = json.loads(s3p.read_text(encoding="utf-8"))
 
     # step3 를 그대로 재사용하되 backbone/출력만 바꾼다 (코드 중복 방지)
@@ -99,7 +99,7 @@ def main() -> int:
     (work / "step0_result.json").write_text(src0.read_text(encoding="utf-8"), encoding="utf-8")
 
     print(f"[run] step3_sweep 를 TAPT backbone 으로 재실행\n      backbone={tapt}\n      work={work}")
-    rc = subprocess.call([sys.executable, "site/step3_sweep.py"], cwd=str(REPO), env=e)
+    rc = subprocess.call([sys.executable, "deploy/step3_sweep.py"], cwd=str(REPO), env=e)
     if rc != 0:
         print(f"[warn] 종료코드 {rc}")
 
@@ -135,7 +135,7 @@ def main() -> int:
                  "tier3": {"winner": s3.get("final_winner"), "summary": a},
                  "tier4": {"winner": s4.get("final_winner"), "summary": b},
                  "notes": notes, "config": cfg})
-    print("\n다음:  python site/step5_temporal.py")
+    print("\n다음:  python deploy/step5_temporal.py")
     print(f"\n[OUT] {work}")
     return 0
 

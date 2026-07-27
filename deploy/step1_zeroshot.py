@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """STEP 1 — 배포 사다리 ①: 여기서 만든 모델로 **학습 없이** 바로 predict.
 
-  python site/step1_zeroshot.py
+  python deploy/step1_zeroshot.py
 
 3-arm 을 같은 다이얼로 비교한다:
     frozen    : backbone 만 (projection head 없음)  <- 기준선
@@ -31,7 +31,7 @@ from config import Cluster, Paths, Runtime  # noqa: E402
 
 
 class Config:
-    """★ 설정은 site/config.py 한 곳에서 관리한다. 여기는 참조만."""
+    """★ 설정은 deploy/config.py 한 곳에서 관리한다. 여기는 참조만."""
     OUT_ROOT = Paths.OUT_ROOT
     BACKBONE = Paths.BACKBONE
     DEVICE = Runtime.DEVICE
@@ -47,7 +47,7 @@ class Config:
 def load_step0(out_root: Path) -> dict:
     p = rel(out_root) / "step0_result.json"
     if not p.exists():
-        die("step0 결과가 없다. 먼저 실행해라:  python site/step0_prepare.py")
+        die("step0 결과가 없다. 먼저 실행해라:  python deploy/step0_prepare.py")
     return json.loads(p.read_text(encoding="utf-8"))
 
 
@@ -65,7 +65,7 @@ def main() -> int:
     if not use_champ and not Config.SKIP_CHAMPION:
         missing = [p for p in champ if not rel(p).exists()]
         print(f"[warn] champion head 없음 -> frozen/z0 만 비교한다. 없는 파일: {missing}")
-        print("       체크포인트를 받으면 다시 돌려라. (site/README.md 참조)\n")
+        print("       체크포인트를 받으면 다시 돌려라. (deploy/README.md 참조)\n")
 
     check_inputs(Config.BACKBONE, s0["image_root"],
                  champ if use_champ else None)
@@ -114,7 +114,7 @@ def main() -> int:
                 {"dial": {"mcs": mcs, "ms": ms},
                  "arms": {k: results.get(k) for k, _, _ in arms},
                  "verdict": verdict, "notes": note, "config": cfg})
-    print("\n다음:  python site/step2_recipe.py")
+    print("\n다음:  python deploy/step2_recipe.py")
     print(f"\n[OUT] {out_root}")
     return 0
 

@@ -1,4 +1,4 @@
-# site/ — 사내 서버 무라벨 배포 파이프라인
+# deploy/ — 사내 서버 무라벨 배포 파이프라인
 
 배포 사다리 ①~④ 를 **순서대로** 실행하는 단계별 스크립트.
 목적: 사내 실데이터에서 **unknown grouping 으로 신규불량 발생 시 감지**.
@@ -30,7 +30,7 @@
 | `weights/b4_may/contrastive_b4.pt` | `<failure_agent>/checkpoints/contrastive_b4.pt` | ~356MB |
 
 ```bash
-python site/extract_b4.py    # backbone / proj 분리 + 검증 -> step1 이 자동 인식
+python deploy/extract_b4.py    # backbone / proj 분리 + 검증 -> step1 이 자동 인식
 ```
 
 2개 pool 에서 **b4 의 backbone 을 head 없이 쓰는 arm 이 전부 1위**였다:
@@ -71,7 +71,7 @@ b4 자신의 head 를 붙이면 오히려 나빠지므로(ARI 0.904→0.706) **b
 | `weights/b4_may/contrastive_b4.pt` | `<failure_agent>/checkpoints/contrastive_b4.pt` | ~356MB |
 
 ```bash
-python site/extract_b4.py      # backbone / proj 로 분리 -> step1 이 자동 인식
+python deploy/extract_b4.py      # backbone / proj 로 분리 -> step1 이 자동 인식
 ```
 
 ★ **b4 는 자체 backbone 을 갖는 독립 arm 이다.** 번들 안의 backbone 378개 텐서가
@@ -100,15 +100,15 @@ champion(FCMAE + 2 head) 과 b4(자체 backbone + 1 head) 중 어느 쪽이 사�
 export SITE_IMAGE_ROOT=data/site_images     # 기본값
 export SITE_MIN_GROUP_SIZE=20               # 몇 장 이상 뭉치면 그룹으로 볼지 (k 아님)
 
-python site/step0_prepare.py     # manifest + pool 기하 -> 권장 다이얼
-python site/step1_zeroshot.py    # 사다리 ① 학습 0.  frozen / z0 / champion 3-arm
-python site/step2_recipe.py      # 사다리 ② B4 레시피 학습 + Rule C epoch 선택
-python site/step3_sweep.py       # 사다리 ③ 레시피 sweep + 무라벨 셀 선택
-python site/step4_tapt.py        # 사다리 ④ (TAPT backbone 있을 때만)
-python site/step5_temporal.py    # ★ 최종 산출물: 시간축 신규불량 감지
+python deploy/step0_prepare.py     # manifest + pool 기하 -> 권장 다이얼
+python deploy/step1_zeroshot.py    # 사다리 ① 학습 0.  frozen / z0 / champion 3-arm
+python deploy/step2_recipe.py      # 사다리 ② B4 레시피 학습 + Rule C epoch 선택
+python deploy/step3_sweep.py       # 사다리 ③ 레시피 sweep + 무라벨 셀 선택
+python deploy/step4_tapt.py        # 사다리 ④ (TAPT backbone 있을 때만)
+python deploy/step5_temporal.py    # ★ 최종 산출물: 시간축 신규불량 감지
 ```
 
-각 step 은 앞 step 의 결과(`runs/site/stepN_result.json`)를 자동으로 물려 쓴다.
+각 step 은 앞 step 의 결과(`runs/deploy/stepN_result.json`)를 자동으로 물려 쓴다.
 중간에 끊겨도 이미 끝난 step 은 다시 안 돌려도 된다.
 
 ### 가장 빠른 확인 경로

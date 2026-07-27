@@ -25,7 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# ── 프로젝트 루트 (이 파일: <root>/site/_site_common.py) ─────────────────────
+# ── 프로젝트 루트 (이 파일: <root>/deploy/_site_common.py) ─────────────────────
 REPO = Path(__file__).resolve().parent.parent
 
 
@@ -92,14 +92,14 @@ def check_inputs(backbone: str, image_root: str, projs: list[str] | None = None)
     bb = rel(backbone)
     if not bb.exists():
         die(f"backbone 이 없다: {bb}\n"
-            f"  프로젝트 루트 기준 상대경로로 두어라. 필요한 파일은 site/README.md 의 "
+            f"  프로젝트 루트 기준 상대경로로 두어라. 필요한 파일은 deploy/README.md 의 "
             f"'보내야 할 체크포인트' 참조.")
     ir = rel(image_root)
     if not ir.exists():
         die(f"image_root 가 없다: {ir}\n  SITE_IMAGE_ROOT 로 지정하거나 Config 의 default 를 고쳐라.")
     for p in (projs or []):
         if not rel(p).exists():
-            die(f"projection head 가 없다: {rel(p)}\n  site/README.md 의 체크포인트 목록 참조.")
+            die(f"projection head 가 없다: {rel(p)}\n  deploy/README.md 의 체크포인트 목록 참조.")
 
 
 # ── 다이얼 ────────────────────────────────────────────────────────────────

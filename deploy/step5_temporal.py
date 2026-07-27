@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """STEP 5 — ★ 최종 산출물: 시간축 **신규불량 발생 감지**.
 
-  python site/step5_temporal.py
+  python deploy/step5_temporal.py
 
 정적 grouping 품질(step1~3)이 아니라 **"새 불량이 나타났을 때 알람이 뜨는가"** 를 만든다.
 정적 지표만 보면 오경보 5배 격차를 놓친다(실측).
@@ -38,7 +38,7 @@ from config import Paths, Runtime, Temporal  # noqa: E402
 
 
 class Config:
-    """★ 설정은 site/config.py 한 곳에서 관리한다. 여기는 참조만."""
+    """★ 설정은 deploy/config.py 한 곳에서 관리한다. 여기는 참조만."""
     OUT_ROOT = Paths.OUT_ROOT
     BACKBONE = Paths.BACKBONE
     DEVICE = Runtime.DEVICE
@@ -112,7 +112,7 @@ def main() -> int:
 
     s0 = load("step0")
     if not s0:
-        die("step0 결과가 없다. 먼저:  python site/step0_prepare.py")
+        die("step0 결과가 없다. 먼저:  python deploy/step0_prepare.py")
     check_inputs(Config.BACKBONE, s0["image_root"])
 
     sys.path.insert(0, str(REPO))

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """May 배포본 `contrastive_b4.pt` 에서 backbone / proj 를 분리 추출한다.
 
-  python site/extract_b4.py
+  python deploy/extract_b4.py
 
 ★ 왜 분리가 필요한가
   `contrastive_b4.pt` 는 `state_dict` 하나에 **backbone 378개 + proj 8개** 키를 함께 담고 있다.
@@ -14,7 +14,7 @@
   weights/b4_may/b4_backbone.pth   (timm convnextv2_base state_dict)
   weights/b4_may/b4_proj.pt        ({"proj": {...}} — grouping_deploy.load_proj 형식)
 
-두 파일이 있으면 `site/step1_zeroshot.py` 가 자동으로 4번째 arm 으로 비교에 넣는다.
+두 파일이 있으면 `deploy/step1_zeroshot.py` 가 자동으로 4번째 arm 으로 비교에 넣는다.
 """
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ def main() -> int:
             print("       FCMAE 위에 올리면 학습 때와 다른 feature 를 먹여서 결과가 무의미해진다.")
 
     print(f"\n[OUT] {ob.parent}")
-    print("\n다음:  python site/step1_zeroshot.py   (b4 가 4번째 arm 으로 자동 포함된다)")
+    print("\n다음:  python deploy/step1_zeroshot.py   (b4 가 4번째 arm 으로 자동 포함된다)")
     return 0
 
 
