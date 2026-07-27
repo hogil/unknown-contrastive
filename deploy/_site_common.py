@@ -99,6 +99,61 @@ def show_config(C) -> dict:
     return d
 
 
+def show_images(image_root: str, manifest: str = "", exts: str = "") -> dict:
+    """★ 매 step 시작 시 **이미지 폴더 절대경로와 장수**를 찍는다.
+
+    설정만 보고는 "그래서 어디 걸 몇 장 읽는가"를 알 수 없다 — 상대경로가 어느
+    절대경로로 풀렸는지, 하위폴더까지 실제 몇 장이 잡히는지가 사고의 대부분이다.
+    manifest 가 지정돼 있으면 그게 실제 입력이므로 그쪽 장수를 우선 보고한다.
+    """
+    import json
+    ex = tuple("." + e.strip().lower().lstrip(".")
+               for e in (exts or "png,jpg,jpeg,bmp,tif,tiff").split(",") if e.strip())
+    print("[images]")
+    info: dict = {"image_root": "", "n_images": 0, "manifest": "", "n_manifest": 0}
+
+    ir = rel(image_root) if image_root else None
+    if ir is not None:
+        info["image_root"] = str(ir)
+        print(f"    image_root       = {ir}")
+        if not ir.exists():
+            print("                       ^ 없음 (경로를 확인하라)")
+        else:
+            n, per_dir = 0, {}
+            for p in ir.rglob("*"):
+                if p.is_file() and p.suffix.lower() in ex:
+                    n += 1
+                    per_dir[p.parent.name] = per_dir.get(p.parent.name, 0) + 1
+            info["n_images"] = n
+            info["n_subdirs"] = len(per_dir)
+            print(f"    이미지 수        = {n:,} 장  (하위폴더 전부 재귀, 확장자 {','.join(ex)})")
+            if per_dir:
+                top = sorted(per_dir.items(), key=lambda kv: -kv[1])[:5]
+                more = f"  … 외 {len(per_dir)-len(top)}개" if len(per_dir) > len(top) else ""
+                print(f"    하위폴더 {len(per_dir)}개    "
+                      + ", ".join(f"{k}({v:,})" for k, v in top) + more)
+            if n == 0:
+                print("                       ^ 0 장이다. 확장자/경로를 확인하라.")
+
+    if manifest:
+        mp = rel(manifest)
+        info["manifest"] = str(mp)
+        print(f"    manifest         = {mp}")
+        if not mp.exists():
+            print("                       ^ 없음 -> image_root 를 스캔한다")
+        else:
+            try:
+                d = json.loads(mp.read_text(encoding="utf-8"))
+                nm = len(d.get("files", []))
+                info["n_manifest"] = nm
+                print(f"    manifest 이미지  = {nm:,} 장  ★ 실제 입력은 이쪽이다 "
+                      f"(root={d.get('root', '?')})")
+            except Exception as e:
+                print(f"                       ^ 읽기 실패: {type(e).__name__}: {e}")
+    print(flush=True)
+    return info
+
+
 def check_inputs(backbone: str, image_root: str, projs: list[str] | None = None):
     bb = rel(backbone)
     if not bb.exists():

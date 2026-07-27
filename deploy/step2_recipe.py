@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (add_path, REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, read_summary, rel, run, save_result,
-                          show_config, train_env)
+                          show_config, show_images, train_env)
 
 
 from config import Cluster, Paths, Recipe, Runtime, epochs, recipe  # noqa: E402
@@ -135,6 +135,7 @@ def main() -> int:
     s0 = load_step0(Config.OUT_ROOT)
     pool, mcs, ms = s0["manifest"], s0["dial"]["mcs"], s0["dial"]["ms"]
     check_inputs(Config.BACKBONE, s0["image_root"])
+    show_images(s0["image_root"], pool, getattr(Config, "EXTS", ""))
     print(f"[step0] pool={pool}  n={s0['n_images']:,}  dial mcs={mcs} ms={ms}\n")
 
     out_root = rel(Config.OUT_ROOT) / "step2_recipe"

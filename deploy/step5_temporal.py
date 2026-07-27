@@ -31,7 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (add_path, REPO, banner, check_inputs, die, env, rel,  # noqa: E402
-                          save_result, show_config)
+                          save_result, show_config, show_images)
 
 
 from config import Paths, Runtime, Temporal  # noqa: E402
@@ -114,6 +114,7 @@ def main() -> int:
     if not s0:
         die("step0 결과가 없다. 먼저:  python deploy/step0_prepare.py")
     check_inputs(Config.BACKBONE, s0["image_root"])
+    show_images(s0["image_root"], s0.get("manifest", ""), getattr(Config, "EXTS", ""))
 
     add_path(REPO)
     import numpy as np

@@ -125,7 +125,16 @@ class Composite:
     # mapviewer 와 **같은 스키마**의 JSON. 그쪽 파일을 그대로 가리켜도 된다:
     #   SITE_COLOR_LEGENDS=D:/project/mapviewer/logs/color-legends.json
     # 파일/스킴이 없으면 계산된 기본색(gb=round(255*(1-step/100)))으로 되돌아간다.
-    COLOR_LEGENDS = env("SITE_COLOR_LEGENDS", "deploy/color-legends.json")
+    # ★ 절대경로. 사내 색 정본이 따로 있으면 이 줄을 그 파일로 바꾸면 된다.
+    #   ⚠ 이 프로젝트의 다른 경로와 달리 여기만 절대경로다. 그래서 **없으면 폴백한다**:
+    #     ① 아래 경로 → ② 동봉 `deploy/color-legends.json` → ③ 계산 기본색
+    #     폴백이 없으면 이 경로가 없는 서버에서 색이 조용히 바뀐다.
+    #   mapviewer 정본을 그대로 쓰려면:
+    #     "D:/project/mapviewer/logs/color-legends.json"
+    #     단 그 파일의 composite.default 는 **원본 빨강 램프**라 "아래쪽 연하게"가 사라진다
+    #     (그 파일에서 흑백인 건 composite 가 아니라 measure.default 다).
+    COLOR_LEGENDS = env("SITE_COLOR_LEGENDS",
+                        "D:/project/unknown-contrastive/deploy/color-legends.json")
     # 위 파일의 composite.<scheme>. 색을 바꾸려면 **JSON 의 default 항목을 고치면 된다.**
     #   default        = 채택안. 아래쪽(낮은 quantile)만 흰쪽으로 당겨 바닥을 죽인 것
     #   anonymous      = mapviewer 기본 빨강 램프 그대로

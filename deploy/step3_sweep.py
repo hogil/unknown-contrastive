@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, read_summary, rel, run, save_result,
-                          show_config, train_env)
+                          show_config, show_images, train_env)
 from step2_recipe import rule_c, score_epochs  # noqa: E402
 
 
@@ -100,6 +100,7 @@ def main() -> int:
     s0 = load(Config.OUT_ROOT, "step0")
     pool, mcs, ms = s0["manifest"], s0["dial"]["mcs"], s0["dial"]["ms"]
     check_inputs(Config.BACKBONE, s0["image_root"])
+    show_images(s0["image_root"], pool, getattr(Config, "EXTS", ""))
     print(f"[step0] pool={pool}  n={s0['n_images']:,}  dial mcs={mcs} ms={ms}")
 
     cells = [c.strip() for c in str(Config.CELLS).split(",") if c.strip()]

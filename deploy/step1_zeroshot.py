@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, make_z0_set, read_summary, rel, run,
-                          save_result, show_config)
+                          save_result, show_config, show_images)
 
 
 from config import Cluster, Paths, Runtime  # noqa: E402
@@ -59,6 +59,7 @@ def main() -> int:
     s0 = load_step0(Config.OUT_ROOT)
     pool = s0["manifest"]
     mcs, ms = s0["dial"]["mcs"], s0["dial"]["ms"]
+    show_images(s0.get("image_root", ""), pool, getattr(Config, "EXTS", ""))
     print(f"[step0] pool={pool}  n={s0['n_images']:,}  dial mcs={mcs} ms={ms}\n")
 
     champ = [p.strip() for p in str(Config.CHAMPION_PROJ).split(",") if p.strip()]

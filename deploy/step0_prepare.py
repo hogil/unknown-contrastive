@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (add_path, REPO, banner, dial_from_min_group, dial_scan_range,  # noqa: E402
                           die, env, pick_dial_by_stability, rel, save_result,
-                          show_config)
+                          show_config, show_images)
 
 
 from config import Cluster, Paths, Runtime  # noqa: E402
@@ -89,6 +89,7 @@ def resolve_dial(n: int, pool_path: str):
 def main() -> int:
     banner("STEP 0", "manifest 생성 + pool 기하 -> 권장 다이얼")
     cfg = show_config(Config)
+    show_images(Config.IMAGE_ROOT, Config.POOL_MANIFEST, Config.EXTS)
 
     # ── 기존 manifest 사용 경로 ──────────────────────────────────────────
     if str(Config.POOL_MANIFEST).strip():

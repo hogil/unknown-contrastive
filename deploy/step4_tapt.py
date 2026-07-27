@@ -29,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (REPO, banner, die, env, fmt_row, read_summary, rel,  # noqa: E402
-                          save_result, show_config)
+                          save_result, show_config, show_images)
 
 
 from config import Paths, Sweep  # noqa: E402
@@ -65,6 +65,10 @@ TAPT backbone 만드는 법 (라벨 필요):
 def main() -> int:
     banner("STEP 4", "CNN TAPT backbone + sweep", "④ TAPT 후 학습 sweep 후 predict (마지막 수단)")
     cfg = show_config(Config)
+    s0p = rel(Config.OUT_ROOT) / "step0_result.json"
+    s0 = json.loads(s0p.read_text(encoding="utf-8")) if s0p.exists() else {}
+    show_images(s0.get("image_root", ""), s0.get("manifest", ""),
+                getattr(Config, "EXTS", ""))
 
     tapt = rel(Config.TAPT_BACKBONE)
     if not tapt.exists():

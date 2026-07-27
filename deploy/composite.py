@@ -123,38 +123,59 @@ def light_low_stops(strength: float = 0.5) -> list[str]:
     return out
 
 
+def _read_stops(path, scheme: str, strict: bool):
+    """한 파일에서 한 스킴을 읽는다. 못 읽으면 None."""
+    import json
+    p = Path(path)
+    if not p.is_absolute():
+        p = Path(__file__).resolve().parent.parent / p
+    try:
+        doc = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        if strict:
+            raise
+        return None
+    entry = (doc.get("composite") or {}).get(scheme)
+    if not isinstance(entry, dict):
+        if strict:
+            raise KeyError(f"{p} 에 composite.{scheme} 없음")
+        return None
+    out, missing = [], []
+    for s in QUANTILE_STEPS:
+        c = entry.get(f"quantile{s}")
+        if not c:
+            missing.append(s)
+            c = default_stops()[QUANTILE_STEPS.index(s)]
+        out.append(str(c).upper())
+    if missing and strict:
+        raise KeyError(f"{p} scheme={scheme}: quantile{missing} 없음")
+    return out
+
+
 def load_stops(path=None, scheme: str | None = None, strict: bool = False):
     """`color-legends.json` 에서 색상표를 읽는다 (mapviewer 와 같은 스키마).
 
         {"composite": {"<scheme>": {"quantile0": "#FFFFFF", ... "quantile100": "#FF0000"}}}
 
-    mapviewer 의 `logs/color-legends.json` 을 그대로 지정해도 읽힌다.
-    파일/스킴이 없으면 계산된 기본색으로 되돌아간다 (strict=True 면 예외).
+    mapviewer 의 `logs/color-legends.json` 을 절대경로로 그대로 지정해도 읽힌다.
+
+    찾는 순서 — **앞에서 못 찾으면 다음으로 넘어간다**:
+      1. path (config 의 COLOR_LEGENDS. 절대경로 가능)
+      2. 동봉본 `deploy/color-legends.json`
+         ★ 1번이 사내 서버에 없을 때를 위한 안전망. 이게 없으면 절대경로를
+           박아둔 순간 서버에서 색이 계산 기본값으로 조용히 바뀐다.
+      3. 계산 기본색 (mapviewer 공식과 동일)
+    strict=True 면 1번에서 실패 시 예외.
     """
-    import json
+    scheme = scheme or DEFAULT_SCHEME
     if path:
-        p = Path(path)
-        if not p.is_absolute():
-            p = Path(__file__).resolve().parent.parent / p
-        try:
-            doc = json.loads(p.read_text(encoding="utf-8"))
-            entry = (doc.get("composite") or {}).get(scheme or DEFAULT_SCHEME)
-            if isinstance(entry, dict):
-                out, missing = [], []
-                for s in QUANTILE_STEPS:
-                    c = entry.get(f"quantile{s}")
-                    if not c:
-                        missing.append(s)
-                        c = default_stops()[QUANTILE_STEPS.index(s)]
-                    out.append(str(c).upper())
-                if missing and strict:
-                    raise KeyError(f"{p} scheme={scheme}: quantile{missing} 없음")
-                return out
-            if strict:
-                raise KeyError(f"{p} 에 composite.{scheme} 없음")
-        except Exception:
-            if strict:
-                raise
+        got = _read_stops(path, scheme, strict)
+        if got:
+            return got
+    if not path or str(path).replace("\\", "/") != DEFAULT_LEGENDS:
+        got = _read_stops(DEFAULT_LEGENDS, scheme, False)
+        if got:
+            return got
     return default_stops()
 
 
