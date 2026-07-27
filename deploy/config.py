@@ -94,6 +94,16 @@ class Cluster:
     # 재배정 후 noise 는 어떤 임베딩에든 나오는 바닥값이라(랜덤 head 와 0.03pp 차) 판정에 못 쓴다.
     REASSIGN = env("SITE_REASSIGN", "nearest_q90")   # none|nearest_q90|nearest_q80|assign_all
 
+    # ★ palette 전처리 — wafer PNG(mode="P")는 index 0~7 이 결함 grade,
+    #   그 위 index 는 border/background/invalid 다. 그 색이 clustering shortcut 이 될 수 있어
+    #   흰색으로 지우는 전처리가 있다 (scripts/_common.mask_palette_non_grade_to_white).
+    #   ⚠ **학습 때와 반드시 같아야 한다.** champion 과 May b4 는 마스킹 **없이** 학습됐다 —
+    #     그 head 에 마스킹을 켜면 학습 때와 다른 입력이 되어 결과가 무의미해진다.
+    #   PALETTE_PROBE=1 이면 step1 이 head 없는 frozen arm 을 마스킹 켠 판으로 하나 더 만들어
+    #   **그 pool 에서 효과를 실측**한다. 이득이 크면 step2/3 를 마스킹 켜고 학습하면 된다
+    #   (그 경우 UC_PALETTE_MASK=1 을 학습·채점 양쪽에 동일하게 준다).
+    PALETTE_PROBE = env("SITE_PALETTE_PROBE", True)
+
     # Rule C 의 k 하한 퍼센타일. ★ 이건 k 입력이 아니라 **자기 run 안에서의 상대 기준**이다.
     # 이게 없으면 noise 최소화가 "전부 한 덩어리" 축퇴 해로 걸어간다.
     RULE_C_K_PERCENTILE = env("SITE_K_PERCENTILE", 75)

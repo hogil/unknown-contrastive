@@ -43,6 +43,7 @@ flat 폴더(사내 실데이터, 하위폴더 없음) 배포:
     (하위폴더가 없으면 라벨 없이 동작 — offline-eval 은 자동으로 건너뜀)
 """
 import argparse
+import os
 import csv
 import importlib.util
 import json
@@ -184,13 +185,62 @@ def embed_one_checkpoint(paths, backbone, proj, device, batch=32):
     embs, t0, n = [], time.time(), len(paths)
     every = max(1, (n // batch) // 20)
     with torch.no_grad():
-        for bi, i in enumerate(range(0, n, batch)):
-            x = torch.stack([TF(Image.open(p).convert("RGB")) for p in paths[i:i + batch]]).to(device)
-            pool = backbone.forward_features(x).mean(dim=(2, 3))
+        for bi, done, x in _iter_batches(paths, batch):
+            pool = backbone.forward_features(x.to(device, non_blocking=True)).mean(dim=(2, 3))
             embs.append(F.normalize(proj(pool), dim=1).cpu())
-            if bi % every == 0 or i + batch >= n:
-                _progress(min(i + batch, n), n, t0)
+            if bi % every == 0 or done >= n:
+                _progress(done, n, t0)
     return torch.cat(embs)
+
+
+# ── palette 전처리 ────────────────────────────────────────────────────────
+# wafer PNG 는 mode="P" 이고 index 0~7 이 결함 grade, 그 위 index 는 border/background/
+# invalid 계열이다. 그 색들이 clustering shortcut 이 되므로 흰색으로 지우는 전처리가 있다
+# (scripts/_common.mask_palette_non_grade_to_white).
+#
+# ★ 단 **학습 때와 반드시 같아야 한다.** champion 과 May b4 는 마스킹 **없이** 학습됐으므로
+#   그 head 에 마스킹을 켜서 넣으면 학습 때와 다른 입력이 되어 결과가 무의미해진다.
+#   그래서 기본값은 off 이고, 켜려면 UC_PALETTE_MASK=1 로 명시해야 한다.
+# composite 해상도. 원본이 6400px 이라도 그룹 수 x 크기만큼 디스크를 먹으니 기본 1024.
+_COMP_SIZE = int(os.environ.get("UC_COMPOSITE_SIZE", "1024"))
+_PALETTE_MASK = os.environ.get("UC_PALETTE_MASK", "0").strip().lower() in ("1", "true", "yes", "on")
+try:
+    from scripts._common import mask_palette_non_grade_to_white as _mask_palette
+except Exception:
+    _mask_palette = None
+
+
+def _open_rgb(path):
+    im = Image.open(path)
+    if _PALETTE_MASK and _mask_palette is not None:
+        im = _mask_palette(im)
+    return im.convert("RGB")
+
+
+def _iter_batches(paths, batch, workers=None):
+    """이미지 디코드를 스레드로 병렬화하고 다음 배치를 미리 준비한다.
+
+    병목은 GPU 가 아니라 **단일 스레드 PIL 디코드**다 (실측: 배치당 8.25s 중 GPU 0.58s).
+    PIL 은 디코드/리사이즈 중 GIL 을 놓으므로 스레드가 실제로 병렬로 돈다.
+    픽셀은 그대로다 — 순서도 보존한다.
+    """
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+    if workers is None:
+        workers = int(os.environ.get("SITE_DECODE_WORKERS", "0")) or min(16, (os.cpu_count() or 4))
+    idx = list(range(0, len(paths), batch))
+
+    def build(i):
+        return torch.stack([TF(_open_rgb(p)) for p in paths[i:i + batch]])
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(build, i) for i in idx[:2]]      # 앞서 2배치 미리 채움
+        nxt = 2
+        for k in range(len(idx)):
+            x = futs[k].result()
+            if nxt < len(idx):
+                futs.append(ex.submit(build, idx[nxt])); nxt += 1
+            yield k, min(idx[k] + batch, len(paths)), x
 
 
 def _progress(done, total, t0, what="embed"):
@@ -275,6 +325,10 @@ def main():
     if not paths:
         raise SystemExit(f"[grouping_deploy] no images found under {a.pool} (checked recursively, exts={sorted(EXTS)})")
     n_labeled = sum(1 for l in labels if l is not None)
+    import os as _os
+    _w = int(_os.environ.get("SITE_DECODE_WORKERS", "0")) or min(16, (_os.cpu_count() or 4))
+    print(f"[run] palette_mask={_PALETTE_MASK} (학습 때와 같아야 한다 — champion/b4 는 off 로 학습됨)", flush=True)
+    print(f"[run] device={device}  decode_workers={_w}  batch={a.batch}", flush=True)
     print(f"[data] {len(paths)} imgs ({n_labeled} with a parent-folder label, {len(paths) - n_labeled} flat/root)", flush=True)
 
     print(f"[model] backbone={a.backbone}", flush=True)
@@ -290,12 +344,11 @@ def main():
         _e, _t0, _n = [], time.time(), len(paths)
         _every = max(1, (_n // a.batch) // 20)
         with torch.no_grad():
-            for _bi, _i in enumerate(range(0, _n, a.batch)):
-                _x = torch.stack([TF(Image.open(pp).convert("RGB"))
-                                  for pp in paths[_i:_i + a.batch]]).to(device)
-                _e.append(F.normalize(bb.forward_features(_x).mean(dim=(2, 3)), dim=1).cpu())
-                if _bi % _every == 0 or _i + a.batch >= _n:
-                    _progress(min(_i + a.batch, _n), _n, _t0)
+            for _bi, _done, _x in _iter_batches(paths, a.batch):
+                _f = bb.forward_features(_x.to(device, non_blocking=True)).mean(dim=(2, 3))
+                _e.append(F.normalize(_f, dim=1).cpu())
+                if _bi % _every == 0 or _done >= _n:
+                    _progress(_done, _n, _t0)
         per_ckpt_embs.append(torch.cat(_e))
     for proj_path in a.proj:
         tag = proj_tag(proj_path)
@@ -355,15 +408,21 @@ def main():
             src = Path(paths[i])
             if src.exists():
                 shutil.copy2(src, gdir / f"rep{rank:02d}_{src.name}")
-        acc = None
-        cnt = 0
+        # composite = 그룹 평균 이미지. **모델이 본 것과 같은 픽셀**이어야 의미가 있으므로
+        # _open_rgb(= palette 마스킹 설정 동일)를 쓰고 RGB 를 유지한다.
+        # 예전 코드는 convert("L") 로 흑백화 + 256px 축소라 grade 색이 뭉개졌다.
+        acc, cnt = None, 0
         for i in idx:
-            im = np.asarray(Image.open(paths[i]).convert("L").resize((256, 256)), dtype=np.float32)
+            im = np.asarray(_open_rgb(paths[i]).resize((_COMP_SIZE, _COMP_SIZE),
+                                                       Image.Resampling.BILINEAR),
+                            dtype=np.float32)
             acc = im if acc is None else acc + im
             cnt += 1
         if cnt:
             comp = (acc / cnt).clip(0, 255).astype(np.uint8)
             Image.fromarray(comp).save(comp_root / f"group_{c:03d}_n{len(idx)}.png")
+            # medoid = 그룹 중심에 가장 가까운 **실제 원본** (평균이 흐려 보일 때 대조용)
+            shutil.copy2(paths[order[0]], comp_root / f"group_{c:03d}_n{len(idx)}_medoid.png")
         rows.append({"group_id": c, "group_size": len(idx), "group_stability": round(stab.get(c, 0.0), 4),
                       "group_coherence": round(coh, 4),
                       "review_status": "over_merged_review" if over else "candidate",

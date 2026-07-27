@@ -42,6 +42,7 @@ class Config:
     REASSIGN = Cluster.REASSIGN
     Z0_SEED = 42
     SKIP_CHAMPION = False
+    PALETTE_PROBE = Cluster.PALETTE_PROBE
 
 
 def load_step0(out_root: Path) -> dict:
@@ -80,6 +81,14 @@ def main() -> int:
     if use_champ:
         arms.append(("champion", Config.BACKBONE, champ))
 
+    # ★ palette 마스킹 효과를 이 pool 에서 직접 잰다.
+    #   wafer PNG(mode="P")는 index 0~7 이 결함 grade, 그 위는 border/background 다.
+    #   그 색이 clustering shortcut 이 될 수 있어 흰색 처리하는 전처리가 있는데,
+    #   champion/b4 head 는 마스킹 **없이** 학습돼서 그 head 에 켜면 불일치가 된다.
+    #   그래서 head 없는 frozen arm 으로만 켠 판을 만들어 **효과를 측정**한다.
+    if Config.PALETTE_PROBE:
+        arms.append(("frozen_masked", Config.BACKBONE, None))
+
     # ★ May 배포본은 자체 backbone 을 쓰는 독립 arm — FCMAE 와 섞으면 안 된다.
     b4bb, b4pj = rel(Config.B4_BACKBONE), rel(Config.B4_PROJ)
     if b4bb.exists() and b4pj.exists():
@@ -90,9 +99,10 @@ def main() -> int:
     results = {}
     for name, bb, projs in arms:
         out = out_root / name.replace("(", "_").replace(")", "")
+        extra = {"UC_PALETTE_MASK": "1"} if name == "frozen_masked" else {"UC_PALETTE_MASK": "0"}
         rc = run(deploy_cmd(bb, pool, out, mcs, ms, projs,
                             Config.DEVICE, int(Config.BATCH), Config.REASSIGN),
-                 log_path=out_root / f"{out.name}.log")
+                 env_extra=extra, log_path=out_root / f"{out.name}.log")
         if rc != 0:
             print(f"[warn] {name} 종료코드 {rc} — summary.json 존재로 판정한다")
         results[name] = read_summary(out)
