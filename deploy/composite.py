@@ -84,9 +84,81 @@ def uc_den(wt0: float = 1.0) -> np.ndarray:
     return d
 
 
-# ── 색 (mapviewer api/composite_colors.py + logs/color-legends.json 실측) ──
-COLOR_STOPS_HEX = ["#FFFFFF", "#FFE6E6", "#FFCCCC", "#FFB2B2", "#FF9999", "#FF8080",
-                   "#FF6666", "#FF4D4D", "#FF3333", "#FF1919", "#FF0000"]
+# ── 색 (mapviewer api/composite_colors.py) ────────────────────────────────
+# UI 와 동일한 구조: **quantile 0/10/20/…/100 지점에 색을 하나씩 박고 그 사이를 선형 보간.**
+#   QUANTILE_KEYS   = [quantile0 … quantile100]        (11개)
+#   기본색           = gb = round(255·(1-step/100)) -> "#FF{gb}{gb}"   (공식, 하드코딩 아님)
+#   보간             = _interpolate_percentile_colors -> np.interp
+#   값→위치          = min-max 선형 (`_percentile_ranks` 는 이름과 달리 순위가 아니다.
+#                      docstring: "기존 Percentile(순위) 방식 대신 값의 크기를 그대로 반영")
+# 따라서 "아래쪽을 연하게" 하려면 감마 같은 걸 끼우는 게 아니라
+# **낮은 quantile 의 색을 흰쪽으로 옮기면 된다** — UI 에서 하는 것과 같은 조작.
+QUANTILE_STEPS = list(range(0, 101, 10))
+
+
+def default_stops() -> list[str]:
+    """mapviewer `_default_color_for_step` 과 같은 식. 부동소수 오차까지 동일하게 재현된다
+    (step90 -> 255*(1-0.9)=25.499… -> 25 -> #FF1919, logs/color-legends.json 과 일치)."""
+    out = []
+    for s in QUANTILE_STEPS:
+        gb = int(round(255 * (1 - s / 100)))
+        out.append(f"#FF{gb:02X}{gb:02X}")
+    return out
+
+
+def light_low_stops(strength: float = 0.5) -> list[str]:
+    """아래쪽(낮은 quantile)만 흰쪽으로 당긴 색상표. 위쪽은 건드리지 않는다.
+
+    가중치 w = (1 - step/100)^2 로 낮은 step 일수록 크게 흰색과 섞는다.
+    strength 0 = 기본색 그대로, 1 = 아래쪽이 거의 흰색.
+    quantile100(#FF0000) 은 w=0 이라 항상 그대로다.
+    """
+    out = []
+    for s in QUANTILE_STEPS:
+        gb = 255 * (1 - s / 100)
+        w = strength * (1 - s / 100) ** 2
+        gb = gb + (255 - gb) * w          # 흰색(255) 쪽으로 w 만큼
+        v = int(round(min(255.0, gb)))
+        out.append(f"#FF{v:02X}{v:02X}")
+    return out
+
+
+def load_stops(path=None, scheme: str | None = None, strict: bool = False):
+    """`color-legends.json` 에서 색상표를 읽는다 (mapviewer 와 같은 스키마).
+
+        {"composite": {"<scheme>": {"quantile0": "#FFFFFF", ... "quantile100": "#FF0000"}}}
+
+    mapviewer 의 `logs/color-legends.json` 을 그대로 지정해도 읽힌다.
+    파일/스킴이 없으면 계산된 기본색으로 되돌아간다 (strict=True 면 예외).
+    """
+    import json
+    if path:
+        p = Path(path)
+        if not p.is_absolute():
+            p = Path(__file__).resolve().parent.parent / p
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+            entry = (doc.get("composite") or {}).get(scheme or DEFAULT_SCHEME)
+            if isinstance(entry, dict):
+                out, missing = [], []
+                for s in QUANTILE_STEPS:
+                    c = entry.get(f"quantile{s}")
+                    if not c:
+                        missing.append(s)
+                        c = default_stops()[QUANTILE_STEPS.index(s)]
+                    out.append(str(c).upper())
+                if missing and strict:
+                    raise KeyError(f"{p} scheme={scheme}: quantile{missing} 없음")
+                return out
+            if strict:
+                raise KeyError(f"{p} 에 composite.{scheme} 없음")
+        except Exception:
+            if strict:
+                raise
+    return default_stops()
+
+
+COLOR_STOPS_HEX = default_stops()
 
 
 def _hex(c: str):
@@ -94,9 +166,16 @@ def _hex(c: str):
     return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
 
 
-def build_lut(stops_hex=None, n: int = 256) -> np.ndarray:
+def build_lut(stops_hex=None, n: int = 256, positions=None) -> np.ndarray:
+    """색상표 -> 256 단계 LUT. mapviewer `_interpolate_percentile_colors` 와 동일.
+
+    positions 를 주면 각 색이 놓이는 백분위 지점을 바꿀 수 있다 (기본 0,10,…,100).
+    """
     stops = np.array([_hex(c) for c in (stops_hex or COLOR_STOPS_HEX)], np.float32)
-    pos = np.linspace(0.0, 100.0, len(stops), dtype=np.float32)
+    if positions is None:
+        pos = np.linspace(0.0, 100.0, len(stops), dtype=np.float32)
+    else:
+        pos = np.clip(np.asarray(positions, np.float32), 0.0, 100.0)
     q = np.linspace(0.0, 100.0, n, dtype=np.float32)
     lut = np.empty((n, 3), np.uint8)
     for ch in range(3):
@@ -167,7 +246,7 @@ def composite_full(paths, num=None, den=None, grades=None):
 
 
 def render_composite(value_map, mask, border, base_path, text=None,
-                     vmin=None, vmax=None, stops_hex=None):
+                     vmin=None, vmax=None, stops_hex=None, positions=None):
     """원본 해상도 그대로 렌더. 리사이즈 없음 — 화질이 원본과 동일하다.
 
       chip 안 bin 번호(text) -> **완전히 지운다.** 다른 장의 grade 로 덮이고,
@@ -176,6 +255,10 @@ def render_composite(value_map, mask, border, base_path, text=None,
       경계(border)      -> **전부 idx 10 회색 한 색**
                            (원본의 파랑·초록·노랑·자주·주황 마커도 회색으로 통일)
       그 외             -> 원본 palette 색 그대로 (배경 idx8, 투명 idx31)
+
+    stops_hex / positions: UI 의 quantile 색상표. 11색을 0/10/…/100 지점에 놓고
+      선형 보간한다. **아래쪽을 연하게 하려면 낮은 quantile 색을 바꾼다**
+      (`light_low_stops()`). 값 정규화는 손대지 않으므로 그룹 간 비교가 깨지지 않는다.
     """
     base = Image.open(base_path)
     if base.mode != "P":
@@ -198,27 +281,82 @@ def render_composite(value_map, mask, border, base_path, text=None,
         lo = float(v.min()) if vmin is None else float(vmin)
         hi = float(v.max()) if vmax is None else float(vmax)
         if hi > lo:
-            lut = build_lut(stops_hex)
-            sc = np.clip((v - lo) / (hi - lo), 0.0, 1.0)
+            lut = build_lut(stops_hex, positions=positions)
+            sc = np.clip((v - lo) / (hi - lo), 0.0, 1.0)   # min-max 선형 (원본과 동일)
             rgb[mask] = lut[np.rint(sc * 255).astype(np.int32)]
     return Image.fromarray(rgb)
 
 
+# ── 채택 설정 (260727) — 값은 `deploy/config.py::Composite` 가 정본이다 ──────
+#   config 를 못 읽는 상황(단독 실행 등)에서만 아래 값이 쓰인다.
+DEFAULT_NUM = UC_NUM
+DEFAULT_DEN = uc_den(1.0)
+DEFAULT_LIGHT_LOW = 0.5
+DEFAULT_LEGENDS = "deploy/color-legends.json"
+DEFAULT_SCHEME = "default"
+
+
+def _cfg():
+    """deploy/config.py::Composite. 없으면 None."""
+    try:
+        from config import Composite as C           # deploy/ 가 sys.path 에 있을 때
+        return C
+    except Exception:
+        try:
+            from deploy.config import Composite as C
+            return C
+        except Exception:
+            return None
+
+
+def default_config_stops():
+    """config.Composite 를 우선 쓰고, 없으면 이 파일의 기본값으로 되돌아간다."""
+    c = _cfg()
+    if c is None:
+        return load_stops(DEFAULT_LEGENDS, DEFAULT_SCHEME)
+    return load_stops(c.COLOR_LEGENDS, c.COLOR_SCHEME)
+
+
+def default_config_weights():
+    """config 의 METHOD/WT0 -> (분자, 분모)."""
+    c = _cfg()
+    if c is None:
+        return DEFAULT_NUM, DEFAULT_DEN
+    if str(getattr(c, "METHOD", "uc")).lower() == "sq":
+        return SQ_WEIGHTS, WT_FACTORS
+    return UC_NUM, uc_den(float(getattr(c, "WT0", 1.0)))
+
+
 def write_group_composites(paths, out_dir, grades: list[int] | None = None,
                            prefix: str = "", num=None, den=None,
-                           base_path=None) -> dict:
-    """한 그룹에 대해 원본과 같은 두 장을 원본 해상도로 쓴다."""
+                           base_path=None, stops_hex=None, positions=None,
+                           also_square_average: bool = False) -> dict:
+    """한 그룹의 square_weighted_average 를 원본 해상도로 쓴다.
+
+    기본은 채택안(method 3 + `color-legends.json` 의 색상표).
+    `also_square_average=True` 면 비교용 square_average 도 같이 쓴다.
+    """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     paths = list(paths)
+    cnum, cden = default_config_weights()
+    num = cnum if num is None else num
+    den = cden if den is None else den
+    stops_hex = default_config_stops() if stops_hex is None else stops_hex
+    c = _cfg()
+    if c is not None and getattr(c, "ALSO_SQUARE_AVERAGE", False):
+        also_square_average = True
     sq, wt, m_sq, m_wt, border, text, n = composite_full(
         paths, num=num, den=den, grades=grades)
     tag = "" if grades is None else "_" + "".join(str(g) for g in sorted(grades))
     base = base_path or paths[0]
-    render_composite(sq, m_sq, border, base, text).save(
-        out / f"{prefix}square_average{tag}.png")
-    render_composite(wt, m_wt, border, base, text).save(
+    render_composite(wt, m_wt, border, base, text,
+                     stops_hex=stops_hex, positions=positions).save(
         out / f"{prefix}square_weighted_average{tag}.png")
-    return {"n": n, "grades": grades,
-            "sq_range": [float(sq[m_sq].min()), float(sq[m_sq].max())] if m_sq.any() else None,
-            "wt_range": [float(wt[m_wt].min()), float(wt[m_wt].max())] if m_wt.any() else None}
+    if also_square_average:
+        render_composite(sq, m_sq, border, base, text,
+                         stops_hex=stops_hex, positions=positions).save(
+            out / f"{prefix}square_average{tag}.png")
+    return {"n": n, "grades": grades, "stops": list(stops_hex),
+            "wt_range": [float(wt[m_wt].min()), float(wt[m_wt].max())] if m_wt.any() else None,
+            "sq_range": [float(sq[m_sq].min()), float(sq[m_sq].max())] if m_sq.any() else None}

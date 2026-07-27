@@ -110,6 +110,45 @@ class Cluster:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+class Composite:
+    """그룹 composite map. `D:/project/mapviewer` 공식 규격.
+
+    구조: palette index 의 **grade 빈도**를 쌓아 스칼라 맵을 만들고, 11색 색상표로 칠한다.
+      값 = Σ(count[g]·NUM[g]) / Σ(count[g]·DEN[g])
+      색 = quantile 0/10/…/100 에 색 하나씩 -> 선형 보간 -> min-max 로 정규화한 값에 매핑
+
+    ★ 리사이즈 금지. chip 경계는 1px 이라 축소하면 통째로 사라진다 (1024/1600/800 실측).
+    ★ chip 경계는 전부 idx10 회색 한 색. chip 안 bin 번호(idx9)는 제거된다.
+    """
+
+    # ── 색 ────────────────────────────────────────────────────────────────
+    # mapviewer 와 **같은 스키마**의 JSON. 그쪽 파일을 그대로 가리켜도 된다:
+    #   SITE_COLOR_LEGENDS=D:/project/mapviewer/logs/color-legends.json
+    # 파일/스킴이 없으면 계산된 기본색(gb=round(255*(1-step/100)))으로 되돌아간다.
+    COLOR_LEGENDS = env("SITE_COLOR_LEGENDS", "deploy/color-legends.json")
+    # 위 파일의 composite.<scheme>. 색을 바꾸려면 **JSON 의 default 항목을 고치면 된다.**
+    #   default        = 채택안. 아래쪽(낮은 quantile)만 흰쪽으로 당겨 바닥을 죽인 것
+    #   anonymous      = mapviewer 기본 빨강 램프 그대로
+    #   light_low_035 / light_low_070 = 세기 변형 (비교용)
+    COLOR_SCHEME = env("SITE_COLOR_SCHEME", "default")
+
+    # ── 값 계산 ───────────────────────────────────────────────────────────
+    # sq  = 원본 mapviewer   : 분자 grade^2      [0,1,4,9,16,25,36,49]
+    #                          분모 WT_FACTORS   [1,1,2,3,4,5,6,7]
+    # uc  = 채택안(method 3) : 분자 0,1 은 제곱 / 2 부터 2g  [0,1,4,6,8,10,12,14]
+    #                          분모 전부 1 (WT0 만 손잡이)
+    #       -> grade7/grade2 증폭이 12.25배에서 3.5배로 완화된다.
+    #   ⚠ uc 분자에 WT_FACTORS 분모를 쓰면 2g/g = 2.000 으로 grade 2 이상이 전부 같아진다.
+    METHOD = env("SITE_COMPOSITE_METHOD", "uc")      # uc | sq
+    # 정상(grade0) 픽셀이 분모를 얼마나 채울지. 1.0 = 한 표, 0.0 = 결함 픽셀만
+    # (작을수록 드문 결함이 드러나지만 바닥 노이즈도 같이 올라온다).
+    WT0 = env("SITE_COMPOSITE_WT0", 1.0)
+
+    # 비교용 square_average 도 같이 저장할지
+    ALSO_SQUARE_AVERAGE = env("SITE_COMPOSITE_ALSO_AVG", False)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 class Recipe:
     """contrastive 학습 레시피 (B4). step2 기본값이자 step3 스윕의 base."""
 

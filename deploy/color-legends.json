@@ -1,0 +1,61 @@
+{
+  "_note": "mapviewer(D:/project/mapviewer/logs/color-legends.json) 와 같은 스키마. composite.<scheme>.quantile0~100 = 11색, 0/10/…/100 지점에 놓고 선형 보간. 값->위치는 min-max 선형. 쓰는 스킴은 deploy/config.py::Composite.COLOR_SCHEME.",
+  "composite": {
+    "default": {
+      "quantile0": "#FFFFFF",
+      "quantile10": "#FFF0F0",
+      "quantile20": "#FFDCDC",
+      "quantile30": "#FFC5C5",
+      "quantile40": "#FFABAB",
+      "quantile50": "#FF8F8F",
+      "quantile60": "#FF7272",
+      "quantile70": "#FF5555",
+      "quantile80": "#FF3737",
+      "quantile90": "#FF1B1B",
+      "quantile100": "#FF0000",
+      "background": "#CCCCCC"
+    },
+    "anonymous": {
+      "quantile0": "#FFFFFF",
+      "quantile10": "#FFE6E6",
+      "quantile20": "#FFCCCC",
+      "quantile30": "#FFB2B2",
+      "quantile40": "#FF9999",
+      "quantile50": "#FF8080",
+      "quantile60": "#FF6666",
+      "quantile70": "#FF4D4D",
+      "quantile80": "#FF3333",
+      "quantile90": "#FF1919",
+      "quantile100": "#FF0000",
+      "background": "#CCCCCC"
+    },
+    "light_low_035": {
+      "quantile0": "#FFFFFF",
+      "quantile10": "#FFEDED",
+      "quantile20": "#FFD7D7",
+      "quantile30": "#FFC0C0",
+      "quantile40": "#FFA6A6",
+      "quantile50": "#FF8B8B",
+      "quantile60": "#FF6F6F",
+      "quantile70": "#FF5252",
+      "quantile80": "#FF3636",
+      "quantile90": "#FF1A1A",
+      "quantile100": "#FF0000",
+      "background": "#CCCCCC"
+    },
+    "light_low_070": {
+      "quantile0": "#FFFFFF",
+      "quantile10": "#FFF4F4",
+      "quantile20": "#FFE3E3",
+      "quantile30": "#FFCDCD",
+      "quantile40": "#FFB3B3",
+      "quantile50": "#FF9696",
+      "quantile60": "#FF7777",
+      "quantile70": "#FF5858",
+      "quantile80": "#FF3939",
+      "quantile90": "#FF1B1B",
+      "quantile100": "#FF0000",
+      "background": "#CCCCCC"
+    }
+  }
+}
