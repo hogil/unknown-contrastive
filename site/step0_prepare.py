@@ -35,6 +35,10 @@ class Config:
     # 이미지 확장자
     EXTS = env("SITE_EXTS", "png,jpg,jpeg,bmp,tif,tiff")
 
+    # 이미 만들어둔 manifest 가 있으면 그걸 쓴다 (스캔 생략). IMAGE_ROOT 는 무시된다.
+    # 사내에서 대상 이미지를 미리 골라둔 경우 유용.
+    POOL_MANIFEST = env("SITE_POOL_MANIFEST", "")
+
     # 다이얼 수동 고정(0 이면 기하에서 자동 계산). 튜닝 목적 외에는 건드리지 마라.
     MCS_OVERRIDE = env("SITE_MCS", 0)
     MS_OVERRIDE = env("SITE_MS", 0)
@@ -44,6 +48,38 @@ class Config:
 def main() -> int:
     banner("STEP 0", "manifest 생성 + pool 기하 -> 권장 다이얼")
     cfg = show_config(Config)
+
+    # ── 기존 manifest 사용 경로 ──────────────────────────────────────────
+    if str(Config.POOL_MANIFEST).strip():
+        mp = rel(Config.POOL_MANIFEST)
+        if not mp.exists():
+            die(f"SITE_POOL_MANIFEST 가 없다: {mp}")
+        man = json.loads(mp.read_text(encoding="utf-8"))
+        n = len(man.get("files", []))
+        if n == 0:
+            die(f"manifest 에 files 가 없다: {mp}")
+        root = Path(man["root"])
+        k_hat = int(Config.K_HAT)
+        mcs, ms = recommend_dial(n, k_hat)
+        if int(Config.MCS_OVERRIDE) > 0:
+            mcs = int(Config.MCS_OVERRIDE)
+        if int(Config.MS_OVERRIDE) > 0:
+            ms = int(Config.MS_OVERRIDE)
+        per_class = n / k_hat
+        print(f"\n[pool] 기존 manifest 사용: {mp}")
+        print(f"[pool] n = {n:,} 장   root = {root}")
+        print(f"[pool] k_hat = {k_hat}  ->  클래스당 예상 {per_class:.1f} 장")
+        print(f"\n[dial] ★ 권장  mcs = {mcs} , ms = {ms}   (= n/k 의 {100*mcs/per_class:.1f}%)")
+        out_root = rel(Config.OUT_ROOT)
+        save_result(out_root, "step0", {
+            "n_images": n, "k_hat": k_hat, "per_class_est": round(per_class, 1),
+            "manifest": str(mp.relative_to(REPO)) if mp.is_relative_to(REPO) else str(mp),
+            "image_root": root.as_posix(), "subdirs": [],
+            "dial": {"mcs": mcs, "ms": ms, "method": "leaf", "eps": 0.06},
+            "dial_search_mcs": dial_search_range(n, k_hat), "config": cfg})
+        print("\n다음:  python site/step1_zeroshot.py")
+        print(f"\n[OUT] {out_root}")
+        return 0
 
     root = rel(Config.IMAGE_ROOT)
     if not root.exists():

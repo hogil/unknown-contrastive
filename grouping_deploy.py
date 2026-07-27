@@ -28,14 +28,14 @@ May-dial(mcs12/ms15) 로 stale (5) 라벨 없는 사내 데이터에서도 offli
       champion 0.8825 와 후자가 일치하는 쪽 — 260726 team-lead 리뷰로 확정, 코드에도 주석).
     - noise_pct (summary.json)  = 재배정 후 최종 noise / n (전체, 배경 포함).
 
-champion 재현 (real MixedWM38 clean546, ens[s42_t20ep20+s1_ep18] mcs6ms3leaf reassign0.90):
+현재 보존된 E: canonical pool의 manifest 입력 예시:
     python grouping_deploy.py \\
         --backbone weights/convnextv2_base.fcmae_ft_in22k_in1k_384.pth \\
         --proj runs/sweep/abl_sw_t20_B4_260724_102757/checkpoints/proj_ep20.pt \\
                runs/sweep/abl_best_s1_B4_260724_111053/checkpoints/proj_ep18.pt \\
-        --pool data/images/mwm38_clean546 \\
-        --out result_grouping/deliverable_repro_260726 \\
-        --reassign nearest_q90 --offline-eval --device cpu
+        --pool data/pools/unknown_eval100.json \\
+        --out result_grouping/unknown_eval_grouping \\
+        --reassign nearest_q90 --device cpu
 
 flat 폴더(사내 실데이터, 하위폴더 없음) 배포:
     python grouping_deploy.py --backbone <pth> --proj <ckpt> \\
@@ -61,6 +61,8 @@ from torchvision import transforms as T
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO_ROOT))
+from scripts._common import load_pool_manifest  # noqa: E402  (manifest-based --pool selection, backward-compat)
 IMG = 384
 EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 TF = T.Compose([T.Resize((IMG, IMG), interpolation=T.InterpolationMode.BILINEAR), T.ToTensor(),
@@ -126,8 +128,15 @@ def proj_tag(proj_path: str) -> str:
 
 
 def collect_pool(pool_dir: str):
-    """flat + nested 둘 다 지원 (rglob). 하위폴더 있으면 그 이름을 label 로 선택적 수집, flat 이면 label=None."""
+    """flat + nested 둘 다 지원 (rglob). 하위폴더 있으면 그 이름을 label 로 선택적 수집, flat 이면 label=None.
+    .json manifest(make_pool_manifest.py 생성)도 지원 — 기존 flat/nested 로직은 무변경, manifest 분기만 추가.
+    manifest label=null 은 그대로 label=None 으로 보존한다(사내 실데이터 무라벨 pool 을 manifest 로 지정할 때
+    부모폴더명으로 오염되지 않게 — resolve_pool() 의 fallback 과 달리 이 스크립트는 label=None 을 의미 있는
+    상태로 취급하므로)."""
     root = Path(pool_dir)
+    if root.is_file() and root.suffix.lower() == ".json":
+        entries = sorted(load_pool_manifest(root), key=lambda e: e[0])  # flat path 정렬, collect_pool 의 rglob 정렬과 동일 의미
+        return [str(p) for p, _ in entries], [lab for _, lab in entries]
     paths, labels = [], []
     for p in sorted(root.rglob("*")):
         if p.is_file() and p.suffix.lower() in EXTS:
@@ -190,7 +199,7 @@ def reassign_display(mode: str) -> str:
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--backbone", required=True, help="frozen backbone .pth (FCMAE 등)")
-    ap.add_argument("--proj", required=True, nargs="+",
+    ap.add_argument("--proj", nargs="*", default=[],
                      help="projection head .pt 1개 이상 (2개+ 주면 앙상블: 각각 raw-GAP->proj->L2 후 concat+L2)")
     ap.add_argument("--pool", required=True, help="이미지 루트 (flat 또는 중첩 폴더 모두 지원, rglob)")
     ap.add_argument("--out", required=True)
@@ -225,6 +234,18 @@ def main():
     bb = load_backbone(a.backbone, device)
     tags = []
     per_ckpt_embs = []
+    if not a.proj:
+        # proj 없음 = frozen backbone 기준선. GAP -> L2 만 한다.
+        # (사다리 (1) 에서 frozen / TAPT-backbone-only arm 을 재려면 필수)
+        print("[model] proj 없음 -> frozen backbone (GAP -> L2)", flush=True)
+        tags.append("frozen")
+        _e = []
+        with torch.no_grad():
+            for _i in range(0, len(paths), a.batch):
+                _x = torch.stack([TF(Image.open(pp).convert("RGB"))
+                                  for pp in paths[_i:_i + a.batch]]).to(device)
+                _e.append(F.normalize(bb.forward_features(_x).mean(dim=(2, 3)), dim=1).cpu())
+        per_ckpt_embs.append(torch.cat(_e))
     for proj_path in a.proj:
         tag = proj_tag(proj_path)
         tags.append(tag)
@@ -259,8 +280,8 @@ def main():
     stab = per_group_stability(z, seed_pred, a.mcs, a.ms, a.method, a.eps)
     lab = np.array([l if l is not None else "" for l in labels])
 
-    model_mode = f"adapted_ens[{'+'.join(tags)}]_mcs{a.mcs}ms{a.ms}{a.method}{reassign_display(a.reassign)}" \
-        if len(tags) > 1 else f"adapted[{tags[0]}]_mcs{a.mcs}ms{a.ms}{a.method}{reassign_display(a.reassign)}"
+    _kind = "frozen" if not a.proj else ("adapted_ens" if len(tags) > 1 else "adapted")
+    model_mode = f"{_kind}[{'+'.join(tags)}]_mcs{a.mcs}ms{a.ms}{a.method}{reassign_display(a.reassign)}"
 
     # --- representatives + composites + groups.csv (label-free) ---
     rep_root = out / "representatives"
@@ -309,6 +330,7 @@ def main():
 
     noise = 100.0 * (pred == -1).sum() / n
     summary = {"n": n, "k": len(clusters), "noise_pct": round(noise, 2),
+               "seed_noise_pct": round(100.0 * seed_noise / n, 2),
                "over_merge_groups": [r["group_id"] for r in rows if r["review_status"].startswith("over")],
                "mean_coherence": round(float(np.mean([r["group_coherence"] for r in rows])) if rows else 0, 4),
                "mean_stability": round(float(np.mean([r["group_stability"] for r in rows])) if rows else 0, 4),
