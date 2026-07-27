@@ -133,7 +133,7 @@ def main() -> int:
 
     payload = {
         "n_images": n, "k_hat": k_hat, "per_class_est": round(per_class, 1),
-        "manifest": str(mpath.relative_to(REPO)),
+        "manifest": str(mpath.relative_to(REPO)) if mpath.is_relative_to(REPO) else str(mpath),
         "image_root": root.as_posix(), "subdirs": subdirs[:50],
         "dial": {"mcs": mcs, "ms": ms, "method": "leaf", "eps": 0.06},
         "dial_search_mcs": search,
