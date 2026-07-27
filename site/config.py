@@ -59,9 +59,15 @@ class Paths:
 
 # ═══════════════════════════════════════════════════════════════════════════
 class Runtime:
-    """실행 환경."""
+    """실행 환경.
+
+    ★ H200(141GB) 기준 default. 추론 배치는 **자원 파라미터**라 올려도 결과가 안 바뀐다.
+      VRAM 이 작은 장비면 SITE_BATCH 를 32~64 로 낮춰라.
+      반면 `Recipe.BATCH`(학습 배치)는 **레시피 파라미터**다 — 결과가 바뀌므로
+      자원이 남는다고 임의로 올리지 마라(올리려면 sweep 셀로 비교할 것).
+    """
     DEVICE = env("SITE_DEVICE", "cuda")        # cuda | cpu
-    BATCH = env("SITE_BATCH", 32)              # 추론/채점 배치
+    BATCH = env("SITE_BATCH", 128)             # 추론/채점 배치 (H200 여유)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -104,6 +110,8 @@ class Recipe:
     QUEUE = env("SITE_QUEUE", 16384)
     IGNORE_NEG = env("SITE_IGNORE_NEG", 0.72)  # ★ env 이름은 REPRO_IGNORE_NEG_SIM (REPRO_NEG 아님)
     LR_HEAD = env("SITE_LR_HEAD", 0.004)
+    # ★ 학습 배치는 레시피다(결과가 바뀐다). H200 이라 256 도 무리 없지만
+    #   B4 기본은 64 다. 256 을 쓰려면 MayPreset 또는 sweep 셀 `may` 로 **비교해서** 채택해라.
     BATCH = env("SITE_TRAIN_BATCH", 64)
     SAMPLING = env("SITE_SAMPLING", 0.25)
     USE_LOCAL = env("SITE_USE_LOCAL", True)
@@ -130,7 +138,7 @@ class MayPreset:
     ENABLE = env("SITE_MAY_PRESET", False)     # 1 이면 Recipe 를 아래 값으로 덮어쓴다
 
     EPOCHS = 20
-    BATCH = 256          # ← 핵심. batch 8 로 재현 시도했다가 발산했다
+    BATCH = 256          # ← 핵심. batch 8 로 재현 시도했다가 발산했다. H200 이면 여유.
     TEMP = 0.20
     QUEUE = 16384
     IGNORE_NEG = 0.72
