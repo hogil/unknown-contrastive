@@ -117,6 +117,51 @@ def main() -> int:
         bad.append("torchvision")
     line()
 
+
+    # ── 실패 조건 재현: repo 루트가 sys.path[0] 인 상태 ──────────────────
+    # grouping_deploy.py 는 repo 루트에 있어서 Python 이 자동으로 루트를
+    # sys.path[0] 에 넣는다. doctor 는 deploy/ 에서 돌므로 그 자리를 못 본다.
+    line("서브프로세스 조건 재현 (repo 루트가 sys.path[0]):")
+    import subprocess
+    repo = Path(__file__).resolve().parent.parent
+    probe = (
+        "import sys, traceback\n"
+        "print('  sys.path[0] =', sys.path[0])\n"
+        "try:\n"
+        "    import PIL; print('  PIL ->', getattr(PIL,'__file__',None) or list(PIL.__path__))\n"
+        "    from PIL import Image; print('  from PIL import Image: OK')\n"
+        "    import torchvision.datasets; print('  torchvision.datasets: OK')\n"
+        "except Exception:\n"
+        "    traceback.print_exc()\n"
+    )
+    r = subprocess.run([sys.executable, "-c", probe], cwd=str(repo),
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    out = (r.stdout or "") + (r.stderr or "")
+    for ln in out.rstrip().splitlines():
+        line("  " + ln if not ln.startswith("  ") else ln)
+    if "Error" in out or "error" in out:
+        bad.append("subprocess-import")
+        line(f"{BAD}루트에서 실행하면 깨진다 -> repo 루트에 가짜 패키지가 있다는 뜻이다.")
+    line()
+
+    # ── sys.path 전체에서 PIL 이 몇 군데 있나 ────────────────────────────
+    line("PIL 후보 전수:")
+    seen = 0
+    for i, entry in enumerate(sys.path):
+        d = Path(entry or os.getcwd())
+        for cand in (d / "PIL", d / "PIL.py"):
+            if cand.exists():
+                has_init = (cand / "__init__.py").exists() if cand.is_dir() else True
+                mark = OK if has_init else BAD
+                line(f"{mark}sys.path[{i}] {cand}" + ("" if has_init else "  <- __init__.py 없음(가짜)"))
+                seen += 1
+    if seen == 0:
+        line(f"{BAD}sys.path 어디에도 PIL 이 없다 -> Pillow 미설치")
+        bad.append("PIL-missing")
+    elif seen > 1:
+        line(f"{WARN}PIL 이 {seen} 군데 있다 — 앞쪽 것이 이긴다. 가짜가 앞이면 그게 원인.")
+    line()
+
     line("=" * 74)
     if bad:
         line(f"  문제 {len(bad)} 건: {', '.join(sorted(set(bad)))}")
