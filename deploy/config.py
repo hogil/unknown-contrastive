@@ -196,6 +196,13 @@ class Composite:
     # 비교용 square_average 도 같이 저장할지
     ALSO_SQUARE_AVERAGE = env("SITE_COMPOSITE_ALSO_AVG", False)
 
+    # step1 에서 composite 를 **전 arm** 에 만들지.
+    # composite 는 384 캐시를 못 쓰고 원본 6400x6400 을 다시 읽어 arm 당 ~70초를 먹는다
+    # (임베딩은 5초). arm 을 고르는 판정에는 안 쓰이므로 기본은 **이긴 arm 하나만** 만든다
+    # — step1 전체가 486초에서 90초로 줄어든 이유의 대부분이 이것이다.
+    # 전 arm 의 그림을 눈으로 비교하고 싶으면 1 로 둬라 (그만큼 느려진다).
+    ALL_ARMS = env("SITE_COMPOSITE_ALL_ARMS", False)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 class Recipe:

@@ -2,6 +2,7 @@
 name: loop-monitor
 description: unknown-loop 의 진행 확인 담당. 학습 로그/프로세스/임베딩 산출을 점검해 정상·이상(segfault, loss 즉사, 침묵 종료)을 보고. read-only.
 tools: Read, Bash, Glob, Grep
+model: haiku
 ---
 
 # loop-monitor — 진행 확인 에이전트

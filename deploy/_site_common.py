@@ -89,6 +89,44 @@ def banner(step: str, title: str, ladder: str = ""):
     print(line, flush=True)
 
 
+def run_root(base, create: bool = False, tag: str = "") -> Path:
+    """타임스탬프 run 폴더. **step0 이 만들고 step1~5 가 물려 쓴다.**
+
+        runs/site/                 <- base (Paths.OUT_ROOT)
+          ├── _cache/              <- 디코드 캐시. run 마다 다시 만들면 8.7GiB 낭비라 여기 공유
+          ├── latest.txt           <- 마지막 step0 이 만든 run 폴더 경로
+          └── 260727_183000/       <- 이번 run. step0~5 산출이 전부 여기
+               step0_result.json …
+
+    ★ step 마다 새 타임스탬프를 만들면 step1 이 step0 결과를 못 찾는다.
+      그래서 step0 만 create=True 이고 나머지는 latest.txt 를 읽는다.
+    ★ 이전 run 을 다시 쓰려면 SITE_RUN=260727_183000 (또는 tag 인자).
+      기존 결과는 절대 덮어쓰지 않는다 — 새로 돌리면 새 폴더다.
+    """
+    base = rel(base)
+    tag = tag or os.environ.get("SITE_RUN", "").strip()
+    ptr = base / "latest.txt"
+    if tag:
+        d = base / tag
+    elif create:
+        from datetime import datetime
+        d = base / datetime.now().strftime("%y%m%d_%H%M%S")
+    elif ptr.exists():
+        d = Path(ptr.read_text(encoding="utf-8").strip())
+        if not d.is_absolute():
+            d = rel(d)
+    else:
+        die(f"run 폴더를 찾을 수 없다 ({ptr} 없음).\n"
+            f"  먼저:  python deploy/step0_prepare.py\n"
+            f"  또는 특정 run 을 지정:  SITE_RUN=<폴더명> python deploy/step1_zeroshot.py")
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
+        ptr.write_text(str(d), encoding="utf-8")
+    if not d.exists():
+        die(f"지정한 run 폴더가 없다: {d}\n  {base} 아래 폴더명을 확인하라.")
+    return d
+
+
 def show_config(C) -> dict:
     """Config 클래스의 대문자 속성을 표로 출력하고 dict 로 반환 (재현성 기록용)."""
     d = {k: getattr(C, k) for k in dir(C) if k.isupper() and not k.startswith("_")}

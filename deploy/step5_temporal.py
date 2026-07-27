@@ -31,7 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (add_path, REPO, banner, check_inputs, die, env, rel,  # noqa: E402
-                          save_result, show_config, show_images)
+                          save_result, run_root, show_config, show_images)
 
 
 from config import Paths, Runtime, Temporal  # noqa: E402
@@ -39,7 +39,8 @@ from config import Paths, Runtime, Temporal  # noqa: E402
 
 class Config:
     """★ 설정은 deploy/config.py 한 곳에서 관리한다. 여기는 참조만."""
-    OUT_ROOT = Paths.OUT_ROOT
+    OUT_BASE = Paths.OUT_ROOT          # runs/site (캐시·latest.txt 가 여기)
+    OUT_ROOT = Paths.OUT_ROOT          # main() 에서 타임스탬프 run 으로 교체된다
     BACKBONE = Paths.BACKBONE
     DEVICE = Runtime.DEVICE
     BATCH = Runtime.BATCH
@@ -108,6 +109,7 @@ def build_batches(paths: list[Path], root: Path) -> list[tuple[str, list[int]]]:
 
 def main() -> int:
     banner("STEP 5", "시간축 신규불량 감지 (최종 산출물)", "①~④ 중 채택된 모델로 운영")
+    Config.OUT_ROOT = str(run_root(Config.OUT_BASE, create=False))
     cfg = show_config(Config)
 
     s0 = load("step0")

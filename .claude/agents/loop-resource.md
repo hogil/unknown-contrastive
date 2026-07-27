@@ -2,6 +2,7 @@
 name: loop-resource
 description: unknown-loop 의 리소스 분석 담당. dispatch 전 자원 점검 + ★신규 실행 직후 피크 사용량 실측 + 학습 중 건강 모니터링(진행/사고 패턴). GPU 자매작업 공존 규칙 집행. read-only + 측정 보고.
 tools: Read, Bash, Glob, Grep
+model: haiku
 ---
 
 # loop-resource — 리소스 분석 에이전트

@@ -26,9 +26,9 @@ tools: Read, Bash, Glob, Grep
 ```bash
 python -u _ssl_methods.py --method simclr --cpu --use-queue --queue-size 4096 \
   [변경 flag] \
-  --train-dir data/images/<train_pool> \
-  --eval-dir data/images/mixedwm38_pool_mixed29 \
-  --out-dir result_grouping/_field_mixed29/embeddings \
+  --train-dir data/pools/<train_pool>.json \
+  --eval-dir data/pools/<eval_pool>.json \
+  --out-dir runs/ssl_methods/<tag> \
   --tag <고유태그> --epochs 2 > _crossds_<태그>.log 2>&1
 ```
 

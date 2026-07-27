@@ -24,15 +24,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, make_z0_set, read_summary, rel, run,
-                          save_result, show_config, show_images)
+                          save_result, run_root, show_config, show_images)
 
 
-from config import Cluster, Paths, Runtime  # noqa: E402
+from config import Cluster, Composite, Paths, Runtime  # noqa: E402
 
 
 class Config:
     """★ 설정은 deploy/config.py 한 곳에서 관리한다. 여기는 참조만."""
-    OUT_ROOT = Paths.OUT_ROOT
+    OUT_BASE = Paths.OUT_ROOT          # runs/site (캐시·latest.txt 가 여기)
+    OUT_ROOT = Paths.OUT_ROOT          # main() 에서 타임스탬프 run 으로 교체된다
     BACKBONE = Paths.BACKBONE
     DEVICE = Runtime.DEVICE
     CACHE = Runtime.CACHE
@@ -45,6 +46,7 @@ class Config:
     Z0_SEED = 42
     SKIP_CHAMPION = False
     PALETTE_PROBE = Cluster.PALETTE_PROBE
+    COMPOSITE_ALL_ARMS = Composite.ALL_ARMS
 
 
 def load_step0(out_root: Path) -> dict:
@@ -54,8 +56,30 @@ def load_step0(out_root: Path) -> dict:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
+def pick_best_arm(results: dict, arms: list):
+    """composite 를 만들 arm 하나를 고른다 — **라벨 없이** seed_noise 최소.
+
+    k=0(전부 noise)인 arm 은 제외한다. 그런 arm 의 seed_noise 는 0% 가 아니라
+    100% 지만, 혹시 축퇴 해가 낮게 나와도 뽑히지 않게 명시적으로 거른다.
+    전부 실패면 None -> composite 를 만들지 않는다.
+    """
+    def sn(s):
+        return s.get("seed_noise_pct", s.get("seed_noise")) if s else None
+    cand = [(sn(results.get(n)), n, bb, pj) for n, bb, pj in arms
+            if results.get(n) and sn(results.get(n)) is not None
+            and (results[n].get("k") or 0) > 0]
+    if not cand:
+        print("[composite] 쓸만한 arm 이 없다 (전부 k=0) -> 생략")
+        return None
+    cand.sort(key=lambda t: t[0])
+    _, n, bb, pj = cand[0]
+    return n, bb, pj
+
+
+
 def main() -> int:
     banner("STEP 1", "zero-shot predict (학습 0)", "① 여기서 만든 모델로 바로 predict")
+    Config.OUT_ROOT = str(run_root(Config.OUT_BASE, create=False))
     cfg = show_config(Config)
 
     s0 = load_step0(Config.OUT_ROOT)
@@ -103,12 +127,21 @@ def main() -> int:
         arms.append(("b4_backbone_only", Config.B4_BACKBONE, None))
         print("[info] May 배포본 b4 를 독립 arm 으로 추가 (자체 backbone 사용)")
 
+    # composite 는 원본 6400x6400 을 다시 읽어 arm 당 ~70초를 먹는다(임베딩은 5초).
+    # arm 을 고르는 판정에는 안 쓰이므로 기본은 비교 중엔 끄고 **이긴 arm 만** 만든다.
+    # 전 arm 다 보고 싶으면 SITE_COMPOSITE_ALL_ARMS=1.
+    skip_comp = not Config.COMPOSITE_ALL_ARMS
+    if skip_comp:
+        print("[composite] 비교 중에는 생략하고 **이긴 arm 만** 만든다 "
+              "(arm 당 ~70초). 전 arm 이 필요하면 SITE_COMPOSITE_ALL_ARMS=1\n")
+
     results = {}
     for name, bb, projs in arms:
         out = out_root / name.replace("(", "_").replace(")", "")
         extra = {"UC_PALETTE_MASK": "1"} if name == "frozen_masked" else {"UC_PALETTE_MASK": "0"}
         rc = run(deploy_cmd(bb, pool, out, mcs, ms, projs,
-                            Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, True, Config.PARTITION_BY),
+                            Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache,
+                            skip_comp, Config.PARTITION_BY),
                  env_extra=extra, log_path=out_root / f"{out.name}.log")
         if rc != 0:
             print(f"[warn] {name} 종료코드 {rc} — summary.json 존재로 판정한다")
@@ -127,9 +160,28 @@ def main() -> int:
         print(f"  {line}")
     print("-" * 78)
 
+    # ★ 이긴 arm 하나만 composite 를 만든다 — 6개 다 만드는 시간의 1/6.
+    best = None
+    if skip_comp:
+        best = pick_best_arm(results, arms)
+        if best:
+            bname, bbb, bprojs = best
+            bout = out_root / bname.replace("(", "_").replace(")", "")
+            print(f"\n[composite] 이긴 arm '{bname}' 의 composite 를 만든다 "
+                  f"(원본 6400x6400, 리사이즈 없음)")
+            rc = run(deploy_cmd(bbb, pool, bout, mcs, ms, bprojs,
+                                Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache,
+                                False, Config.PARTITION_BY),
+                     env_extra={"UC_PALETTE_MASK": "1" if bname == "frozen_masked" else "0"},
+                     log_path=out_root / f"{bout.name}_composite.log")
+            if rc != 0:
+                print(f"[warn] composite 재실행 종료코드 {rc}")
+            print(f"[composite] -> {bout / 'composites'}")
+
     save_result(rel(Config.OUT_ROOT), "step1",
                 {"dial": {"mcs": mcs, "ms": ms},
                  "arms": {k: results.get(k) for k, _, _ in arms},
+                 "composite_arm": best[0] if best else ("전 arm" if not skip_comp else None),
                  "verdict": verdict, "notes": note, "config": cfg})
     print("\n다음:  python deploy/step2_recipe.py")
     print(f"\n[OUT] {out_root}")

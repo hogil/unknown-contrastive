@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (add_path, REPO, banner, dial_from_min_group, dial_scan_range,  # noqa: E402
                           die, env, pick_dial_by_stability, rel, save_result,
-                          show_config, show_images, cache_dir_for)
+                          run_root, show_config, show_images, cache_dir_for)
 
 
 from config import Cluster, Paths, Runtime  # noqa: E402
@@ -32,7 +32,8 @@ class Config:
     IMAGE_ROOT = Paths.IMAGE_ROOT
     POOL_MANIFEST = Paths.POOL_MANIFEST
     EXTS = Paths.EXTS
-    OUT_ROOT = Paths.OUT_ROOT
+    OUT_BASE = Paths.OUT_ROOT          # runs/site (캐시·latest.txt 가 여기)
+    OUT_ROOT = Paths.OUT_ROOT          # main() 에서 타임스탬프 run 으로 교체된다
     BACKBONE = Paths.BACKBONE
     DEVICE = Runtime.DEVICE
     CACHE = Runtime.CACHE
@@ -102,7 +103,10 @@ def build_decode_cache(pool_path, out_root) -> str:
         return ""
     from build_cache import build
     from scripts._common import load_pool_manifest
-    cdir = cache_dir_for(Config.OUT_ROOT, Config.CACHE_DIR)
+    # ★ 캐시는 타임스탬프 run 이 아니라 **base** 에 둔다 — run 마다 8.7GiB 를
+    #   다시 만들 이유가 없다. 유효성은 (파일목록, palette_mask) 해시로 검사하므로
+    #   run 이 달라도 안전하게 공유된다.
+    cdir = cache_dir_for(Config.OUT_BASE, Config.CACHE_DIR)
     paths = [str(p) for p, _ in sorted(load_pool_manifest(Path(str(rel(pool_path)))),
                                        key=lambda e: e[0])]
     pm = str(os.environ.get("UC_PALETTE_MASK", "0")).lower() in ("1", "true", "yes", "on")
@@ -117,6 +121,7 @@ def build_decode_cache(pool_path, out_root) -> str:
 
 def main() -> int:
     banner("STEP 0", "manifest 생성 + pool 기하 -> 권장 다이얼")
+    Config.OUT_ROOT = str(run_root(Config.OUT_BASE, create=True))
     cfg = show_config(Config)
     show_images(Config.IMAGE_ROOT, Config.POOL_MANIFEST, Config.EXTS)
 

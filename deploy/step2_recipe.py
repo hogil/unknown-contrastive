@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (add_path, REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, read_summary, rel, run, save_result,
-                          show_config, show_images, train_env)
+                          run_root, show_config, show_images, train_env)
 
 
 from config import Cluster, Paths, Recipe, Runtime, epochs, recipe  # noqa: E402
@@ -32,7 +32,8 @@ from config import Cluster, Paths, Recipe, Runtime, epochs, recipe  # noqa: E402
 
 class Config:
     """★ 설정은 deploy/config.py 한 곳에서 관리한다. 여기는 참조만."""
-    OUT_ROOT = Paths.OUT_ROOT
+    OUT_BASE = Paths.OUT_ROOT          # runs/site (캐시·latest.txt 가 여기)
+    OUT_ROOT = Paths.OUT_ROOT          # main() 에서 타임스탬프 run 으로 교체된다
     BACKBONE = Paths.BACKBONE
     DEVICE = Runtime.DEVICE
     CACHE = Runtime.CACHE
@@ -132,6 +133,7 @@ def rule_c(rows: list[dict], k_pct: float) -> dict:
 
 def main() -> int:
     banner("STEP 2", "레시피 학습 + Rule C epoch 선택", "② 여기서 만든 레시피로 학습 후 predict")
+    Config.OUT_ROOT = str(run_root(Config.OUT_BASE, create=False))
     cfg = show_config(Config)
 
     s0 = load_step0(Config.OUT_ROOT)

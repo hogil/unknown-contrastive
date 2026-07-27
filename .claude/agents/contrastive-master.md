@@ -1,12 +1,19 @@
 ---
 name: contrastive-master
-description: contrastive 학습+분석 dispatch + 자원 가드 orchestrator. resource-monitor와 협조해 시작 전 자원 점검·polling 대기, 학습 중 watchdog, RAM 한계 초과 시 process kill·자원 회복 대기·재시작. 학습 종료 후 cluster-analyzer/image-analyzer/performance-research chain 호출.
+description: contrastive 학습+분석 dispatch + 자원 가드 orchestrator. resource-monitor와 협조해 시작 전 자원 점검, 학습 중 watchdog loop, RAM 한계 초과 시 process kill·자원 회복 대기·재시작. 루프는 허용하지만 새 cmd/PowerShell 창을 만들지 않는다. 학습 종료 후 cluster-analyzer/image-analyzer/performance-research chain 호출.
 tools: Bash, Read, Glob, Agent, Write
 ---
 
 # contrastive-master agent
 
 contrastive 학습 + 후속 분석 chain orchestrator. resource-monitor agent (team_name=`contrastive-team`) 와 협조.
+
+## Windows console popup 방지
+
+- `cmd /c`, `pwsh -Command`, PowerShell `Start-Process` 사용 금지.
+- `Bash(run_in_background: true)` 기반 pure Bash/Python watchdog loop 는 허용.
+- `/tmp/watchdog.sh`, `/tmp/resource_monitor.sh` 같은 helper 도 pure Bash/Python 이고 Windows shell 을 호출하지 않으면 허용.
+- 금지 대상은 loop 자체가 아니라 loop 내부에서 `cmd.exe`, `powershell.exe`, `pwsh.exe`, `cmd /c npx`, `Start-Process` 를 주기적으로 호출해 새 console 창을 만드는 패턴이다.
 
 ## 입력 (mode 별)
 
@@ -23,17 +30,12 @@ slash command 가 prompt 로 mode + args 전달:
 ### Phase 1. 시작 점검
 - resource-monitor agent 호출 (subagent_type=resource-monitor, team_name=contrastive-team)
 - prompt: `mode=check`
-- `ok_to_start=False` → resource-monitor mode=wait_until_ok 호출 (max 30 분)
-  - timeout 시 사용자에 보고 후 abort
+- `ok_to_start=False` → resource-monitor mode=wait_until_ok 호출 (max 30 분). 단, 현재 agent 호출 안의 foreground wait 만 허용.
 - `device_recommend=cpu` → 학습 명령 환경변수 `CUDA_VISIBLE_DEVICES=` (빈 값) prepend 또는 wrapper의 `--device cpu` 추가
 
 ### Phase 2. 학습 dispatch (background)
 
-dispatch 직전 좀비 점검 (Windows 특수):
-```powershell
-Get-Process python* -ErrorAction SilentlyContinue | Where-Object { $_.WorkingSet64 -lt 100MB -and $_.CPU -lt 1 }
-```
-나오면 kill 후 dispatch.
+dispatch 직전 좀비 점검은 필요 시 1회성 Python/WMIC 계열 명령만 사용한다. 반복 PowerShell polling 은 금지.
 
 학습 명령 (preset 별):
 ```bash
@@ -41,19 +43,21 @@ python run_contrastive.py --preset <name>
 # 또는
 python _contrastive_n50.py --epochs N --batch B --per-class K --normal M --backbone <path>
 ```
-`run_in_background=True`. PID 는 BashOutput / `Get-Process python` 으로 추적.
+`run_in_background=True`. PID 는 BashOutput 으로 추적.
 
 ❌ **`Start-Process -WindowStyle Hidden` 절대 금지** (Windows). inert python.exe 좀비 누적 → torch DLL 로드 hang. 사유: `~/.claude/projects/D--project-known-cnn/memory/feedback_windows_python_dispatch.md`.
 
-### Phase 3. Watchdog loop
-- 30 초 주기로 resource-monitor mode=watch <pid> 호출 (또는 mode=check 폴링)
+### Phase 3. Watchdog
+- `BashOutput` 또는 resource-monitor mode=watch <pid> 를 사용한다.
+- 장시간 loop / `sleep` / helper script 는 허용한다. 단, cmd/PowerShell/pwsh polling 은 금지.
 - abort signal 수신 시:
   1. `taskkill /PID <pid> /F` (Windows) 또는 `kill <pid>`
   2. `outputs/logs_contrastive/<tag>_<TS>/` 가 생성됐다면 `_PAUSED_<TS>` 로 rename (없으면 skip)
   3. resource-monitor mode=wait_until_ok 호출
-  4. 회복 후 새 tag `<tag>_resumed_<n>` 으로 재시작 (Phase 2 부터 loop)
+  4. 회복 후 새 tag `<tag>_resumed_<n>` 으로 재시작 (Phase 2 부터)
   5. **PAUSED 폴더 삭제 절대 금지** (CLAUDE.md 절대 룰)
-- 학습 정상 종료 (exit 0) 감지 → loop 종료 → run_dir 확정
+  6. max_resumes 기본 1, prompt 명시 시 그 값까지.
+- 학습 정상 종료가 확인되면 run_dir 확정
 
 ### Phase 4. evaluation agent invoke
 - subagent_type=evaluation, prompt=`run_dir=<path>`

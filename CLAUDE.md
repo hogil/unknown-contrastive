@@ -109,8 +109,7 @@ known-cnn 은 supervised side 만 담당.
 | `chip_tools/_chip_resample_100.py` | classification_chips/ 를 N/class 만 keep + archive (top-N by defect_ratio). |
 | `chip_tools/_chip_trim_inplace.py` | classification_chips/ in-place trim (archive 없이 그냥 N/class 만 남기고 삭제). |
 | `chipgrid_eval/_chipgrid_gmm_options.py` / `_chipgrid_summary.py` | chipgrid eval 분석 sub-tools. |
-| `dist_learn/_dist_learn.py` | WM-811K cca/* heatmap 학습 (1회). gitignored heatmap 부재 시 재실행. |
-| `dist_learn/_dist_learn_per_class.py` | multi-label stage 1 per-class heatmap. |
+| ~~`dist_learn/`~~ | ★ 이 repo 에서 제거(260727). 정본은 자매 repo `known-cnn/dist_learn/`. 여기엔 .py 없이 생성물만 복사돼 있었다. 필요하면 known-cnn 에서 `python dist_learn/_dist_learn.py` 로 재생성하고 `HEATMAP_DIR` 로 넘겨라. deploy/ 파이프라인은 안 쓴다. |
 | `verify_tools/_verify.py` | 데이터셋 검증 (filename/PNG/JSON 스키마/분포 sanity) |
 | `misc/cnn_yolo.py`, `misc/download_backbone.py` | legacy + utility. |
 | `_dist_heatmaps/` | WM-811K cca/* 학습된 heatmap 8 클래스 (.npy + .png, **gitignored**). 부재 시 `python dist_learn/_dist_learn.py` 로 재생성. |

@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, read_summary, rel, run, save_result,
-                          show_config, show_images, train_env)
+                          run_root, show_config, show_images, train_env)
 from step2_recipe import rule_c, score_epochs  # noqa: E402
 
 
@@ -33,7 +33,8 @@ from config import Cluster, Paths, Runtime, Sweep, epochs, recipe  # noqa: E402
 
 class Config:
     """★ 설정은 deploy/config.py 한 곳에서 관리한다. 여기는 참조만."""
-    OUT_ROOT = Paths.OUT_ROOT
+    OUT_BASE = Paths.OUT_ROOT          # runs/site (캐시·latest.txt 가 여기)
+    OUT_ROOT = Paths.OUT_ROOT          # main() 에서 타임스탬프 run 으로 교체된다
     BACKBONE = Paths.BACKBONE
     DEVICE = Runtime.DEVICE
     CACHE = Runtime.CACHE
@@ -97,6 +98,7 @@ def train_and_score(cell: str, seed: int, pool: str, mcs: int, ms: int,
 
 def main() -> int:
     banner("STEP 3", "recipe sweep + 무라벨 셀 선택", "③ 여기서 만든 recipe sweep 학습 후 predict")
+    Config.OUT_ROOT = str(run_root(Config.OUT_BASE, create=False))
     cfg = show_config(Config)
 
     s0 = load(Config.OUT_ROOT, "step0")

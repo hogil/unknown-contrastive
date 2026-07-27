@@ -29,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (REPO, banner, die, env, fmt_row, read_summary, rel,  # noqa: E402
-                          save_result, show_config, show_images)
+                          save_result, run_root, show_config, show_images)
 
 
 from config import Paths, Sweep  # noqa: E402
@@ -37,7 +37,8 @@ from config import Paths, Sweep  # noqa: E402
 
 class Config:
     """★ 설정은 deploy/config.py 한 곳에서 관리한다. 여기는 참조만."""
-    OUT_ROOT = Paths.OUT_ROOT
+    OUT_BASE = Paths.OUT_ROOT          # runs/site (캐시·latest.txt 가 여기)
+    OUT_ROOT = Paths.OUT_ROOT          # main() 에서 타임스탬프 run 으로 교체된다
     TAPT_BACKBONE = Paths.TAPT_BACKBONE
     CELLS = "lr008,lr002,base"
     ROUND1_SEED = Sweep.ROUND1_SEED
@@ -64,6 +65,7 @@ TAPT backbone 만드는 법 (라벨 필요):
 
 def main() -> int:
     banner("STEP 4", "CNN TAPT backbone + sweep", "④ TAPT 후 학습 sweep 후 predict (마지막 수단)")
+    Config.OUT_ROOT = str(run_root(Config.OUT_BASE, create=False))
     cfg = show_config(Config)
     s0p = rel(Config.OUT_ROOT) / "step0_result.json"
     s0 = json.loads(s0p.read_text(encoding="utf-8")) if s0p.exists() else {}
@@ -101,6 +103,9 @@ def main() -> int:
     work.mkdir(parents=True, exist_ok=True)
     src0 = rel(Config.OUT_ROOT) / "step0_result.json"
     (work / "step0_result.json").write_text(src0.read_text(encoding="utf-8"), encoding="utf-8")
+    # 서브프로세스의 run_root() 가 work 자체를 run 폴더로 보게 한다
+    # (없으면 work 아래 latest.txt 를 찾다가 죽는다)
+    (work / "latest.txt").write_text(str(work), encoding="utf-8")
 
     print(f"[run] step3_sweep 를 TAPT backbone 으로 재실행\n      backbone={tapt}\n      work={work}")
     rc = subprocess.call([sys.executable, "deploy/step3_sweep.py"], cwd=str(REPO), env=e)

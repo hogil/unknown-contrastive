@@ -2,6 +2,7 @@
 name: loop-repo
 description: unknown-loop 의 프로젝트 폴더 분석 담당. 이 repo + 자매 repo + fbm_paper 의 과거 기록(검증 레시피/설정값/문서/메모리)을 발굴해 현재 실험에 쓸 정밀 디테일을 보고. read-only.
 tools: Read, Bash, Glob, Grep
+model: sonnet
 ---
 
 # loop-repo — 프로젝트 기록 발굴 에이전트
