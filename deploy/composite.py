@@ -52,6 +52,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import json
+
 import numpy as np
 from PIL import Image
 
@@ -236,6 +238,156 @@ def build_lut(stops_hex=None, n: int = 256, positions=None) -> np.ndarray:
     return lut
 
 
+# ── chip 경계 = positions JSON 기하 (mapviewer 방식, 260728) ────────────────
+# ★ 왜: 픽셀 스캔(이미지에서 idx10~30 색을 찾아 union/majority)은 이미지끼리
+#   칩 격자가 1px 만 어긋나도 그 자리가 두꺼워져 그룹마다 경계 두께가 들쭉날쭉했다
+#   (사용자 리포트, 실측). mapviewer(`api/composite_map.py::_build_chip_base_indices_
+#   from_positions`)는 픽셀을 전혀 안 보고 **positions.json 의 chip rect 좌표로
+#   직사각형을 그린다** — 그룹의 모든 이미지가 같은 물리 격자면 항상 정확히 1px,
+#   완전히 균일하다. 우리도 같은 방식으로 바꾼다.
+# ★ positions.json 이 없는 클래스(45개 중 14개, 260728 기준)는 이 경로를 못 쓴다.
+#   그 경우 `_pixel_vote_border()` 로 폴백한다(예전 union 보다는 낫지만 완전히
+#   균일하진 않다 — 그 클래스는 positions 합성이 필요하다).
+def _positions_path(image_path) -> Path | None:
+    """`.../images/<dataset>/...` -> `.../positions/<dataset>/....json`.
+    "images" 라는 경로 세그먼트를 "positions" 로 바꾸고 확장자만 교체한다."""
+    p = Path(image_path)
+    parts = list(p.parts)
+    for i, seg in enumerate(parts):
+        if seg.lower() == "images":
+            parts[i] = "positions"
+            return Path(*parts).with_suffix(".json")
+    return None
+
+
+_POSITIONS_CACHE: dict = {}
+
+
+def load_positions(image_path) -> dict | None:
+    """캐시된 positions.json 로드. 없거나 깨졌으면 None (조용히 폴백 신호)."""
+    pos_path = _positions_path(image_path)
+    if pos_path is None:
+        return None
+    key = str(pos_path)
+    if key in _POSITIONS_CACHE:
+        return _POSITIONS_CACHE[key]
+    data = None
+    if pos_path.exists():
+        try:
+            data = json.loads(pos_path.read_text(encoding="utf-8"))
+        except Exception:
+            data = None
+    _POSITIONS_CACHE[key] = data
+    return data
+
+
+def chip_base_from_positions(positions_data, width, height, show_border=True):
+    """mapviewer `_build_chip_base_indices_from_positions` 포팅 — **완전히 결정적**.
+    (H,W) uint8: BG_IDX=배경, 0=칩 내부, BORDER_IDX=칩 경계(1px 직사각형, show_border 일 때).
+    positions_data 가 chips/rect 를 못 주면 None (호출자가 픽셀 폴백으로 넘어간다)."""
+    chips = positions_data.get("chips") if isinstance(positions_data, dict) else None
+    if not isinstance(chips, list) or not chips:
+        return None
+    coord = positions_data.get("coord", {}) or {}
+    canvas = coord.get("canvas", {}) if isinstance(coord, dict) else {}
+    canvas_w = int(canvas.get("width", width)) if isinstance(canvas, dict) else width
+    canvas_h = int(canvas.get("height", height)) if isinstance(canvas, dict) else height
+    if canvas_w <= 0:
+        canvas_w = width
+    if canvas_h <= 0:
+        canvas_h = height
+    scale_x = width / float(canvas_w)
+    scale_y = height / float(canvas_h)
+
+    base = np.full((height, width), BG_IDX, dtype=np.uint8)
+    for chip in chips:
+        if not isinstance(chip, dict):
+            continue
+        rect = chip.get("rect", {})
+        x0_raw, y0_raw = rect.get("x0"), rect.get("y0")
+        x1_raw, y1_raw = rect.get("x1"), rect.get("y1")
+        if None in (x0_raw, y0_raw, x1_raw, y1_raw):
+            continue
+        try:
+            x0, y0, x1, y1 = float(x0_raw), float(y0_raw), float(x1_raw), float(y1_raw)
+        except (TypeError, ValueError):
+            continue
+        if x1 < x0:
+            x0, x1 = x1, x0
+        if y1 < y0:
+            y0, y1 = y1, y0
+        sx0 = max(0, min(width, int(x0 * scale_x)))
+        sy0 = max(0, min(height, int(y0 * scale_y)))
+        sx1 = max(0, min(width, int(x1 * scale_x + 0.9999)))
+        sy1 = max(0, min(height, int(y1 * scale_y + 0.9999)))
+        if sx1 <= sx0 or sy1 <= sy0:
+            continue
+        base[sy0:sy1, sx0:sx1] = 0
+        if show_border:
+            base[sy0, sx0:sx1] = BORDER_IDX
+            base[sy1 - 1, sx0:sx1] = BORDER_IDX
+            base[sy0:sy1, sx0] = BORDER_IDX
+            base[sy0:sy1, sx1 - 1] = BORDER_IDX
+    return base
+
+
+def _grid_shape(positions_data) -> tuple | None:
+    """격자를 실제로 결정하는 필드만 뽑는다. ★ `device` 는 쓰지 않는다 — 우리
+    schema 의 device 는 mapviewer 와 이름만 같지 뜻이 다르다(제품/칩종류가 아니라
+    그 웨이퍼의 bin 판정 라벨, NORMAL/PWQ/ENGINEER 등 — 실측: 같은 격자에서도
+    장마다 다 다르다). 진짜 격자를 결정하는 건 canvas 크기 + tile 수다."""
+    coord = positions_data.get("coord", {}) if isinstance(positions_data, dict) else {}
+    if not isinstance(coord, dict):
+        return None
+    canvas = coord.get("canvas", {})
+    if not isinstance(canvas, dict):
+        return None
+    return (canvas.get("width"), canvas.get("height"),
+            coord.get("tiles_w_rot"), coord.get("tiles_h_rot"))
+
+
+def geometric_border(paths, width, height):
+    """그룹 전체에 쓸 **결정적** border mask 하나를 구한다.
+
+    ★ mapviewer 처럼 group 의 이미지 중 positions.json 이 있는 **첫 장**의 격자를
+      기준으로 삼는다 — 여러 장의 격자를 섞지 않는다(격자가 다르면 섞을 때 또
+      들쭉날쭉해진다). canvas 크기 + tile 수가 첫 장과 다른 이미지가 섞여 있으면
+      신뢰 못 하는 걸로 보고 None(폴백 신호) 을 돌려준다.
+    """
+    ref_data = None
+    for p in paths:
+        d = load_positions(p)
+        if d:
+            ref_data = d
+            break
+    if ref_data is None:
+        return None
+    ref_shape = _grid_shape(ref_data)
+    if ref_shape and any(v is None for v in ref_shape):
+        ref_shape = None
+    if ref_shape:
+        for p in paths[1:8]:
+            d = load_positions(p)
+            if not d:
+                continue
+            s = _grid_shape(d)
+            if s and s != ref_shape:
+                return None          # 격자가 다르다 -> 픽셀 폴백에 맡긴다
+    base = chip_base_from_positions(ref_data, width, height, show_border=True)
+    if base is None:
+        return None
+    return base == BORDER_IDX
+
+
+def _pixel_vote_border(borders_list) -> np.ndarray:
+    """positions.json 이 없는 클래스용 폴백 — 과반수 표결(예전 union 보다 균일,
+    260728). `borders_list` = 이미지별 (H,W) bool 배열 리스트."""
+    count = np.zeros(borders_list[0].shape, np.int32)
+    for b in borders_list:
+        count += b.astype(np.int32)
+    return count >= (len(borders_list) + 1) // 2
+
+
 # ── numba 가속 (mapviewer 방식) ─────────────────────────────────────────
 # mapviewer(api/composite_map.py) 는 픽셀별 누적을 numba `njit(parallel=True)` 로
 # 컴파일해서 돈다. 우리는 순수 numpy 로 이미지당 10개 넘는 전체배열 연산
@@ -397,11 +549,11 @@ def accumulate_sums(paths, num, den, grades=None, invalid=None):
     8채널 카운트 배열(6400^2 x 8)은 메모리를 너무 먹으므로
     분자합·분모합만 float32 로 바로 쌓는다.
 
-    반환 border 는 **과반수 표결** — 절반 이상의 이미지에서 경계로 찍힌 픽셀만 경계다.
-      ★ union(어느 한 장에라도 경계면 경계) 이었다가 260728 에 바꿨다 — union 은
-        이미지끼리 정렬이 1px 만 어긋나도 그 자리를 전부 경계로 먹여서 그룹마다
-        경계 두께가 들쭉날쭉해졌다(사용자 리포트). 실측(6장): 3px+ 두께 비율이
-        union 에서 5,145개, 과반수에서 1,078개로 줄었다 — 단일 이미지(1,764개)보다도 낫다.
+    반환 border 는 **positions.json 기하가 1순위** — `geometric_border()` 로 그룹의
+      첫 장 chip rect 좌표에서 결정적 1px 직사각형을 그린다(mapviewer 방식,
+      완전히 균일). positions.json 이 없는 클래스는 **과반수 표결**로 폴백한다
+      (절반 이상의 이미지에서 경계로 찍힌 픽셀만 경계 — 예전 union 보다 균일하지만
+      완전히 균일하진 않다. 260728: union → 과반수 → **기하 1순위**로 두 번 바뀜).
     반환 cnt 는 **픽셀별 유효 장수**. 고정 n 으로 나누면 안 된다:
       어떤 픽셀이 24장 중 3장에서 bin 번호 text 에 가려지면 그 3장 몫이 빠진 채
       24 로 나뉘어 **더 옅은 유령 글자**가 남는다. 경계 위치가 장마다 다른 것도 같다.
@@ -418,7 +570,7 @@ def accumulate_sums(paths, num, den, grades=None, invalid=None):
     num32 = num.astype(np.float32)
     den32 = den.astype(np.float32)
 
-    num_sum = den_sum = cnt = has_grade = border_count = text = None
+    num_sum = den_sum = cnt = has_grade = border_count = text = geo_border = None
     n = 0
     for a in _decode_indices(paths):
         if num_sum is None:
@@ -428,6 +580,11 @@ def accumulate_sums(paths, num, den, grades=None, invalid=None):
             has_grade = np.zeros(a.shape, bool)
             border_count = np.zeros(a.shape, np.int32)
             text = np.zeros(a.shape, bool)
+            # a.shape = (H, W) — geometric_border 는 (width, height) 순서.
+            geo_border = geometric_border(paths, a.shape[1], a.shape[0])
+            if geo_border is None:
+                print(f"  [border] positions.json 없음/불일치 -> 과반수 표결 폴백 "
+                      f"({Path(paths[0]).parent.name})", flush=True)
 
         if use_nb:
             inv = _nb_fill_invalid_chips((a == INVALID_IDX) | (a == TRANSPARENT_IDX))
@@ -464,7 +621,10 @@ def accumulate_sums(paths, num, den, grades=None, invalid=None):
         border_count += b.astype(np.int32)
         text |= a == TEXT_IDX
         n += 1
-    border = None if border_count is None else (border_count >= (n + 1) // 2)
+    if geo_border is not None:
+        border = geo_border
+    else:
+        border = None if border_count is None else (border_count >= (n + 1) // 2)
     return num_sum, den_sum, cnt, has_grade, border, text, n
 
 
