@@ -114,8 +114,26 @@ class Cluster:
     MCS = env("SITE_MCS", 0)
     MS = env("SITE_MS", 0)
 
+    # HDBSCAN cluster_selection_method.
+    #   leaf = 잎 노드를 그대로 클러스터로 (잘게 나뉨, 우리 운영점)
+    #   eom  = excess-of-mass, 큰 덩어리를 선호 (병합 경향)
     METHOD = env("SITE_METHOD", "leaf")        # leaf | eom
+    # cluster_selection_epsilon. 이 거리 아래로 붙은 클러스터는 합친다. 0 이면 순수 HDBSCAN.
     EPS = env("SITE_EPS", 0.06)
+    # 거리 척도. 임베딩이 L2 정규화돼 있어 euclidean 이 cosine 과 단조 동치다.
+    METRIC = env("SITE_METRIC", "euclidean")
+
+    # ── group_stability (bootstrap co-assignment) ─────────────────────────
+    # ★ 기본값은 `_grouping_deliverable.py` 원본과 같다. 바꾸면 stability 숫자가
+    #   통째로 달라져 **과거 기록과 비교가 깨진다.** 재현성이 필요 없을 때만 만져라.
+    #   stability >= 0.75 가 무라벨 채택 게이트라 이 값들이 판정을 직접 움직인다.
+    STABILITY_NBOOT = env("SITE_STAB_NBOOT", 5)      # 부분표본 반복 횟수
+    STABILITY_FRAC = env("SITE_STAB_FRAC", 0.8)      # 매 반복에 쓰는 비율
+    STABILITY_SEED = env("SITE_STAB_SEED", 42)       # 고정 seed (재현성)
+
+    # 과병합 경고 임계 — 한 그룹이 자기 파티션의 이 비율 이상이면 review 표시.
+    # ★ 전체 n 이 아니라 **자기 파티션** 기준이다 (분리 그룹핑을 켜면 전체 기준은 안 걸린다).
+    OVER_MERGE_FRAC = env("SITE_OVER_MERGE_FRAC", 0.20)
 
     # noise 재배정. ★ 판정은 재배정 **전**(seed_noise)으로 한다 —
     # 재배정 후 noise 는 어떤 임베딩에든 나오는 바닥값이라(랜덤 head 와 0.03pp 차) 판정에 못 쓴다.
@@ -205,12 +223,13 @@ class Composite:
     # 비교용 square_average 도 같이 저장할지
     ALSO_SQUARE_AVERAGE = env("SITE_COMPOSITE_ALSO_AVG", False)
 
-    # step1 에서 composite 를 **전 arm** 에 만들지.
+    # step1 에서 composite 를 **전 arm** 에 만들지. ★ 기본 켬.
     # composite 는 384 캐시를 못 쓰고 원본 6400x6400 을 다시 읽어 arm 당 ~70초를 먹는다
-    # (임베딩은 5초). arm 을 고르는 판정에는 안 쓰이므로 기본은 **이긴 arm 하나만** 만든다
-    # — step1 전체가 486초에서 90초로 줄어든 이유의 대부분이 이것이다.
-    # 전 arm 의 그림을 눈으로 비교하고 싶으면 1 로 둬라 (그만큼 느려진다).
-    ALL_ARMS = env("SITE_COMPOSITE_ALL_ARMS", False)
+    # (임베딩은 5초). 한때 "이긴 arm 하나만" 으로 두어 step1 을 486->90초로 줄였지만,
+    # 그러면 나머지 arm 폴더에는 medoid 만 남고 전 arm 이 k=0 이면 **하나도 안 생긴다**.
+    # 그림이 없으면 결과를 눈으로 확인할 수가 없어서 기본을 켬으로 되돌린다.
+    # 속도가 급하면 0 으로 꺼라 (그때는 이긴 arm 하나만 만든다).
+    ALL_ARMS = env("SITE_COMPOSITE_ALL_ARMS", True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -503,12 +503,20 @@ def cluster_by_partition(z, keys, a, reassign_fn):
 
 def hdbscan_predict(z, mcs, ms, method, eps):
     import hdbscan
-    return hdbscan.HDBSCAN(min_cluster_size=mcs, min_samples=ms, metric="euclidean",
+    return hdbscan.HDBSCAN(min_cluster_size=mcs, min_samples=ms,
+                            metric=os.environ.get("SITE_METRIC", "euclidean"),
                             cluster_selection_method=method,
                             cluster_selection_epsilon=eps).fit_predict(z.astype(np.float64)).astype(int)
 
 
-def per_group_stability(z, base_pred, mcs, ms, method, eps, n_boot=5, frac=0.8, seed=42):
+def per_group_stability(z, base_pred, mcs, ms, method, eps,
+                        n_boot=None, frac=None, seed=None):
+    """★ 기본값 n_boot=5 / frac=0.8 / seed=42 는 `_grouping_deliverable.py` 원본과 같다.
+    바꾸면 stability 숫자가 통째로 달라져 과거 기록과 비교가 깨진다 —
+    `deploy/config.py::Cluster.STABILITY_*` 로만 조정하고 기본값은 건드리지 마라."""
+    n_boot = int(os.environ.get("SITE_STAB_NBOOT", 5)) if n_boot is None else n_boot
+    frac = float(os.environ.get("SITE_STAB_FRAC", 0.8)) if frac is None else frac
+    seed = int(os.environ.get("SITE_STAB_SEED", 42)) if seed is None else seed
     """group 별 co-assignment stability: 부분표본에서 그 그룹 멤버쌍이 같은 cluster 유지 평균 비율."""
     rng = np.random.RandomState(seed)
     n = len(z)
@@ -700,7 +708,7 @@ def main():
         #   순간 모든 그룹이 임계 밑으로 내려가 과병합이 조용히 안 잡힌다
         #   (실측: 분리 전 3건 -> 분리 후 0건).
         _base = n if parts is None else sum(1 for v in parts if v == parts[idx[0]])
-        over = len(idx) >= 0.20 * _base
+        over = len(idx) >= float(os.environ.get("SITE_OVER_MERGE_FRAC", 0.20)) * _base
         gdir = rep_root / f"group_{c:03d}_n{len(idx)}"
         gdir.mkdir(exist_ok=True)
         for rank, i in enumerate(order[:a.reps], 1):

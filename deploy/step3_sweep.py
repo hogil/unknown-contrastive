@@ -177,8 +177,11 @@ def main() -> int:
     ck_list = [str(Path(r1[final_win]["ckpt_dir"]) / r1[final_win]["selected"]["ckpt"])]
     ck_list += [str(Path(g["ckpt_dir"]) / g["selected"]["ckpt"]) for g in r2.get(final_win, [])]
     out = out_root / "final"
+    # ★ 여기는 스윕 셀이 아니라 **최종 산출**이다 -> composite 를 만든다.
+    #   (셀 비교 때는 끄는 게 맞지만 final 까지 끄면 그림이 하나도 안 남는다)
     run(deploy_cmd(Config.BACKBONE, pool, out, mcs, ms, ck_list,
-                   Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, True, Config.PARTITION_BY),
+                   Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, False,
+                   Config.PARTITION_BY),
         log_path=out_root / "final.log")
     final_sum = read_summary(out)
 
