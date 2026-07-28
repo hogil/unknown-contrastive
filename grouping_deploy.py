@@ -501,6 +501,33 @@ def cluster_by_partition(z, keys, a, reassign_fn):
     return seed, final, rows, info
 
 
+def stability_by_partition(z, seed_pred, parts, mcs, ms, method, eps):
+    """분리 그룹핑을 켰으면 stability 도 **파티션 안에서** 잰다.
+
+    ★ 안 그러면 측정 대상이 달라진다. 그룹은 파티션별로 만들어졌는데 bootstrap 은
+      전체를 한 덩어리로 다시 클러스터링하면, 파티션이 섞이면서 같은 그룹 멤버가
+      다른 클러스터로 흩어져 stability 가 **인위적으로 낮게** 나온다.
+      stability >= 0.75 가 채택 게이트라 판정이 실제로 뒤집힌다.
+    ★ 속도도 문제다. HDBSCAN 은 n 에 초선형이라 전체 1회보다 파티션별 여러 번이 싸다.
+    """
+    import time
+    if parts is None:
+        t = time.time()
+        out = per_group_stability(z, seed_pred, mcs, ms, method, eps)
+        print(f"[stability] bootstrap 완료 ({time.time() - t:.1f}s)", flush=True)
+        return out
+    uniq = sorted(set(parts))
+    stab: dict = {}
+    for k in uniq:
+        idx = np.array([i for i, v in enumerate(parts) if v == k])
+        t = time.time()
+        sub = per_group_stability(z[idx], seed_pred[idx], mcs, ms, method, eps)
+        stab.update(sub)                      # cluster id 는 이미 파티션끼리 안 겹친다
+        print(f"[stability] {k}  n={len(idx):,}  그룹 {len(sub)}개  "
+              f"({time.time() - t:.1f}s)", flush=True)
+    return stab
+
+
 def hdbscan_predict(z, mcs, ms, method, eps):
     import hdbscan
     return hdbscan.HDBSCAN(min_cluster_size=mcs, min_samples=ms,
@@ -532,14 +559,15 @@ def per_group_stability(z, base_pred, mcs, ms, method, eps,
             if len(mem) < 2:
                 continue
             lb = np.array([p2[pos[g]] for g in mem])
-            same = 0
-            tot = 0
-            for i in range(len(mem)):
-                for j in range(i + 1, len(mem)):
-                    tot += 1
-                    if lb[i] == lb[j] and lb[i] != -1:
-                        same += 1
+            # ★ 같은 쌍 비율을 **닫힌 식**으로 센다. 예전엔 파이썬 이중 루프라
+            #   그룹이 커지면 O(n^2) 로 멈춘 것처럼 보였다 (2,000장 -> 200만 회 x bootstrap 5회).
+            #   같은 라벨끼리만 쌍이 되므로 라벨별 개수 m 에 대해 sum(m*(m-1)/2) 이면 된다.
+            #   noise(-1) 는 "같이 묶였다"로 치지 않으므로 분자에서 뺀다.
+            m = len(lb)
+            tot = m * (m - 1) // 2
             if tot:
+                v, cnt = np.unique(lb[lb != -1], return_counts=True)
+                same = int((cnt * (cnt - 1) // 2).sum())
                 keep[c].append(same / tot)
     return {c: float(np.mean(v)) if v else 0.0 for c, v in keep.items()}
 
@@ -685,7 +713,7 @@ def main():
     # reassign 된 noise 는 HDBSCAN 이 낸 구조가 아니라 후처리 휴리스틱 소속이라 여기 섞으면
     # "구조 안정성"이 아니라 "재배정 휴리스틱 안정성"이 되어 의미가 달라진다
     # (base _grouping_deliverable.py 는 애초 reassign 이 없어 pred==seed_pred 였음 -- 그 의미를 유지).
-    stab = per_group_stability(z, seed_pred, a.mcs, a.ms, a.method, a.eps)
+    stab = stability_by_partition(z, seed_pred, parts, a.mcs, a.ms, a.method, a.eps)
     lab = np.array([l if l is not None else "" for l in labels])
 
     _kind = "frozen" if not a.proj else ("adapted_ens" if len(tags) > 1 else "adapted")

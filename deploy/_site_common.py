@@ -55,11 +55,24 @@ def rel(*parts) -> Path:
     return REPO / p
 
 
+_ENV_OVERRIDE = os.environ.get("SITE_ENV_OVERRIDE", "0").strip().lower() in ("1", "true", "yes", "on")
+_ENV_USED: dict = {}
+
+
 def env(name: str, default):
-    """환경변수 우선, 없으면 default. default 의 타입으로 캐스팅."""
+    """★ **config.py 가 권위다.** 환경변수는 `SITE_ENV_OVERRIDE=1` 일 때만 이긴다.
+
+    예전에는 환경변수가 항상 우선이었다. 그래서 쉘에 한 번 `export SITE_MCS=6` 해두면
+    **config.py 를 고쳐도 조용히 무시됐다** — 왜 안 바뀌는지 알 방법이 없었다.
+    지금은 기본적으로 config 값이 그대로 쓰이고, 환경변수로 덮으려면 명시해야 하며
+    덮은 항목은 show_config() 가 `[env]` 로 표시한다.
+
+    일회성 실험은:  SITE_ENV_OVERRIDE=1 SITE_MCS=6 python deploy/step0_prepare.py
+    """
     v = os.environ.get(name)
-    if v is None or v == "":
+    if v is None or v == "" or not _ENV_OVERRIDE:
         return default
+    _ENV_USED[name] = v
     if isinstance(default, bool):
         return v.strip().lower() in ("1", "true", "yes", "on")
     if isinstance(default, int):
@@ -129,9 +142,16 @@ def run_root(base, create: bool = False, tag: str = "") -> Path:
 def show_config(C) -> dict:
     """Config 클래스의 대문자 속성을 표로 출력하고 dict 로 반환 (재현성 기록용)."""
     d = {k: getattr(C, k) for k in dir(C) if k.isupper() and not k.startswith("_")}
-    print("[config] (환경변수 > default)")
+    src = "config.py  (SITE_ENV_OVERRIDE=1 이면 환경변수가 이긴다)"
+    if _ENV_OVERRIDE:
+        src = f"★ SITE_ENV_OVERRIDE=1 — 환경변수 {len(_ENV_USED)}개가 config 를 덮었다"
+    print(f"[config] 출처: {src}")
     for k in sorted(d):
         print(f"    {k:<22} = {d[k]}")
+    if _ENV_USED:
+        print("  [env] config 를 덮은 항목:")
+        for k in sorted(_ENV_USED):
+            print(f"    {k:<22} = {_ENV_USED[k]}")
     print(flush=True)
     return d
 
