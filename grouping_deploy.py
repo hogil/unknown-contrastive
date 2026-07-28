@@ -654,7 +654,6 @@ def main():
         # (사다리 (1) 에서 frozen / TAPT-backbone-only arm 을 재려면 필수)
         print("[model] proj 없음 -> frozen backbone (GAP -> L2)", flush=True)
         tags.append("frozen")
-        import time
         _e, _t0, _n = [], time.time(), len(paths)
         _every = max(1, (_n // a.batch) // 20)
         _reset_timers()
