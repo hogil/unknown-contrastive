@@ -124,6 +124,12 @@ class Cluster:
     # 거리 척도. 임베딩이 L2 정규화돼 있어 euclidean 이 cosine 과 단조 동치다.
     METRIC = env("SITE_METRIC", "euclidean")
 
+    # ★ GPU HDBSCAN(RAPIDS cuML) — opt-in, 기본 off. Windows 개발 머신은 cuML 자체가
+    #   import 안 됨(RAPIDS 는 Linux/WSL2 전용). 사내 서버는 Ubuntu24 라 거기선 동작할
+    #   수 있지만, CPU `hdbscan` 패키지와 클러스터 결과가 동일한지 아직 검증 안 했다.
+    #   켜기 전에 같은 pool·다이얼로 CPU 결과(groups.csv)와 비교부터 하고 켜라.
+    HDBSCAN_GPU = env("SITE_HDBSCAN_GPU", False)
+
     # ★ 260728: bootstrap group_stability(HDBSCAN 을 5회 더 돌려 재는 안정성 지표)는
     #   사용자 지시로 제거했다 — "사내는 답이 없다, 결과를 빨리 눈으로 보고 값을
     #   튜닝해가야 한다." HDBSCAN 은 이제 1회만 돈다. 무라벨 판단은 seed_noise/k/coherence.

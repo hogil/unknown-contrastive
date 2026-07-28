@@ -56,6 +56,34 @@
       "quantile90": "#FF1B1B",
       "quantile100": "#FF0000",
       "background": "#CCCCCC"
+    },
+    "fast_red_060": {
+      "quantile0": "#FFFFFF",
+      "quantile10": "#FFBFBF",
+      "quantile20": "#FF9E9E",
+      "quantile30": "#FF8383",
+      "quantile40": "#FF6C6C",
+      "quantile50": "#FF5757",
+      "quantile60": "#FF4343",
+      "quantile70": "#FF3131",
+      "quantile80": "#FF2020",
+      "quantile90": "#FF1010",
+      "quantile100": "#FF0000",
+      "background": "#CCCCCC"
+    },
+    "fast_red_040": {
+      "quantile0": "#FFFFFF",
+      "quantile10": "#FF9999",
+      "quantile20": "#FF7979",
+      "quantile30": "#FF6161",
+      "quantile40": "#FF4E4E",
+      "quantile50": "#FF3E3E",
+      "quantile60": "#FF2F2F",
+      "quantile70": "#FF2222",
+      "quantile80": "#FF1616",
+      "quantile90": "#FF0B0B",
+      "quantile100": "#FF0000",
+      "background": "#CCCCCC"
     }
   }
 }

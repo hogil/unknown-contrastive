@@ -501,9 +501,27 @@ def cluster_by_partition(z, keys, a, reassign_fn):
 
 
 def hdbscan_predict(z, mcs, ms, method, eps):
+    """HDBSCAN 1회 fit. ★ GPU(cuML) 는 opt-in — 아직 CPU `hdbscan` 패키지와
+    클러스터 결과가 동일한지 검증 못 했다(cuML 은 Windows 개발 머신에 import 자체가
+    안 됨 — RAPIDS 는 Linux/WSL2 전용, 실제 사내 서버는 Ubuntu24 라 거기선 된다).
+    검증 전 기본은 CPU 유지, `SITE_HDBSCAN_GPU=1` 로만 켜진다. 켜면 매번 어느
+    backend 를 썼는지 로그로 남긴다 — 조용히 바뀌면 안 된다."""
+    metric = os.environ.get("SITE_METRIC", "euclidean")
+    use_gpu = os.environ.get("SITE_HDBSCAN_GPU", "0").strip().lower() in ("1", "true", "yes", "on")
+    if use_gpu:
+        try:
+            import cuml
+            zc = np.ascontiguousarray(z.astype(np.float32))
+            pred = cuml.cluster.HDBSCAN(min_cluster_size=mcs, min_samples=ms, metric=metric,
+                                        cluster_selection_method=method,
+                                        cluster_selection_epsilon=eps).fit_predict(zc)
+            print(f"  [hdbscan] backend=cuML(GPU) n={len(z)}", flush=True)
+            return np.asarray(pred).astype(int)
+        except Exception as e:
+            print(f"  [warn] SITE_HDBSCAN_GPU=1 이지만 cuML 사용 불가({type(e).__name__}: {e}) "
+                  f"-> CPU 로 폴백", flush=True)
     import hdbscan
-    return hdbscan.HDBSCAN(min_cluster_size=mcs, min_samples=ms,
-                            metric=os.environ.get("SITE_METRIC", "euclidean"),
+    return hdbscan.HDBSCAN(min_cluster_size=mcs, min_samples=ms, metric=metric,
                             cluster_selection_method=method,
                             cluster_selection_epsilon=eps).fit_predict(z.astype(np.float64)).astype(int)
 

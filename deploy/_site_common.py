@@ -286,6 +286,7 @@ def cluster_env() -> dict:
         "UC_PALETTE_MODE": str(C.PALETTE_MODE),
         "SITE_METRIC": str(C.METRIC),
         "SITE_OVER_MERGE_FRAC": str(C.OVER_MERGE_FRAC),
+        "SITE_HDBSCAN_GPU": "1" if C.HDBSCAN_GPU else "0",
     }
 
 

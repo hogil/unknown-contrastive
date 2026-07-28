@@ -137,6 +137,24 @@ def light_low_stops(strength: float = 0.5) -> list[str]:
     return out
 
 
+def fast_red_stops(gamma: float = 0.6) -> list[str]:
+    """light_low 의 반대 — 아래~중간 quantile 이 **더 빨리 빨개지게** 앞당긴다.
+
+    t=step/100 에 감마를 먹여 t' = t**gamma (gamma<1 이면 t' 가 t 보다 빨리 큰
+    값이 된다) 로 위치를 당긴 뒤 기본색 공식(gb=255*(1-t'))을 적용한다.
+    quantile0(#FFFFFF, t=0)과 quantile100(#FF0000, t=1)은 그대로 고정 —
+    양 끝은 안 건드리고 **가운데만** 앞당긴다.
+    gamma 1.0 = 기본색과 동일. 작을수록 더 빨리 빨개진다.
+    """
+    out = []
+    for s in QUANTILE_STEPS:
+        t = s / 100
+        t2 = t ** gamma if t > 0 else 0.0
+        gb = int(round(255 * (1 - t2)))
+        out.append(f"#FF{gb:02X}{gb:02X}")
+    return out
+
+
 def _read_stops(path, scheme: str, strict: bool):
     """한 파일에서 한 스킴을 읽는다. 못 읽으면 None."""
     import json
