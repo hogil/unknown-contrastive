@@ -50,6 +50,7 @@ import json
 import re
 import shutil
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -761,8 +762,15 @@ def main():
             except Exception:
                 sys.path.append(str(REPO_ROOT / "deploy"))
                 from composite import write_group_composites
+            # ★ 중심에 가까운 순 상한. order 는 이미 중심거리 정렬돼 있다.
+            #   멤버 전부 쓰면 2,000장 그룹 하나에 22.7분 (장당 0.68초 x 원본 재디코드).
+            _mx = int(os.environ.get("SITE_COMPOSITE_MAX_MEMBERS", 10))
+            _use = order if _mx <= 0 else order[:_mx]
+            _t = time.time()
             try:
-                write_group_composites([paths[i] for i in idx], comp_root, prefix=f"{gtag}_")
+                write_group_composites([paths[i] for i in _use], comp_root, prefix=f"{gtag}_")
+                print(f"  [composite] {gtag}  멤버 {len(idx)} 중 {len(_use)}장 사용  "
+                      f"({time.time() - _t:.1f}s)", flush=True)
             except Exception as e:
                 print(f"  [warn] group {c} composite 실패: {e}", flush=True)
         # medoid = 그룹 중심에 가장 가까운 **실제 원본** (heatmap 과 대조용)

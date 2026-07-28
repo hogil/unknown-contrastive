@@ -234,6 +234,13 @@ class Composite:
     # (작을수록 드문 결함이 드러나지만 바닥 노이즈도 같이 올라온다).
     WT0 = env("SITE_COMPOSITE_WT0", 1.0)
 
+    # composite 에 쓸 **최대 멤버 수** (그룹 중심에 가까운 순).
+    # composite 는 384 캐시를 못 쓰고 원본 6400x6400 을 멤버 수만큼 다시 디코드한다
+    # (장당 0.68초). 상한이 없으면 2,000장 그룹 하나에 22.7분이 걸린다.
+    # 중심 10장만 써도 그림이 거의 같다 — 평균이라 멤버가 늘어도 수렴한다.
+    # 0 이면 전부 사용 (느리다).
+    MAX_MEMBERS = env("SITE_COMPOSITE_MAX_MEMBERS", 10)
+
     # 비교용 square_average 도 같이 저장할지
     ALSO_SQUARE_AVERAGE = env("SITE_COMPOSITE_ALSO_AVG", False)
 

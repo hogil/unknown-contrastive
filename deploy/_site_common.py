@@ -264,10 +264,11 @@ def cluster_env() -> dict:
     config 를 여기서 import 하면 순환이라(config 가 _site_common 을 import) 지연 import 한다.
     """
     try:
-        from config import Cluster as C
+        from config import Cluster as C, Composite as K
     except Exception:
         return {}
     return {
+        "SITE_COMPOSITE_MAX_MEMBERS": str(K.MAX_MEMBERS),
         "UC_PALETTE_MODE": str(C.PALETTE_MODE),
         "SITE_METRIC": str(C.METRIC),
         "SITE_STAB_NBOOT": str(C.STABILITY_NBOOT),
