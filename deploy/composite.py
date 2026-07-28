@@ -880,12 +880,18 @@ def render_composite_indexed(value_map, mask, border, base_path, text=None,
 
 
 def save_palette_png(index_array, palette_list, path):
-    """mapviewer `_save_palette_png` 와 동일. compress_level 은 환경변수로."""
+    """mapviewer `_save_palette_png` 와 동일. compress_level 은 환경변수로.
+
+    ★ 기본 3(260728, 실측). 6(PIL 관행값)과 파일 크기 차이는 잡음 수준인데
+      (17.9MB vs 17.8MB) 6이 15% 더 느리다(0.477s vs 0.407s, 10장 그룹 기준).
+      9는 더 나쁘다(1.488s, 크기도 안 준다 — 이 그래디언트 콘텐츠엔 안 맞는다).
+      PNG 압축 레벨은 무손실이라 픽셀엔 영향 없다, 속도/파일크기만 바뀐다.
+    """
     import os
     im = Image.fromarray(np.asarray(index_array, np.uint8), mode="P")
     im.putpalette(list(palette_list)[:768])
     im.save(str(path), format="PNG", optimize=False,
-            compress_level=int(os.environ.get("SITE_PNG_COMPRESS", "6")))
+            compress_level=int(os.environ.get("SITE_PNG_COMPRESS", "3")))
     return path
 
 
