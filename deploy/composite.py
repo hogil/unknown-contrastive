@@ -284,9 +284,14 @@ if _HAS_NUMBA:
 
     @njit(parallel=True, cache=True)
     def _nb_accumulate_one(a, inv, num_lut, den_lut, keep_lut,
-                           num_sum, den_sum, cnt, has_grade, border, text):
+                           num_sum, den_sum, cnt, has_grade, border_count, text):
         """한 이미지의 누적을 **단일 컴파일 패스**로. numpy 판(accumulate_sums 의
-        grade0 분기)과 값이 완전히 같아야 한다 — 검증: 랜덤/실데이터 byte-exact 일치."""
+        grade0 분기)과 값이 완전히 같아야 한다 — 검증: 랜덤/실데이터 byte-exact 일치.
+
+        ★ border 는 union(어느 한 장에라도 경계면 경계) 이 아니라 **표수** 를 쌓는다 —
+          호출자가 다수결로 최종 경계를 정한다 (union 은 이미지 간 정렬이 1px 만
+          어긋나도 그 자리를 전부 경계로 먹여서 두께가 들쭉날쭉해진다, 실측).
+        """
         H, W = a.shape
         for y in prange(H):
             for x in range(W):
@@ -307,7 +312,7 @@ if _HAS_NUMBA:
                     cnt[y, x] += np.float32(1.0)
                     has_grade[y, x] = True
                 if (v >= BORDER_LO) and (v <= BORDER_HI) and not is_inv:
-                    border[y, x] = True
+                    border_count[y, x] += np.int32(1)
                 if v == TEXT_IDX:
                     text[y, x] = True
 
@@ -392,7 +397,11 @@ def accumulate_sums(paths, num, den, grades=None, invalid=None):
     8채널 카운트 배열(6400^2 x 8)은 메모리를 너무 먹으므로
     분자합·분모합만 float32 로 바로 쌓는다.
 
-    반환 border 는 **전체 이미지 union** — 어느 한 장에라도 경계면 경계다.
+    반환 border 는 **과반수 표결** — 절반 이상의 이미지에서 경계로 찍힌 픽셀만 경계다.
+      ★ union(어느 한 장에라도 경계면 경계) 이었다가 260728 에 바꿨다 — union 은
+        이미지끼리 정렬이 1px 만 어긋나도 그 자리를 전부 경계로 먹여서 그룹마다
+        경계 두께가 들쭉날쭉해졌다(사용자 리포트). 실측(6장): 3px+ 두께 비율이
+        union 에서 5,145개, 과반수에서 1,078개로 줄었다 — 단일 이미지(1,764개)보다도 낫다.
     반환 cnt 는 **픽셀별 유효 장수**. 고정 n 으로 나누면 안 된다:
       어떤 픽셀이 24장 중 3장에서 bin 번호 text 에 가려지면 그 3장 몫이 빠진 채
       24 로 나뉘어 **더 옅은 유령 글자**가 남는다. 경계 위치가 장마다 다른 것도 같다.
@@ -409,7 +418,7 @@ def accumulate_sums(paths, num, den, grades=None, invalid=None):
     num32 = num.astype(np.float32)
     den32 = den.astype(np.float32)
 
-    num_sum = den_sum = cnt = has_grade = border = text = None
+    num_sum = den_sum = cnt = has_grade = border_count = text = None
     n = 0
     for a in _decode_indices(paths):
         if num_sum is None:
@@ -417,13 +426,13 @@ def accumulate_sums(paths, num, den, grades=None, invalid=None):
             den_sum = np.zeros(a.shape, np.float32)
             cnt = np.zeros(a.shape, np.float32)
             has_grade = np.zeros(a.shape, bool)
-            border = np.zeros(a.shape, bool)
+            border_count = np.zeros(a.shape, np.int32)
             text = np.zeros(a.shape, bool)
 
         if use_nb:
             inv = _nb_fill_invalid_chips((a == INVALID_IDX) | (a == TRANSPARENT_IDX))
             _nb_accumulate_one(a, inv, num32, den32, keep_arr,
-                               num_sum, den_sum, cnt, has_grade, border, text)
+                               num_sum, den_sum, cnt, has_grade, border_count, text)
             n += 1
             continue
 
@@ -452,9 +461,10 @@ def accumulate_sums(paths, num, den, grades=None, invalid=None):
         b = (a >= BORDER_LO) & (a <= BORDER_HI)
         if invalid == "grade0":
             b &= ~inv          # invalid 테두리를 경계로 잡으면 grade0 처리가 무의미해진다
-        border |= b
+        border_count += b.astype(np.int32)
         text |= a == TEXT_IDX
         n += 1
+    border = None if border_count is None else (border_count >= (n + 1) // 2)
     return num_sum, den_sum, cnt, has_grade, border, text, n
 
 
