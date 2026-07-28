@@ -63,7 +63,21 @@ TEXT_IDX = 9           # chip 안 bin 번호. ★ composite 에 절대 남으면
 BORDER_LO = 10         # 10~30 = chip 경계 대역 (회색격자 + 컬러마커 전부)
 BORDER_HI = 30
 BORDER_IDX = 10        # 경계 대표색. 모든 경계는 이 색 하나로 통일한다
-TRANSPARENT_IDX = 31   # 투명 — 원본색 유지
+TRANSPARENT_IDX = 31   # invalid 칩 **내부** (PNG 투명 인덱스로 그려진다)
+INVALID_IDX = 11       # invalid 칩 **테두리** (주황)
+# 실측 근거 (Center_invalid_main 한 장):
+#   idx31  733,112px / 43 덩어리, 최대 36,946px ≈ 칩 하나(200x200)  -> 칩 내부
+#   idx11   31,680px / 9 덩어리, 둘레의 49.7% 가 idx31 과 접함        -> 그 테두리
+#   위치 y[1202,4597] x[1802,4197] = 중앙  -> 클래스명(Center_invalid_main)과 일치
+#
+# invalid 처리 방식 (deploy/config.py::Composite.INVALID):
+#   "grade0"  ★ 채택 — invalid 를 **grade 0 으로 카운트**한다. mapviewer 원본의
+#             `idx >= 14 -> grade 0` 과 같은 취지다. invalid 는 "측정 안 된 정상"이므로
+#             그 자리 평균을 낮춰 **가장 옅은 색**으로 나타난다.
+#   "border"  테두리는 경계 회색, 내부는 다른 웨이퍼 grade 로 칠해진다.
+#             ← 예전 동작. invalid 클래스에서 결함 정보가 **하나도 안 남는다**(실측):
+#               idx11 100% 가 border 로, idx31 100% 가 남의 heat 로 흡수됐다.
+#   "exclude" 아예 카운트에서 뺀다(기권). 그 자리는 나머지 장으로만 평균낸다.
 
 # 원본과 동일한 상수 (api/composite_map.py:662-663)
 SQ_WEIGHTS = np.array([0, 1, 4, 9, 16, 25, 36, 49], dtype=np.float32)
@@ -234,7 +248,32 @@ def _decode_indices(paths, workers: int = 0, prefetch: int = 4):
             yield a
 
 
-def accumulate_sums(paths, num, den, grades=None):
+def _fill_invalid_chips(inv):
+    """invalid 칩 영역을 확정한다 — 테두리·내부의 구멍(bin 번호, 남은 grade 픽셀)을 메운다.
+
+    6400x6400 전체에 fill_holes 를 돌리면 비싸므로 invalid 의 bounding box 안에서만 한다.
+    scipy 가 없으면 원본을 그대로 돌려준다(글자가 조금 드러날 뿐 결과가 깨지진 않는다).
+    """
+    if not inv.any():
+        return inv
+    try:
+        from scipy import ndimage
+    except Exception:
+        return inv
+    ys, xs = np.where(inv.any(1))[0], np.where(inv.any(0))[0]
+    y0, y1, x0, x1 = ys[0], ys[-1] + 1, xs[0], xs[-1] + 1
+    out = inv.copy()
+    out[y0:y1, x0:x1] = ndimage.binary_fill_holes(inv[y0:y1, x0:x1])
+    return out
+
+
+def invalid_mode() -> str:
+    """config 의 Composite.INVALID. 못 읽으면 grade0."""
+    c = _cfg()
+    return str(getattr(c, "INVALID", "grade0") if c else "grade0").lower()
+
+
+def accumulate_sums(paths, num, den, grades=None, invalid=None):
     """원본 해상도 그대로 누적. 리사이즈 없음.
 
     8채널 카운트 배열(6400^2 x 8)은 메모리를 너무 먹으므로
@@ -261,23 +300,43 @@ def accumulate_sums(paths, num, den, grades=None):
             border = np.zeros(a.shape, bool)
             text = np.zeros(a.shape, bool)
         low = a < GRADE_MAX
-        g = np.where(low, a, 0)
-        valid = low & keep_arr[g]
+        inv = (a == INVALID_IDX) | (a == TRANSPARENT_IDX)
+        if invalid == "grade0":
+            # ★ **invalid 칩 안의 모든 픽셀을 grade 0 으로** 센다.
+            #   테두리(11)·내부(31) 만으로는 부족하다. 구멍을 메운 칩 영역 안에는
+            #   실측으로 bin 번호 text(9), 경계회색(10), 그리고 **grade 1·2 픽셀까지**
+            #   들어 있다 (6장에 grade 196,020px 중 1·2 가 71,215px).
+            #   - text 를 빼면 그 픽셀만 이 웨이퍼가 기권해 남의 grade 로 평균이 나서
+            #     invalid 자리보다 20% 높아지고 **글자가 다시 드러난다**(0.354 vs 0.294).
+            #   - grade 1·2 를 제 값으로 세면 "invalid = 측정 안 됨" 이라는 전제가 깨진다.
+            #   그래서 칩 영역을 hole-fill 로 확정하고 그 안은 전부 g=0 으로 강제한다.
+            inv = _fill_invalid_chips(inv)
+            take = low | inv
+            g = np.where(low & ~inv, a, 0)      # 칩 안은 무조건 grade 0
+        else:
+            take = low
+            g = np.where(low, a, 0)
+        valid = take & keep_arr[g]
         num_sum += np.where(valid, num[g], 0).astype(np.float32)
         den_sum += np.where(valid, den[g], 0).astype(np.float32)
         cnt += valid
-        has_grade |= low
-        border |= (a >= BORDER_LO) & (a <= BORDER_HI)
+        has_grade |= take
+        b = (a >= BORDER_LO) & (a <= BORDER_HI)
+        if invalid == "grade0":
+            b &= ~inv          # invalid 테두리를 경계로 잡으면 grade0 처리가 무의미해진다
+        border |= b
         text |= a == TEXT_IDX
         n += 1
     return num_sum, den_sum, cnt, has_grade, border, text, n
 
 
-def composite_full(paths, num=None, den=None, grades=None):
+def composite_full(paths, num=None, den=None, grades=None, invalid=None):
     """원본 해상도 composite. (average, weighted, mask, weighted_mask, border, text, n)"""
     num = SQ_WEIGHTS if num is None else np.asarray(num, np.float32)
     den = WT_FACTORS if den is None else np.asarray(den, np.float32)
-    ns, ds, cnt, has_grade, border, text, n = accumulate_sums(paths, num, den, grades)
+    invalid = invalid_mode() if invalid is None else invalid
+    ns, ds, cnt, has_grade, border, text, n = accumulate_sums(
+        paths, num, den, grades, invalid)
     if ns is None:
         raise ValueError("이미지가 없다")
     # grade 픽셀만. 경계는 어느 장에서든 경계면 제외.

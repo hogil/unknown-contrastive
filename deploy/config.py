@@ -188,6 +188,15 @@ class Composite:
     #                          분모 전부 1 (WT0 만 손잡이)
     #       -> grade7/grade2 증폭이 12.25배에서 3.5배로 완화된다.
     #   ⚠ uc 분자에 WT_FACTORS 분모를 쓰면 2g/g = 2.000 으로 grade 2 이상이 전부 같아진다.
+    # invalid 칩 처리. 테두리 idx11 + 내부 idx31.
+    #   grade0  ★ invalid 를 grade 0 으로 카운트 (mapviewer 의 `>=14 -> grade0` 과 같은 취지).
+    #           "측정 안 된 정상"이므로 그 자리가 가장 옅게 나온다.
+    #   border  테두리=경계회색 / 내부=남의 웨이퍼 heat.  ← 예전 동작.
+    #           invalid 클래스에서 결함 정보가 하나도 안 남는다 (실측: idx11 100% border,
+    #           idx31 100% 남의 heat 로 흡수).
+    #   exclude 카운트에서 제외(기권). 나머지 장으로만 평균.
+    INVALID = env("SITE_COMPOSITE_INVALID", "grade0")
+
     METHOD = env("SITE_COMPOSITE_METHOD", "uc")      # uc | sq
     # 정상(grade0) 픽셀이 분모를 얼마나 채울지. 1.0 = 한 표, 0.0 = 결함 픽셀만
     # (작을수록 드문 결함이 드러나지만 바닥 노이즈도 같이 올라온다).
