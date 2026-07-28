@@ -139,6 +139,20 @@ def run_root(base, create: bool = False, tag: str = "") -> Path:
     return d
 
 
+def live_dial() -> tuple[int, int, str, float]:
+    """★ 다이얼은 **항상 config.py 에서 그 순간 값을 읽는다.** step0 이 예전에 뭘로
+    돌았든 상관없다 — 절대 얼리지 않는다.
+
+    (예전엔 step0 이 dial 을 step0_result.json 에 저장하고 step1~5 가 그 값을
+    그대로 물려 썼다. config 를 고쳐도 step0 을 다시 안 돌리면 반영이 안 됐고,
+    이게 아무 경고 없이 조용히 무시됐다 — 실측: config MCS=10 으로 고치고
+    step1 만 다시 돌렸더니 로그에는 여전히 --mcs 20 이 찍혔다.
+    사용자 지시(260728): "무조건 config에서 가져가게" — 얼리는 설계를 버린다.)
+    """
+    from config import Cluster as C
+    return int(C.MCS), int(C.MS), str(C.METHOD), float(C.EPS)
+
+
 def show_config(C) -> dict:
     """Config 클래스의 대문자 속성을 표로 출력하고 dict 로 반환 (재현성 기록용)."""
     d = {k: getattr(C, k) for k in dir(C) if k.isupper() and not k.startswith("_")}

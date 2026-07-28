@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, make_z0_set, read_summary, rel, run,
-                          save_result, run_root, show_config, show_images)
+                          save_result, run_root, live_dial, show_config, show_images)
 
 
 from config import Cluster, Composite, Paths, Runtime  # noqa: E402
@@ -84,13 +84,14 @@ def main() -> int:
 
     s0 = load_step0(Config.OUT_ROOT)
     pool = s0["manifest"]
-    mcs, ms = s0["dial"]["mcs"], s0["dial"]["ms"]
+    mcs, ms, method, eps = live_dial()             # ★ config 에서 매번 읽는다 (얼리지 않음)
     show_images(s0.get("image_root", ""), pool, getattr(Config, "EXTS", ""))
     # ★ step0 이 만든 디코드 캐시. arm 6개가 각자 다시 디코드하던 걸 없앤다.
     _cache = s0.get("cache_dir", "") if getattr(Config, "CACHE", True) else ""
     if _cache:
         print(f"[cache] {_cache} 재사용 — arm 마다 다시 디코드하지 않는다\n")
-    print(f"[step0] pool={pool}  n={s0['n_images']:,}  dial mcs={mcs} ms={ms}\n")
+    print(f"[pool] {pool}  n={s0['n_images']:,}장   [dial] config 값 그대로 mcs={mcs} ms={ms} "
+          f"method={method} eps={eps}\n")
 
     champ = [p.strip() for p in str(Config.CHAMPION_PROJ).split(",") if p.strip()]
     use_champ = (not Config.SKIP_CHAMPION) and all(rel(p).exists() for p in champ)
