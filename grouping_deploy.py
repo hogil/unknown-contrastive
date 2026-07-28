@@ -191,7 +191,7 @@ def resolve_device(requested: str) -> str:
 def embed_backbone(paths, backbone, device, batch=32, cache=None, what="feat"):
     """raw GAP feature (proj 없이). ★ deploy step 들이 공유하는 **단일 경로**.
 
-    step0(AUTO_DIAL)·step2(채점)·step5(시간축)가 각자 임베딩 루프를 갖고 있었는데
+    step0·step2(채점)·step5(시간축)가 각자 임베딩 루프를 갖고 있었는데
     셋 다 이것들이 빠져 있었다:
       (a) 디코드 캐시 미사용   -> 6400x6400 을 매번 다시 디코드 (GPU 가 굶는다)
       (b) 단일스레드 디코드    -> 코어를 하나만 쓴다
@@ -474,7 +474,7 @@ def cluster_by_partition(z, keys, a, reassign_fn):
         print(f"[partition] ★ 경고: mcs={a.mcs} 에 비해 너무 작은 파티션이 있다 "
               f"-> {', '.join(f'{k}(n={v})' for k, v in small)}", flush=True)
         print(f"[partition]   그룹이 안 만들어져 k=0/noise 100% 가 될 수 있다. "
-              f"SITE_MIN_GROUP_SIZE 를 낮추거나 --partition-by 를 끄라.", flush=True)
+              f"SITE_MCS 를 낮추거나 --partition-by 를 끄라.", flush=True)
     for k in uniq:
         idx = np.array([i for i, v in enumerate(keys) if v == k])
         zk = z[idx]

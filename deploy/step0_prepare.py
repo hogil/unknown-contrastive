@@ -7,9 +7,8 @@
 여기서 정한 다이얼(mcs/ms)을 이후 step1~5 가 전부 물려 쓴다.
 
 ★ 불량 종수(k)는 입력하지 않는다. 모르는 게 전제이고, HDBSCAN 을 쓰는 이유가 k-free 라서다.
-  다이얼은 **"몇 장 이상 뭉쳐야 하나의 그룹으로 볼 것인가"**(MIN_GROUP_SIZE)로 정한다 —
+  다이얼은 **"몇 장 이상 뭉쳐야 하나의 그룹으로 볼 것인가"**(Cluster.MCS)로 정한다 —
   이건 클래스 수가 아니라 **보고 가치가 있는 최소 그룹 크기**라 k 를 몰라도 답할 수 있다.
-  그것도 정하기 싫으면 AUTO_DIAL=1 로 두면 bootstrap 안정성으로 라벨·k 없이 골라준다.
 """
 from __future__ import annotations
 
@@ -19,8 +18,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _site_common import (add_path, REPO, banner, dial_from_min_group, dial_scan_range,  # noqa: E402
-                          die, env, pick_dial_by_stability, rel, save_result,
+from _site_common import (add_path, REPO, banner,  # noqa: E402
+                          die, env, rel, save_result,
                           run_root, show_config, show_images, cache_dir_for)
 
 
@@ -40,52 +39,26 @@ class Config:
     CACHE_DIR = Runtime.CACHE_DIR
     DECODE_WORKERS = Runtime.DECODE_WORKERS
     BATCH = Runtime.BATCH
-    MIN_GROUP_SIZE = Cluster.MIN_GROUP_SIZE
-    AUTO_DIAL = Cluster.AUTO_DIAL
-    MCS_OVERRIDE = Cluster.MCS
-    MS_OVERRIDE = Cluster.MS
+    MCS = Cluster.MCS
+    MS = Cluster.MS
 
 
 def resolve_dial(n: int, pool_path: str):
-    """k 를 쓰지 않고 (mcs, ms) 결정.
-       AUTO_DIAL=0 -> MIN_GROUP_SIZE 를 그대로 min_cluster_size 로 사용
-       AUTO_DIAL=1 -> 그 주변을 스캔해 bootstrap 안정성 최대인 값 선택 (라벨/k 무관)
-       SITE_MCS / SITE_MS 를 주면 그게 최우선."""
-    scan_rows = []
-    mcs, ms = dial_from_min_group(int(Config.MIN_GROUP_SIZE))
-    if Config.AUTO_DIAL:
-        import torch
-        import torch.nn.functional as F
-        add_path(REPO)
-        import grouping_deploy as gd
-        bb_p = rel(Config.BACKBONE)
-        if not bb_p.exists():
-            die(f"AUTO_DIAL=1 이면 backbone 이 필요하다: {bb_p}\n"
-                f"  또는 AUTO_DIAL=0 으로 두고 MIN_GROUP_SIZE 만 정해라.")
-        paths, _ = gd.collect_pool(str(rel(pool_path)))
-        # ★ grouping_deploy 와 **같은 경로**로 임베딩한다 (device 진단 / 캐시 /
-        #   스레드 디코드 / UC_PALETTE_MASK 존중). 직접 루프를 돌리면 셋 다 빠진다.
-        dev = gd.resolve_device(Config.DEVICE)
-        bb = gd.maybe_channels_last(gd.load_backbone(str(bb_p), dev))
-        cache = gd.load_cache_for(cache_dir_for(Config.OUT_BASE, Config.CACHE_DIR)
-                                  if Config.CACHE else "", paths)
-        print(f"[auto-dial] 임베딩 계산 중 ({len(paths):,} 장)...", flush=True)
-        fs = gd.embed_backbone(paths, bb, dev, int(Config.BATCH), cache, "auto-dial")
-        z = F.normalize(fs, dim=1).numpy().astype("float32")
-        scan = dial_scan_range(n, int(Config.MIN_GROUP_SIZE))
-        print(f"[auto-dial] 스캔 mcs in {scan}  (bootstrap 안정성 최대 선택, 라벨/k 미사용)")
-        mcs, ms, scan_rows = pick_dial_by_stability(
-            z, scan, gd.hdbscan_predict, gd.per_group_stability)
-        print(f"  {'mcs':<7}{'ms':<6}{'k':<6}{'noise%':<10}stability")
-        for r in scan_rows:
-            mark = "  <-- 선택" if r["mcs"] == mcs else ""
-            print(f"  {r['mcs']:<7}{r['ms']:<6}{r['k']:<6}{r['noise_pct']:<10}"
-                  f"{r['stability']}{mark}")
-    if int(Config.MCS_OVERRIDE) > 0:
-        mcs = int(Config.MCS_OVERRIDE)
-    if int(Config.MS_OVERRIDE) > 0:
-        ms = int(Config.MS_OVERRIDE)
-    return mcs, ms, scan_rows
+    """다이얼은 config 값 그대로다. ★ k 를 쓰지 않는다.
+
+    `Cluster.MCS` / `Cluster.MS` 를 직접 읽는다 — 중간 유도 규칙 없음.
+    (260728 이전에는 MIN_GROUP_SIZE 에서 mcs 를 유도하고 AUTO_DIAL 로 안정성 스캔을
+     하는 경로가 있었으나, "자동"이 두 뜻으로 쓰여 혼란만 커서 걷어냈다.)
+    """
+    mcs, ms = int(Config.MCS), int(Config.MS)
+    if mcs < 2 or ms < 1:
+        die(f"다이얼이 잘못됐다: mcs={mcs} ms={ms}. "
+            f"SITE_MCS>=2, SITE_MS>=1 이어야 한다.")
+    if ms > mcs:
+        print(f"[dial] ★ 경고: ms({ms}) > mcs({mcs}). 보통 ms 는 mcs 의 1/4 쯤이다.", flush=True)
+    print(f"[dial] mcs={mcs} ms={ms} (config 값 그대로)", flush=True)
+    return mcs, ms, []
+
 
 
 def build_decode_cache(pool_path, out_root) -> str:
@@ -133,19 +106,17 @@ def main() -> int:
             die(f"manifest 에 files 가 없다: {mp}")
         root = Path(man["root"])
         out_root = rel(Config.OUT_ROOT)
-        # ★ 캐시를 다이얼 결정 **전에** 만든다 — AUTO_DIAL 도 임베딩을 하므로
-        #   순서가 반대면 그 임베딩만 캐시 없이 돌아 디코드대기 89% 가 된다(실측).
+        # 캐시를 먼저 만든다 (이후 step 들이 전부 재사용).
         cdir = build_decode_cache(mp, out_root)
-        mcs, ms, scan_rows = resolve_dial(n, str(mp))
+        mcs, ms, _ = resolve_dial(n, str(mp))
         print(f"\n[pool] 기존 manifest 사용: {mp}")
         print(f"[pool] n = {n:,} 장   root = {root}")
         save_result(out_root, "step0", {
             "cache_dir": cdir,
-            "n_images": n, "min_group_size": int(Config.MIN_GROUP_SIZE),
-            "auto_dial": bool(Config.AUTO_DIAL), "dial_scan": scan_rows,
+            "n_images": n,
             "manifest": str(mp.relative_to(REPO)) if mp.is_relative_to(REPO) else str(mp),
             "image_root": root.as_posix(), "subdirs": [],
-            "dial": {"mcs": mcs, "ms": ms, "method": "leaf", "eps": 0.06},
+            "dial": {"mcs": mcs, "ms": ms, "method": str(Cluster.METHOD), "eps": Cluster.EPS},
             "config": cfg})
         print("\n다음:  python deploy/step1_zeroshot.py")
         print(f"\n[OUT] {out_root}")
@@ -182,16 +153,15 @@ def main() -> int:
     mpath.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
     cdir = build_decode_cache(mpath, out_root)      # ★ 다이얼 결정 전에 (위 주석 참조)
-    mcs, ms, scan_rows = resolve_dial(n, str(mpath))
+    mcs, ms, _ = resolve_dial(n, str(mpath))
     print(f"\n[pool] n = {n:,} 장   |   하위폴더 {len(subdirs)}개"
           + (f"  (예: {', '.join(subdirs[:4])}{' ...' if len(subdirs) > 4 else ''})" if subdirs else ""))
 
     payload = {
-        "n_images": n, "min_group_size": int(Config.MIN_GROUP_SIZE),
-        "auto_dial": bool(Config.AUTO_DIAL), "dial_scan": scan_rows,
+        "n_images": n,
         "manifest": str(mpath.relative_to(REPO)) if mpath.is_relative_to(REPO) else str(mpath),
         "image_root": root.as_posix(), "subdirs": subdirs[:50],
-        "dial": {"mcs": mcs, "ms": ms, "method": "leaf", "eps": 0.06},
+        "dial": {"mcs": mcs, "ms": ms, "method": str(Cluster.METHOD), "eps": Cluster.EPS},
         "config": cfg,
     }
     payload["cache_dir"] = cdir

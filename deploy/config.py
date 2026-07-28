@@ -8,8 +8,8 @@
   - step0~5 가 전부 이 파일을 import 한다. 같은 값을 여러 파일에서 고칠 일이 없다.
 
 ★ 절대 넣지 않는 것: **불량 종수 k.** 모르는 게 전제이고 HDBSCAN 을 쓰는 이유가 k-free 라서다.
-  클러스터 개수를 입력으로 주는 건 치팅이다. 다이얼은 `Cluster.MIN_GROUP_SIZE`
-  ("몇 장 이상 뭉쳐야 그룹인가" = 운영 판단) 또는 `Cluster.AUTO_DIAL` (bootstrap 안정성)로 정한다.
+  클러스터 개수를 입력으로 주는 건 치팅이다. 다이얼은 `Cluster.MCS`
+  ("몇 장 이상 뭉쳐야 그룹인가" = 운영 판단)로 정한다 — k 와 무관하게 답할 수 있는 값이다.
 
 ★ UMAP 도 쓰지 않는다. raw 임베딩 -> HDBSCAN 직접.
   UMAP 은 평가 데이터 자체에 fit 하는 transductive 변환이라 (a) 배포에서 이미지 1장을 판정할 수
@@ -103,20 +103,21 @@ class Cluster:
 
     # "몇 장 이상 뭉쳐야 하나의 그룹으로 볼 것인가" = HDBSCAN min_cluster_size 의 원래 의미.
     # 클래스 수가 아니라 **보고 가치가 있는 최소 그룹 크기**라 k 를 몰라도 정할 수 있다.
-    MIN_GROUP_SIZE = env("SITE_MIN_GROUP_SIZE", 20)
+    # HDBSCAN min_cluster_size — **몇 장 이상 뭉쳐야 하나의 그룹으로 볼 것인가.**
+    #   작으면 잘게 나뉘고 k 가 많아진다. 크면 작은 그룹이 통째로 noise 로 버려진다.
+    #   ★ 불량 종수 k 가 아니다. k 는 모르는 게 전제이고 HDBSCAN 을 쓰는 이유가 k-free 라서다.
+    #     이 값은 "보고 가치가 있는 최소 그룹 크기"라는 **운영 판단**이라 k 없이 정할 수 있다.
+    #   ⚠ pool 마다 다시 정하라. 다른 pool 값 이식 금지 (mcs6 이식으로 결론이 뒤집힌 전례).
+    #   ⚠ PARTITION_BY 를 켜면 **파티션마다** 적용된다. 작은 파티션이 있으면 낮춰라
+    #     (step1 로그의 `[partition] ★ 경고` 확인).
+    MCS = env("SITE_MCS", 20)
 
-    # 1 이면 MIN_GROUP_SIZE 주변을 스캔해 **bootstrap 안정성 최대**인 다이얼을 자동 선택.
-    # 라벨도 k 도 쓰지 않는다. 실측: severstal 의 아는 정답(mcs20)을 정확히 집었다
-    # (DBCV 는 15 로 빗나갔고, ARI 최대화는 mcs60 = k2 병합 치팅으로 걸어갔다).
-    AUTO_DIAL = env("SITE_AUTO_DIAL", False)
+    # HDBSCAN min_samples — **얼마나 보수적으로 볼 것인가.**
+    #   한 점이 "밀집 지역에 있다"고 인정받는 데 필요한 이웃 수.
+    #   크면 경계의 점을 쉽게 noise 로 던져 클러스터가 단단해지고, 작으면 잘 안 버리는 대신
+    #   서로 다른 그룹이 붙는다. 실측 승자 조합은 mcs20/ms5 (= mcs 의 1/4).
+    MS = env("SITE_MS", 5)
 
-    # 수동 고정 (0 이면 위 규칙으로 자동 계산). 튜닝 목적 외에는 건드리지 마라.
-    MCS = env("SITE_MCS", 0)
-    MS = env("SITE_MS", 0)
-
-    # HDBSCAN cluster_selection_method.
-    #   leaf = 잎 노드를 그대로 클러스터로 (잘게 나뉨, 우리 운영점)
-    #   eom  = excess-of-mass, 큰 덩어리를 선호 (병합 경향)
     METHOD = env("SITE_METHOD", "leaf")        # leaf | eom
     # cluster_selection_epsilon. 이 거리 아래로 붙은 클러스터는 합친다. 0 이면 순수 HDBSCAN.
     EPS = env("SITE_EPS", 0.06)

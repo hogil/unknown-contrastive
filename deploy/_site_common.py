@@ -11,8 +11,7 @@
 여기 담긴 판정 규칙은 260726 실측 도출. 근거: docs/GOAL_AND_LADDER.md
   1. 사내엔 라벨이 없다 -> 모든 선택은 label-free.
   2. ★ 불량 종수(k)는 모른다 — 그게 전제다. HDBSCAN 을 쓰는 이유가 k-free 라서다.
-     다이얼은 k 가 아니라 **"몇 장 이상 뭉쳐야 그룹으로 볼 것인가"**(MIN_GROUP_SIZE)로 정한다.
-     그것도 정하기 싫으면 AUTO 모드가 bootstrap 안정성으로 라벨·k 없이 고른다.
+     다이얼은 k 가 아니라 **"몇 장 이상 뭉쳐야 그룹으로 볼 것인가"**(Cluster.MCS)로 정한다.
      다른 pool 의 다이얼 값 이식은 금지 — mcs6 을 그대로 썼다가 결론이 뒤집힌 전례가 있다.
   3. 대조군은 frozen 이 아니라 z0(랜덤 head), 용량(head 수)도 맞춘다.
   4. reassign 전/후를 분리 보고. 후처리 후 noise 는 어떤 임베딩에든 나오는 바닥값이다.
@@ -206,69 +205,15 @@ def check_inputs(backbone: str, image_root: str, projs: list[str] | None = None)
             die(f"projection head 가 없다: {rel(p)}\n  deploy/README.md 의 체크포인트 목록 참조.")
 
 
-# ── 다이얼 ────────────────────────────────────────────────────────────────
-def dial_from_min_group(min_group_size: int) -> tuple[int, int]:
-    """★ k 를 쓰지 않는다. HDBSCAN 의 min_cluster_size 는 원래 의미 그대로 쓴다:
-    **"몇 장 이상 뭉쳐야 하나의 그룹으로 볼 것인가"** — 운영자가 답할 수 있는 값이다.
-
-    불량 종수(k)는 모른다는 게 이 과제의 전제다. HDBSCAN 을 고른 이유가 바로 그것이고,
-    k 를 입력으로 받으면 그 이유가 사라진다. min_cluster_size 는 클래스 수가 아니라
-    **보고 가치가 있는 최소 그룹 크기**이므로 k 와 무관하게 정할 수 있다.
-
-    ms = mcs/4 는 실측 승자 조합(mcs20/ms5)에서 왔다.
-    """
-    mcs = max(5, int(min_group_size))
-    return mcs, max(3, mcs // 4)
-
-
-def dial_scan_range(n: int, min_group_size: int, n_points: int = 8) -> list[int]:
-    """운영값 주변 + 데이터 크기 상한으로 스캔 범위. k 를 쓰지 않는다."""
-    base = max(5, int(min_group_size))
-    cand = {base, max(5, base // 2), max(5, int(base * 0.75)),
-            int(base * 1.5), base * 2, base * 3}
-    cand |= {max(5, int(n * f)) for f in (0.005, 0.01, 0.02, 0.04)}
-    cand = sorted(c for c in cand if 5 <= c <= max(5, n // 4))
-    if len(cand) > n_points:
-        step = len(cand) / n_points
-        cand = [cand[int(i * step)] for i in range(n_points)]
-    return sorted(set(cand))
-
-
-def pick_dial_by_stability(z, scan: list[int], hdbscan_predict, per_group_stability,
-                           method: str = "leaf", eps: float = 0.06,
-                           min_k: int = 2) -> tuple[int, int, list[dict]]:
-    """★ 라벨도 k 도 안 쓰고 다이얼을 고른다 — bootstrap 군집 안정성 최대.
-
-    실측: severstal 에서 아는 정답(mcs20)을 정확히 집어냈다. DBCV 는 15 를 골라 빗나갔고,
-    ARI 최대화는 k=2 병합 치팅(mcs60)으로 걸어갔다.
-    ⚠ 다이얼이 결과에 거의 영향 없는 pool 도 있다(clean546 은 mcs 5~44 에서 ARI 0.63~0.70 평탄).
-      그런 pool 에선 어느 값을 골라도 무방하므로 스캔 표를 함께 보고 판단하라.
-    """
-    rows = []
-    for mcs in scan:
-        ms = max(3, mcs // 4)
-        pred = hdbscan_predict(z, mcs, ms, method, eps)
-        k = len({int(c) for c in pred if c >= 0})
-        noise = float((pred == -1).sum()) / len(pred) * 100.0
-        if k < min_k:
-            rows.append({"mcs": mcs, "ms": ms, "k": k, "noise_pct": round(noise, 2),
-                         "stability": 0.0, "skipped": "k<min_k"})
-            continue
-        st = per_group_stability(z, pred, mcs, ms, method, eps)
-        stab = sum(st.values()) / len(st) if st else 0.0
-        rows.append({"mcs": mcs, "ms": ms, "k": k, "noise_pct": round(noise, 2),
-                     "stability": round(float(stab), 4)})
-    ok = [r for r in rows if not r.get("skipped")]
-    best = max(ok, key=lambda r: r["stability"]) if ok else rows[0]
-    return best["mcs"], best["ms"], rows
-
-
-# ── 실행 ─────────────────────────────────────────────────────────────────
 def run(cmd: list[str], env_extra: dict | None = None, log_path: Path | None = None) -> int:
     """subprocess 실행. cp949 UnicodeEncodeError 회피를 위해 PYTHONIOENCODING 강제.
     (logger 경로는 exit code 0 으로 삼켜지지만 print 경로는 exit 1 을 낸다.)"""
     e = dict(os.environ)
     e["PYTHONIOENCODING"] = "utf-8"
+    # ★ config.Cluster 중 환경변수로만 전달되는 값들을 **항상** 넣는다.
+    #   안 넣으면 config 를 고쳐도 서브프로세스에 도달하지 않는다 (6개가 죽어 있었다).
+    #   호출자가 env_extra 로 준 값이 이보다 우선한다 (step1 의 UC_PALETTE_MASK 등).
+    e.update(cluster_env())
     if env_extra:
         e.update({k: str(v) for k, v in env_extra.items()})
     print(f"\n$ {' '.join(cmd)}", flush=True)
@@ -290,22 +235,53 @@ def run(cmd: list[str], env_extra: dict | None = None, log_path: Path | None = N
         return p.returncode
 
 
+def cluster_env() -> dict:
+    """config.Cluster 의 값 중 **환경변수로만 전달되는 것**을 모아 준다.
+
+    ★ 이게 없으면 config 에 값을 써도 파이프라인에 도달하지 않는다.
+      grouping_deploy 는 이것들을 os.environ 에서 읽는데, step 이 안 넘기면
+      config 를 고쳐도 아무 일도 안 일어난다 (실측으로 6개가 죽어 있었다).
+    config 를 여기서 import 하면 순환이라(config 가 _site_common 을 import) 지연 import 한다.
+    """
+    try:
+        from config import Cluster as C
+    except Exception:
+        return {}
+    return {
+        "UC_PALETTE_MODE": str(C.PALETTE_MODE),
+        "SITE_METRIC": str(C.METRIC),
+        "SITE_STAB_NBOOT": str(C.STABILITY_NBOOT),
+        "SITE_STAB_FRAC": str(C.STABILITY_FRAC),
+        "SITE_STAB_SEED": str(C.STABILITY_SEED),
+        "SITE_OVER_MERGE_FRAC": str(C.OVER_MERGE_FRAC),
+    }
+
+
 def deploy_cmd(backbone: str, pool: str, out: Path, mcs: int, ms: int,
                projs: list[str] | None, device: str, batch: int,
                reassign: str, cache: str = "",
-               no_composites: bool = False, partition_by: str = "") -> list[str]:
+               no_composites: bool = False, partition_by: str = "",
+               method: str = "", eps=None) -> list[str]:
     """grouping_deploy.py 호출 (label-free 산출: summary.json / groups.csv / representatives).
 
     ★ cache 를 넘기면 디코드를 건너뛴다. step1 은 arm 이 6개라 캐시가 없으면
       **같은 이미지를 6번 다시 디코드**한다 — 그동안 GPU 는 논다.
       결과는 비트 단위로 동일하다 (검증: groups.csv/summary.json 완전 일치).
     """
+    # ★ method/eps 를 하드코딩하면 config.Cluster.METHOD/EPS 가 죽는다.
+    if not method or eps is None:
+        try:
+            from config import Cluster as _C
+            method = method or str(_C.METHOD)
+            eps = _C.EPS if eps is None else eps
+        except Exception:
+            method, eps = method or "leaf", 0.06 if eps is None else eps
     cmd = [sys.executable, "grouping_deploy.py",
            "--backbone", str(rel(backbone)),
            "--pool", str(rel(pool)),
            "--out", str(rel(out)),
            "--mcs", str(mcs), "--ms", str(ms),
-           "--method", "leaf", "--eps", "0.06",
+           "--method", str(method), "--eps", str(eps),
            "--device", device, "--batch", str(batch),
            "--reassign", reassign]
     if cache:

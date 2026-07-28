@@ -98,7 +98,8 @@ champion(FCMAE + 2 head) 과 b4(자체 backbone + 1 head) 중 어느 쪽이 사�
 ```bash
 # 사내 이미지를 프로젝트 안에 두거나 경로를 지정
 export SITE_IMAGE_ROOT=data/site_images     # 기본값
-export SITE_MIN_GROUP_SIZE=20               # 몇 장 이상 뭉치면 그룹으로 볼지 (k 아님)
+export SITE_MCS=20                          # 몇 장 이상 뭉치면 그룹으로 볼지 (k 아님)
+export SITE_MS=5                            # min_samples (보통 mcs 의 1/4)
 
 python deploy/step0_prepare.py     # manifest + pool 기하 -> 권장 다이얼
 python deploy/step1_zeroshot.py    # 사다리 ① 학습 0.  frozen / z0 / champion 3-arm
@@ -124,7 +125,8 @@ python deploy/step5_temporal.py    # ★ 최종 산출물: 시간축 신규불�
 그 이유가 사라진다. 대신 정하는 건 이것 하나다:
 
 ```
-SITE_MIN_GROUP_SIZE = 20      # "몇 장 이상 뭉쳐야 하나의 그룹으로 볼 것인가"
+SITE_MCS = 20   # "몇 장 이상 뭉쳐야 하나의 그룹으로 볼 것인가" = HDBSCAN min_cluster_size
+SITE_MS  = 5    # min_samples — 보수성. 보통 mcs 의 1/4
 ```
 
 이건 클래스 수가 아니라 **보고 가치가 있는 최소 그룹 크기**다. "20장쯤 모이면 들여다볼
@@ -132,13 +134,6 @@ SITE_MIN_GROUP_SIZE = 20      # "몇 장 이상 뭉쳐야 하나의 그룹으로
 HDBSCAN `min_cluster_size` 의 원래 의미 그대로다.
 
 ### 그것도 정하기 싫으면 자동
-
-```
-SITE_AUTO_DIAL=1
-```
-
-MIN_GROUP_SIZE 주변을 스캔해 **bootstrap 군집 안정성이 최대인 값**을 고른다.
-라벨도 k 도 쓰지 않는다. 실측 검증:
 
 | pool | 아는 정답 | DBCV | **stability(채택)** | ARI 최대(라벨 필요) |
 |---|--:|--:|--:|--:|
@@ -156,8 +151,8 @@ ARI 최대화는 **전부 한 덩어리로 병합하는 축퇴 해**로 걸어�
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `SITE_IMAGE_ROOT` | `data/site_images` | 사내 이미지 루트 (flat/중첩 둘 다) |
-| `SITE_MIN_GROUP_SIZE` | `20` | 그룹으로 볼 최소 장수 (k 아님) |
-| `SITE_AUTO_DIAL` | `0` | `1` 이면 안정성으로 다이얼 자동 선택 |
+| `SITE_MCS` | `20` | HDBSCAN min_cluster_size = 그룹으로 볼 최소 장수 (k 아님) |
+| `SITE_MS` | `5` | HDBSCAN min_samples (보수성) |
 | `SITE_OUT_ROOT` | `runs/site` | 산출 루트 |
 | `SITE_BACKBONE` | `weights/convnextv2_base...pth` | frozen backbone |
 | `SITE_CHAMPION_PROJ` | `weights/champion/proj_s42_ep20.pt,weights/champion/proj_s1_ep18.pt` | 콤마 구분 2개 |
