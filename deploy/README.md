@@ -166,6 +166,24 @@ ARI 최대화는 **전부 한 덩어리로 병합하는 축퇴 해**로 걸어�
 
 ---
 
+## 3-1. step 별 사용 모델
+
+| step | backbone | head (projection) | 모델을 실제로 로드하나? |
+|---|---|---|---|
+| **step0** prepare | — | — | ❌ 안 함. manifest 스캔 + 다이얼 결정(config 값 그대로) + 디코드 캐시 생성만. |
+| **step1** zeroshot | `frozen`/`z0`/`champion`/`frozen_masked` arm = **FCMAE backbone**(`SITE_BACKBONE`). `contrastive_b4(May)`/`b4_backbone_only` arm = **b4 자체 backbone**(`SITE_B4_BACKBONE`, FCMAE 와 다른 독립 가중치) | `frozen`/`frozen_masked`: 없음. `z0_xN`: 랜덤 초기화(학습 안 함, champion 과 head 수만 맞춤). `champion`: `SITE_CHAMPION_PROJ` 2개 concat+L2 앙상블. `contrastive_b4(May)`: `SITE_B4_PROJ`. `b4_backbone_only`: 없음 | ✅ arm 마다 로드만 하고 **아무것도 학습 안 함**(사다리① = 학습 0) |
+| **step2** recipe | **FCMAE backbone**(`SITE_BACKBONE`) 고정 — 모든 seed 가 여기서 시작 | `_may_ablation.py`(B4 레시피)로 **새로 학습**한 head. seed 마다 독립 학습 후 Rule C 로 epoch 선택. 최종은 seed 앙상블(concat+L2) | ✅ 학습(사다리②) — FCMAE 위에 head 만 새로 얹는다, backbone 은 그대로 |
+| **step3** sweep | **FCMAE backbone**(`SITE_BACKBONE`) 고정 — step2 와 동일 | 레시피 hparam(`SITE_CELLS`, lr/temp/queue 등)만 셀마다 바꿔 **새로 학습**. 무라벨 규칙으로 셀 선택 | ✅ 학습(사다리③) — step2 와 같은 backbone, recipe 만 다르다 |
+| **step4** TAPT | **TAPT backbone**(`SITE_TAPT_BACKBONE`, 없으면 안내만 하고 skip) — FCMAE 대신 이걸로 교체 | step3 와 동일한 sweep 을 이 backbone 위에서 재실행 | ⚠ TAPT backbone 이 있을 때만(사다리④, 라벨 필요) |
+| **step5** temporal | **FCMAE backbone**(`SITE_BACKBONE`) 고정 | `SITE_TEMPORAL_PROJ` 미지정 시 **자동 탐색**: step3 승자 체크포인트 → (없으면) step2 체크포인트 앙상블 → (그것도 없으면) head 없이 frozen backbone 만 | ✅ step2/3 산출을 물려 씀. 직접 학습은 안 함 |
+
+- **`SITE_BACKBONE`(FCMAE) 은 step0 을 제외한 전 step 의 기본값**이다. b4/TAPT 는 각 arm/step 안에서 **명시적으로 교체**될 때만 다르다.
+- step1 의 `contrastive_b4(May)` 와 `b4_backbone_only` 는 FCMAE 와 **섞이지 않는 독립 arm** — `extract_b4.py` 가 검증한 별도 backbone 가중치를 쓴다(`weights/b4_may/`).
+- step2/step3 는 **head 만 새로 학습**한다. backbone 자체(FCMAE)를 fine-tune 하지 않는다(frozen).
+- step4 만 backbone 을 바꾼다. 나머지 step 은 전부 같은 FCMAE 위에서 비교된다.
+
+---
+
 ## 4. 결과 읽는 법 — 지키지 않으면 결론이 틀어진다
 
 1. **판정은 `seed_noise`(reassign 전)로 한다.**
