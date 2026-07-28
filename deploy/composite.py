@@ -501,6 +501,35 @@ if _HAS_NUMBA:
                 if v == TEXT_IDX:
                     text[y, x] = True
 
+    @njit(parallel=True, cache=True)
+    def _nb_accumulate_one_noborder(a, inv, num_lut, den_lut, keep_lut,
+                                    num_sum, den_sum, cnt, has_grade, text):
+        """`_nb_accumulate_one` 과 동일하되 border_count 를 안 쓴다 — geometric_border
+        가 이미 결정적 경계를 줬을 때, 매 픽셀 union/vote 카운트 배열 할당·기록을
+        건너뛰어 그 몫을 아낀다(실측: 있으나 마나였던 게 아니라 오히려 손해였다 —
+        전에는 geo 가 성공해도 이 스캔을 그대로 돌리고 버렸다, 260728)."""
+        H, W = a.shape
+        for y in prange(H):
+            for x in range(W):
+                v = a[y, x]
+                is_inv = inv[y, x]
+                if is_inv:
+                    g = 0
+                    take = True
+                elif v < GRADE_MAX:
+                    g = v
+                    take = True
+                else:
+                    g = 0
+                    take = False
+                if take and keep_lut[g]:
+                    num_sum[y, x] += num_lut[g]
+                    den_sum[y, x] += den_lut[g]
+                    cnt[y, x] += np.float32(1.0)
+                    has_grade[y, x] = True
+                if v == TEXT_IDX:
+                    text[y, x] = True
+
 
 def _nb_fill_invalid_chips(inv):
     """`_fill_invalid_chips` 의 numba 가속판. bbox 를 numpy 로 찾고(cheap),
@@ -611,18 +640,26 @@ def accumulate_sums(paths, num, den, grades=None, invalid=None):
             den_sum = np.zeros(a.shape, np.float32)
             cnt = np.zeros(a.shape, np.float32)
             has_grade = np.zeros(a.shape, bool)
-            border_count = np.zeros(a.shape, np.int32)
             text = np.zeros(a.shape, bool)
             # a.shape = (H, W) — geometric_border 는 (width, height) 순서.
             geo_border = geometric_border(paths, a.shape[1], a.shape[0])
             if geo_border is None:
+                border_count = np.zeros(a.shape, np.int32)
                 print(f"  [border] positions.json 없음/불일치 -> 과반수 표결 폴백 "
                       f"({Path(paths[0]).parent.name})", flush=True)
+            # ★ geo_border 가 있으면 border_count 를 아예 할당·기록하지 않는다 —
+            #   결정적 경계를 이미 아는데 픽셀 스캔을 또 돌리는 건 순수 낭비다
+            #   (실측: 예전엔 geo 가 성공해도 이 스캔을 그대로 돌리고 버려서
+            #   오히려 +67ms/10장 느려지고 있었다, 260728).
 
         if use_nb:
             inv = _nb_fill_invalid_chips((a == INVALID_IDX) | (a == TRANSPARENT_IDX))
-            _nb_accumulate_one(a, inv, num32, den32, keep_arr,
-                               num_sum, den_sum, cnt, has_grade, border_count, text)
+            if geo_border is None:
+                _nb_accumulate_one(a, inv, num32, den32, keep_arr,
+                                   num_sum, den_sum, cnt, has_grade, border_count, text)
+            else:
+                _nb_accumulate_one_noborder(a, inv, num32, den32, keep_arr,
+                                            num_sum, den_sum, cnt, has_grade, text)
             n += 1
             continue
 
@@ -648,10 +685,11 @@ def accumulate_sums(paths, num, den, grades=None, invalid=None):
         den_sum += np.where(valid, den[g], 0).astype(np.float32)
         cnt += valid
         has_grade |= take
-        b = (a >= BORDER_LO) & (a <= BORDER_HI)
-        if invalid == "grade0":
-            b &= ~inv          # invalid 테두리를 경계로 잡으면 grade0 처리가 무의미해진다
-        border_count += b.astype(np.int32)
+        if geo_border is None:
+            b = (a >= BORDER_LO) & (a <= BORDER_HI)
+            if invalid == "grade0":
+                b &= ~inv      # invalid 테두리를 경계로 잡으면 grade0 처리가 무의미해진다
+            border_count += b.astype(np.int32)
         text |= a == TEXT_IDX
         n += 1
     if geo_border is not None:
