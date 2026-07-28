@@ -55,6 +55,10 @@ def mask_palette_non_grade_to_white(img, enabled: bool = True, keep_background: 
     UC_PALETTE_MODE:
         - grade_only: index 0~7 + 경계(10) 유지 (default)
         - grade_bg: index 0~8 + 경계(10) 유지. unknown palette background 보존 실험용.
+        - grade_noborder: index 0~7 만 유지. **경계(10)까지 흰색으로 지운다.**
+          경계는 모든 웨이퍼에 똑같이 있는 격자라 결함 구분에 정보가 없다.
+          다만 chip 크기·정렬을 알려주는 구조 신호이기도 해서 지우는 게 이득인지는
+          pool 마다 다르다 — 반드시 이 pool 에서 재고 결정하라(step1 의 frozen_masked arm).
       - raw: palette를 그대로 둠.
     """
     if not enabled or getattr(img, "mode", None) != "P":
@@ -72,7 +76,9 @@ def mask_palette_non_grade_to_white(img, enabled: bool = True, keep_background: 
     pal = list(palette)
     if len(pal) < 768:
         pal.extend([0] * (768 - len(pal)))
-    keep = set(range(8)) | {border_idx}
+    keep = set(range(8))
+    if mode not in {"grade_noborder", "noborder", "grade_only_noborder"}:
+        keep.add(border_idx)
     if keep_background:
         keep.add(bg_idx)
     for idx in range(256):

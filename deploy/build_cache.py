@@ -50,9 +50,17 @@ IMG = 384
 CACHE_NAME = "cache_384"
 
 
+def _palette_mode() -> str:
+    """UC_PALETTE_MODE. 캐시 키에 반드시 들어가야 한다 —
+    grade_only(경계 유지)와 grade_noborder(경계 삭제)는 **다른 픽셀**인데
+    palette_mask 불린만으로 키를 만들면 같은 캐시를 공유해 결과가 섞인다."""
+    return os.environ.get("UC_PALETTE_MODE", "grade_only").strip().lower()
+
+
 def _key(paths, palette_mask: bool) -> str:
     h = hashlib.sha1()
-    h.update(f"{IMG}|{int(palette_mask)}|{len(paths)}|".encode())
+    h.update(f"{IMG}|{int(palette_mask)}|{_palette_mode() if palette_mask else '-'}|"
+             f"{len(paths)}|".encode())
     for p in paths:
         h.update(str(p).encode())
         h.update(b"\0")
@@ -63,10 +71,13 @@ def _key(paths, palette_mask: bool) -> str:
 _W: dict = {}
 
 
-def _init(npy_path, n, palette_mask):
+def _init(npy_path, n, palette_mask, palette_mode="grade_only"):
     from PIL import Image
     from torchvision import transforms as T
+    # ★ spawn 자식에 모드를 **명시적으로** 넘긴다. 부모 env 상속에만 기대면
+    #   실행 방식에 따라 조용히 다른 모드로 캐시가 만들어진다.
     os.environ["UC_PALETTE_MASK"] = "1" if palette_mask else "0"
+    os.environ["UC_PALETTE_MODE"] = palette_mode
     mask_fn = None
     if palette_mask:
         try:
@@ -160,13 +171,14 @@ def build(paths, cache_dir, palette_mask: bool, workers: int = 0,
           f"예상 {n * IMG * IMG * 3 / 2**30:.1f} GiB", flush=True)
     if not todo:
         meta.write_text(json.dumps({"key": key, "img": IMG, "n": n,
-                                    "palette_mask": palette_mask, "complete": True},
+                                    "palette_mask": palette_mask,
+                                    "palette_mode": _palette_mode(), "complete": True},
                                    ensure_ascii=False), encoding="utf-8")
         return npy
 
     t0, ok, bad = time.time(), 0, []
     with ProcessPoolExecutor(max_workers=workers, initializer=_init,
-                             initargs=(str(npy), n, palette_mask)) as ex:
+                             initargs=(str(npy), n, palette_mask, _palette_mode())) as ex:
         for k, (i, err) in enumerate(ex.map(_one, todo, chunksize=8), 1):
             if err:
                 bad.append((paths[i], err))
@@ -184,7 +196,8 @@ def build(paths, cache_dir, palette_mask: bool, workers: int = 0,
 
     complete = bool(done.all())
     meta.write_text(json.dumps({"key": key, "img": IMG, "n": n,
-                                "palette_mask": palette_mask, "complete": complete,
+                                "palette_mask": palette_mask,
+                                "palette_mode": _palette_mode(), "complete": complete,
                                 "n_failed": len(bad)}, ensure_ascii=False), encoding="utf-8")
     el = time.time() - t0
     print(f"[cache] 완료 {ok:,} 장 / 실패 {len(bad)} 장   {el/60:.1f}분   "
