@@ -94,3 +94,23 @@ three-agent judgment protocol.
   when the 40% project allocation cannot be respected.
 - `REPRO_GPU_MEMORY_FRACTION=0.40` and the campaign safety value
   `gpu_memory_fraction=0.40` are binding, not sweep variables.
+
+## 7. Production visual confirmation (absolute, 260728)
+
+- On the real on-site server there is no ground truth. No label-free metric
+  (seed_noise, k, coherence, or any bootstrap/confidence statistic computed
+  from the metric itself) may be treated as a final accept/reject verdict for
+  a grouping result. ARI, Silhouette, and other label-dependent metrics are
+  valid only in validation settings where labels exist (public/synthetic
+  datasets) — they do not exist on-site and cannot be computed there.
+- Any automated label-free ranking (e.g. sorting sweep cells by seed_noise) is
+  an ordering aid only — which candidate to look at first — never a
+  substitute for review. It must not gate, block, or silently finalize a
+  result.
+- The user must visually confirm every accepted grouping result by looking at
+  the composite maps and the actual member images before it is treated as
+  final. Do not build or propose a mechanism (bootstrap stability, confidence
+  thresholding, or similar) whose purpose is to stand in for that visual
+  check — on-site there is nothing to validate such a mechanism against.
+  (Context: `deploy/`'s bootstrap `group_stability` gate was removed for
+  exactly this reason — see `grouping_deploy.py` commit `323af47`.)
