@@ -245,9 +245,10 @@ def build_lut(stops_hex=None, n: int = 256, positions=None) -> np.ndarray:
 #   from_positions`)는 픽셀을 전혀 안 보고 **positions.json 의 chip rect 좌표로
 #   직사각형을 그린다** — 그룹의 모든 이미지가 같은 물리 격자면 항상 정확히 1px,
 #   완전히 균일하다. 우리도 같은 방식으로 바꾼다.
-# ★ positions.json 이 없는 클래스(45개 중 14개, 260728 기준)는 이 경로를 못 쓴다.
-#   그 경우 `_pixel_vote_border()` 로 폴백한다(예전 union 보다는 낫지만 완전히
-#   균일하진 않다 — 그 클래스는 positions 합성이 필요하다).
+# ★ positions.json 이 없는 클래스(45개 중 14개, 260728 기준)도 격자는 전 클래스
+#   공통이라(실측: canvas/tiles_w_rot/tiles_h_rot/rot_code 가 31개 클래스 전부 동일)
+#   **다른 클래스에서 빌려온다** (`_universal_reference_positions`). positions.json
+#   이 이 데이터셋 어디에도 하나도 없을 때만(사실상 없음) 과반수 표결로 폴백한다.
 def _positions_path(image_path) -> Path | None:
     """`.../images/<dataset>/...` -> `.../positions/<dataset>/....json`.
     "images" 라는 경로 세그먼트를 "positions" 로 바꾸고 확장자만 교체한다."""
@@ -346,6 +347,43 @@ def _grid_shape(positions_data) -> tuple | None:
             coord.get("tiles_w_rot"), coord.get("tiles_h_rot"))
 
 
+_UNIVERSAL_REF_CACHE: dict = {}
+
+
+def _universal_reference_positions(sample_path):
+    """이 pool 어디에서든 하나라도 찾은 positions.json — **결정적 격자를 빌려준다.**
+
+    ★ 실측(260728, 사용자 확인): 사내 wafer 는 물리 격자(canvas 6400x6400,
+      32x32 tile)가 **전 클래스 공통**이다 — 31개 클래스 JSON 을 비교해 canvas/
+      tiles_w_rot/tiles_h_rot/rot_code 가 전부 동일했다(개별 chip 순서만 파일마다
+      다르다 — 최종 border mask 는 순서 무관이라 상관없다). 그래서 positions.json
+      이 없는 클래스도 **다른 클래스의 것을 그대로 빌려 써도 같은 격자**다.
+      pool 자체가 진짜 다른 물리 격자를 섞으면(다른 canvas/tile) `geometric_border`
+      의 _grid_shape 비교가 여전히 잡아내 픽셀 폴백으로 넘어간다 — 무조건 믿지 않는다.
+    """
+    key = str(Path(sample_path).anchor) + "|" + str(_positions_path(sample_path))
+    if key in _UNIVERSAL_REF_CACHE:
+        return _UNIVERSAL_REF_CACHE[key]
+    pos_root = _positions_path(sample_path)
+    result = None
+    if pos_root is not None:
+        # <positions_root>/<dataset>/ 까지 올라가서 아무 class 폴더나 뒤진다.
+        dataset_root = pos_root.parent.parent if pos_root.parent.name else pos_root.parent
+        if dataset_root.is_dir():
+            for jf in dataset_root.glob("*/*.json"):
+                try:
+                    d = json.loads(jf.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if isinstance(d.get("chips"), list) and d["chips"]:
+                    result = d
+                    print(f"  [border] positions.json 없는 클래스 -> 다른 클래스 격자 차용 "
+                          f"({jf.parent.name}/{jf.name})", flush=True)
+                    break
+    _UNIVERSAL_REF_CACHE[key] = result
+    return result
+
+
 def geometric_border(paths, width, height):
     """그룹 전체에 쓸 **결정적** border mask 하나를 구한다.
 
@@ -353,6 +391,8 @@ def geometric_border(paths, width, height):
       기준으로 삼는다 — 여러 장의 격자를 섞지 않는다(격자가 다르면 섞을 때 또
       들쭉날쭉해진다). canvas 크기 + tile 수가 첫 장과 다른 이미지가 섞여 있으면
       신뢰 못 하는 걸로 보고 None(폴백 신호) 을 돌려준다.
+    ★ group 의 이미지 중 아무도 positions.json 이 없으면(14개 미커버 클래스),
+      **다른 클래스에서라도 빌려온다** — 격자는 전 클래스 공통이라서다(위 주석).
     """
     ref_data = None
     for p in paths:
@@ -360,6 +400,8 @@ def geometric_border(paths, width, height):
         if d:
             ref_data = d
             break
+    if ref_data is None and paths:
+        ref_data = _universal_reference_positions(paths[0])
     if ref_data is None:
         return None
     ref_shape = _grid_shape(ref_data)
@@ -377,15 +419,6 @@ def geometric_border(paths, width, height):
     if base is None:
         return None
     return base == BORDER_IDX
-
-
-def _pixel_vote_border(borders_list) -> np.ndarray:
-    """positions.json 이 없는 클래스용 폴백 — 과반수 표결(예전 union 보다 균일,
-    260728). `borders_list` = 이미지별 (H,W) bool 배열 리스트."""
-    count = np.zeros(borders_list[0].shape, np.int32)
-    for b in borders_list:
-        count += b.astype(np.int32)
-    return count >= (len(borders_list) + 1) // 2
 
 
 # ── numba 가속 (mapviewer 방식) ─────────────────────────────────────────
