@@ -149,6 +149,19 @@ class Cluster:
     #   (그 경우 UC_PALETTE_MASK=1 을 학습·채점 양쪽에 동일하게 준다).
     PALETTE_PROBE = env("SITE_PALETTE_PROBE", True)
 
+    # ★ palette 마스킹 모드. 260728 ablation(6조건 x 5 disjoint subset x 2 다이얼 = 60셀,
+    #   라벨 채점) 승자 = unify_border.
+    #     unify_border    0~7 유지 + 경계 마커(11~30)를 **기본 칩경계색(10)으로 통일** + 배경 흰색
+    #                     ARI 0.8300±0.0270  <- 채택
+    #     grade_only      0~7 + 경계10 유지, 마커는 **흰색으로 삭제** (경계의 10.2% 가 끊긴다)
+    #                     ARI 0.8089±0.0393
+    #     unify_border_bg 위 unify_border + 배경 유지        ARI 0.7701±0.0285
+    #     grade_noborder  경계까지 삭제                       ARI 0.7601±0.0485
+    #     raw             원본                                ARI 0.5460±0.0749
+    #   상세: docs/paper/BORDER_ABLATION_260728.md
+    #   ⚠ 학습과 채점에 **같은 값**을 줘야 한다. 다르면 입력이 갈려 결과가 무의미해진다.
+    PALETTE_MODE = env("UC_PALETTE_MODE", "unify_border")
+
     # ★ 분리 그룹핑 — 파일명 코드마다 **따로** 클러스터링한다.
     #   사내 파일명: `AAQ729_00C_20_20260501_010000_83.0_17_PE_ENGINEER.png`
     #     `_` 로 나눈 필드 -> [AAQ729, 00C, 20, 20260501, ...]  코드는 **필드 1**.

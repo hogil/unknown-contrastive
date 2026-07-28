@@ -26,8 +26,12 @@ REPO = Path(__file__).resolve().parent
 ROOT = "E:/data/images/unknown"
 BB = "weights/convnextv2_base.fcmae_ft_in22k_in1k_384.pth"
 OUT = REPO / "runs" / "_border_repl"
+# ★ ⑤ unifygrey 가 사용자가 말한 "마커 삭제 = 기본 칩경계색으로 변경" 이다.
+#   ② grade_only 는 마커를 **흰색으로 지워** 그 자리의 경계가 끊긴다
+#   (실측: 경계 픽셀의 10.2% 가 마커). ⑤ 는 색만 통일하고 경계는 남긴다.
 CONDS = [("raw", "0", "grade_only"), ("keepbg", "1", "grade_bg"),
-         ("unify", "1", "grade_only"), ("noborder", "1", "grade_noborder")]
+         ("unify", "1", "grade_only"), ("noborder", "1", "grade_noborder"),
+         ("unifygrey", "1", "unify_border"), ("unifygrey_bg", "1", "unify_border_bg")]
 DIALS = [6, 10]
 # ★ Thick-Edge_fork 는 50장뿐이라 disjoint subset 5개(=100장)를 못 채운다.
 #   빼면 남은 42 class 가 전부 200장 이상이라 subset 마다 class 구성이 **동일**해진다.

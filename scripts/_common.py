@@ -55,6 +55,12 @@ def mask_palette_non_grade_to_white(img, enabled: bool = True, keep_background: 
     UC_PALETTE_MODE:
         - grade_only: index 0~7 + 경계(10) 유지 (default)
         - grade_bg: index 0~8 + 경계(10) 유지. unknown palette background 보존 실험용.
+        - unify_border: index 0~7 유지 + **경계 마커(11~30)를 경계색(10)으로 바꾼다.**
+          ★ grade_only 는 마커를 흰색으로 지워서 **그 자리의 칩경계가 사라진다**
+            (실측: 경계 픽셀의 10.2% 가 마커라 그만큼 격자가 끊긴다).
+            이 모드는 색만 통일하고 경계 구조는 그대로 남긴다.
+            composite 렌더가 하는 것과 같은 처리다.
+        - unify_border_bg: 위와 같고 배경(8)도 유지.
         - grade_noborder: index 0~7 만 유지. **경계(10)까지 흰색으로 지운다.**
           경계는 모든 웨이퍼에 똑같이 있는 격자라 결함 구분에 정보가 없다.
           다만 chip 크기·정렬을 알려주는 구조 신호이기도 해서 지우는 게 이득인지는
@@ -76,13 +82,23 @@ def mask_palette_non_grade_to_white(img, enabled: bool = True, keep_background: 
     pal = list(palette)
     if len(pal) < 768:
         pal.extend([0] * (768 - len(pal)))
+    unify = mode in {"unify_border", "unify_border_bg", "border_unified"}
+    if mode == "unify_border_bg":
+        keep_background = True
     keep = set(range(8))
     if mode not in {"grade_noborder", "noborder", "grade_only_noborder"}:
         keep.add(border_idx)
     if keep_background:
         keep.add(bg_idx)
+    # ★ unify: 경계 마커를 흰색이 아니라 **경계색(idx10)** 으로 바꾼다.
+    #   흰색으로 지우면 그 자리의 칩경계가 끊긴다 (경계 픽셀의 10.2% 가 마커다).
+    border_rgb = pal[border_idx * 3:border_idx * 3 + 3]
     for idx in range(256):
-        if idx not in keep:
+        if idx in keep:
+            continue
+        if unify and border_idx <= idx <= 30:
+            pal[idx * 3:idx * 3 + 3] = list(border_rgb)
+        else:
             pal[idx * 3:idx * 3 + 3] = [255, 255, 255]
     img.putpalette(pal[:768])
     return img
