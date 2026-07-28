@@ -307,12 +307,17 @@ def _nb_fill_invalid_chips(inv):
     return out
 
 
-def _decode_indices(paths, workers: int = 0, prefetch: int = 4):
+def _decode_indices(paths, workers: int = 0, prefetch: int = 0):
     """palette index 배열을 **스레드로 미리 디코드**해서 순서대로 흘려준다.
 
     composite 는 원본 6400x6400 을 그대로 읽어야 해서 (임베딩 캐시는 384 라 못 쓴다)
-    디코드가 비용의 대부분이다 — 실측 24장 12.84s 중 대부분. 누적 자체는 numpy 라
-    GIL 을 놓으므로 디코드만 앞질러 돌려도 그만큼 줄어든다.
+    디코드가 비용의 대부분이다 — 실측 24장 12.84s 중 대부분. PIL 디코드는 GIL 을
+    놓으므로 스레드가 실제로 병렬로 돈다 (`grouping_deploy._iter_batches` 와 동일 근거).
+    ★ prefetch 가 worker 수보다 작으면 스레드를 열어놓고도 못 쓴다 — 예전엔
+      workers=8 인데 prefetch=4 로 고정돼 있어서 최대 4장만 동시에 돌았다.
+      기본을 workers 와 맞춰서 실제로 다 쓰게 한다.
+    ★ worker 수는 코어의 **절반**만 쓴다 — 이 머신은 embedding 디코드(전체 코어)나
+      다른 작업과 동시에 돈다. 전체 코어를 다 잡으면 그것들을 굶긴다.
     메모리는 6400^2 uint8 = 41MB * prefetch 만 쓴다.
     """
     import os
@@ -325,7 +330,8 @@ def _decode_indices(paths, workers: int = 0, prefetch: int = 4):
         return np.asarray(im, dtype=np.uint8)
 
     w = workers or int(os.environ.get("SITE_COMPOSITE_WORKERS", "0")) \
-        or max(2, min(8, (os.cpu_count() or 4)))
+        or max(2, (os.cpu_count() or 4) // 2)
+    prefetch = prefetch or max(w, 4)
     paths = list(paths)
     with ThreadPoolExecutor(max_workers=w) as ex:
         futs = [ex.submit(one, p) for p in paths[:prefetch]]
