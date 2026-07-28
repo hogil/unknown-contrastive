@@ -13,7 +13,7 @@ May-dial(mcs12/ms15) 로 stale (5) 라벨 없는 사내 데이터에서도 offli
 재사용한다 (새로 안 짬).
 
 산출 스키마는 `_grouping_deliverable.py` 와 동일 (하위호환):
-    groups.csv (label-free), representatives/group_XXX/, composites/group_XXX.png,
+    groups.csv (label-free), representatives/group_XXX/, composites/group_XXX_*.png,
     summary.json (label-free, 항상 생성 — n/k/noise%/over_merge/stability/coherence),
     offline_eval.csv + offline_summary.json (★--offline-eval 명시 시에만 생성, 기본 OFF).
 
@@ -722,7 +722,11 @@ def main():
         # ★ --no-composites 면 건너뛴다. composite 는 임베딩 캐시(384)를 못 쓰고 원본
         #   6400x6400 을 다시 읽어야 해서 arm 당 ~70초를 먹는데(실측: 임베딩은 5초),
         #   arm 을 고르는 판정에는 쓰이지 않는다. 고른 뒤 그 arm 만 만들면 된다.
-        gdir_c = comp_root / f"group_{c:03d}_n{len(idx)}"
+        # 그룹마다 하위폴더를 만들지 않는다 — composites/ 안에 **파일명으로 구분**해 평평하게.
+        #   group_000_n6_square_weighted_average.png
+        #   group_000_n6_medoid_<원본파일명>.png
+        gtag = f"group_{c:03d}_n{len(idx)}"
+        comp_root.mkdir(parents=True, exist_ok=True)
         if not a.no_composites:
             try:
                 from deploy.composite import write_group_composites
@@ -730,12 +734,11 @@ def main():
                 sys.path.append(str(REPO_ROOT / "deploy"))
                 from composite import write_group_composites
             try:
-                write_group_composites([paths[i] for i in idx], gdir_c)
+                write_group_composites([paths[i] for i in idx], comp_root, prefix=f"{gtag}_")
             except Exception as e:
                 print(f"  [warn] group {c} composite 실패: {e}", flush=True)
         # medoid = 그룹 중심에 가장 가까운 **실제 원본** (heatmap 과 대조용)
-        gdir_c.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(paths[order[0]], gdir_c / f"medoid_{Path(paths[order[0]]).name}")
+        shutil.copy2(paths[order[0]], comp_root / f"{gtag}_medoid_{Path(paths[order[0]]).name}")
         rows.append({"group_id": c, "group_size": len(idx), "group_stability": round(stab.get(c, 0.0), 4),
                       "group_coherence": round(coh, 4),
                       "review_status": "over_merged_review" if over else "candidate",
