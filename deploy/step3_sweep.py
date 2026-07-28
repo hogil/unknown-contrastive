@@ -130,11 +130,10 @@ def main() -> int:
     print("\n" + "=" * 78)
     print("[round-1] 무라벨 순위  (argmin seed_noise — 라벨 전혀 안 씀)")
     print("=" * 78)
-    print(f"  {'cell':<10} {'ep':<5} {'seed_noise':<12} {'k':<6} {'stability'}")
+    print(f"  {'cell':<10} {'ep':<5} {'seed_noise':<12} {'k':<6}")
     for cell, info in ranked:
         s = info["selected"]
-        print(f"  {cell:<10} {s['epoch']:<5} {s['seed_noise_pct']:<12} {s['k']:<6} "
-              f"{s['mean_stability']}")
+        print(f"  {cell:<10} {s['epoch']:<5} {s['seed_noise_pct']:<12} {s['k']:<6}")
     win = ranked[0][0]
     print(f"\n  ★ 무라벨 승자: {win}  (축: {CELL_AXES[win] or 'base'})")
 

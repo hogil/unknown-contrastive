@@ -285,9 +285,6 @@ def cluster_env() -> dict:
         "SITE_COMPOSITE_MAX_MEMBERS": str(K.MAX_MEMBERS),
         "UC_PALETTE_MODE": str(C.PALETTE_MODE),
         "SITE_METRIC": str(C.METRIC),
-        "SITE_STAB_NBOOT": str(C.STABILITY_NBOOT),
-        "SITE_STAB_FRAC": str(C.STABILITY_FRAC),
-        "SITE_STAB_SEED": str(C.STABILITY_SEED),
         "SITE_OVER_MERGE_FRAC": str(C.OVER_MERGE_FRAC),
     }
 
@@ -405,10 +402,10 @@ def fmt_row(name: str, s: dict | None) -> str:
     if not s:
         return f"  {name:<26} (결과 없음)"
     g = lambda k, d="?": s.get(k, d)
-    return ("  {:<26} n={:<6} k={:<4} noise={:<7} seed_noise={:<7} coh={:<7} stab={:<7}"
+    return ("  {:<26} n={:<6} k={:<4} noise={:<7} seed_noise={:<7} coh={:<7}"
             .format(name, g("n"), g("k"), g("noise_pct"),
                     g("seed_noise_pct", g("seed_noise")),
-                    g("mean_coherence"), g("mean_stability")))
+                    g("mean_coherence")))
 
 
 def save_result(out_root, step: str, payload: dict) -> Path:

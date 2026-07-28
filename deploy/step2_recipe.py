@@ -61,7 +61,6 @@ def score_epochs(pool: str, backbone: str, ckpt_dir: Path, mcs: int, ms: int,
     라벨을 전혀 쓰지 않는다 (사내엔 없다).
     """
     add_path(REPO)
-    import numpy as np
     import torch
     import torch.nn.functional as F
     import grouping_deploy as gd
@@ -95,13 +94,10 @@ def score_epochs(pool: str, backbone: str, ckpt_dir: Path, mcs: int, ms: int,
         n = len(pred)
         k = len(set(pred[pred >= 0].tolist()))
         seed_noise = float((pred == -1).sum()) / n * 100.0
-        stab = gd.per_group_stability(z, pred, mcs, ms, "leaf", 0.06)
         rows.append({"ckpt": cp.name,
                      "epoch": int("".join(c for c in cp.stem if c.isdigit()) or 0),
-                     "k": k, "seed_noise_pct": round(seed_noise, 2),
-                     "mean_stability": round(float(np.mean(list(stab.values()))) if stab else 0.0, 4)})
-        print(f"  [{cp.name}] k={k:<4} seed_noise={seed_noise:6.2f}%  "
-              f"stab={rows[-1]['mean_stability']}", flush=True)
+                     "k": k, "seed_noise_pct": round(seed_noise, 2)})
+        print(f"  [{cp.name}] k={k:<4} seed_noise={seed_noise:6.2f}%", flush=True)
     return rows
 
 

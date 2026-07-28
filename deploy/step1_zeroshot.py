@@ -190,7 +190,7 @@ def main() -> int:
 
 
 def judge(results: dict, arms: list) -> tuple[str, list[str]]:
-    """label-free 판정. 라벨이 없으므로 seed_noise / k / coherence / stability 로만 본다."""
+    """label-free 판정. 라벨이 없으므로 seed_noise / k / coherence 로만 본다."""
     fz, notes = results.get("frozen"), []
     if not fz:
         return "판정 불가 (frozen 결과 없음)", ["frozen arm 이 실패했다. 로그를 봐라."]

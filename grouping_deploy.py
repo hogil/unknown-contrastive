@@ -14,19 +14,17 @@ May-dial(mcs12/ms15) 로 stale (5) 라벨 없는 사내 데이터에서도 offli
 
 산출 스키마는 `_grouping_deliverable.py` 와 동일 (하위호환):
     groups.csv (label-free), representatives/group_XXX/, composites/group_XXX_*.png,
-    summary.json (label-free, 항상 생성 — n/k/noise%/over_merge/stability/coherence),
+    summary.json (label-free, 항상 생성 — n/k/noise%/over_merge/coherence),
     offline_eval.csv + offline_summary.json (★--offline-eval 명시 시에만 생성, 기본 OFF).
 
 ★ 라벨-free 지표 정의 (사내 배포 시 유일한 판단 창 — 정확히 이 정의로 고정, 임의 변경 금지):
     - group_coherence  = 최종(재배정 후) 그룹 멤버 pairwise cosine 유사도 평균. 재배정 포함 —
       "지금 이 그룹이 실제로 얼마나 뭉쳐 보이는가"를 재는 거라 최종 멤버십을 써야 맞음.
-    - group_stability  = HDBSCAN이 낸 **seed(재배정 전) 클러스터**의 bootstrap co-assignment
-      robustness (n_boot=5, frac=0.8, seed=42 고정 — `_grouping_deliverable.py` 원본과 동일).
-      ★ 반드시 seed_pred(재배정 전) 로 계산 — 재배정 후 pred 로 계산하면 "구조 안정성"이 아니라
-      "nearest-centroid 재배정 휴리스틱의 안정성"으로 의미가 바뀌어 stability >= 0.75 무라벨
-      선택 게이트 판정이 실제로 뒤집힐 수 있다 (실측: 0.4547 재배정후 vs 0.8441 재배정전,
-      champion 0.8825 와 후자가 일치하는 쪽 — 260726 team-lead 리뷰로 확정, 코드에도 주석).
     - noise_pct (summary.json)  = 재배정 후 최종 noise / n (전체, 배경 포함).
+
+    ★ 260728: bootstrap group_stability(재클러스터링 n_boot=5회)는 사용자 지시로 제거했다
+      ("사내는 답이 없다 — 돌아간 결과를 빨리 눈으로 보고 바꿔야 한다"). HDBSCAN 은 이제
+      **1회만** 돈다. 무라벨 선택은 seed_noise / k / coherence 로만 본다.
 
 현재 보존된 E: canonical pool의 manifest 입력 예시:
     python grouping_deploy.py \\
@@ -322,8 +320,8 @@ def amp_ctx():
     """SITE_AMP=fp16|bf16 이면 autocast, 아니면 아무것도 안 함.
 
     ★ 기본 off. 실측 1.5배지만 임베딩이 8.5e-4(fp16)/6.4e-3(bf16) 어긋난다.
-      5.5e-4 만으로도 HDBSCAN bootstrap 이 뒤집혀 mean_stability 가
-      0.9682 -> 0.9624 로 갈린 적이 있다. 켤 거면 **모든 arm 에 동일하게** 켜라.
+      경계 근처 점은 이 정도 오차로도 HDBSCAN 이 다른 클러스터/noise 로 갈린 적이 있다
+      (실측). 켤 거면 **모든 arm 에 동일하게** 켜라.
     """
     import contextlib
     m = os.environ.get("SITE_AMP", "off").strip().lower()
@@ -374,8 +372,8 @@ def _iter_batches(paths, batch, workers=None, cache=None):
             a = torch.from_numpy(np.array(cache[i:i + batch]))   # memmap -> 쓰기가능 복사
             x = a.permute(0, 3, 1, 2).contiguous().float().div_(255.0)
             # ★ contiguous() 필수. 값이 같아도 레이아웃이 다르면 cuDNN 이 다른 커널을
-            #   골라 임베딩이 5.5e-4 어긋나고, HDBSCAN bootstrap 이 뒤집혀
-            #   stability 가 0.9682 -> 0.9624 로 갈렸다 (실측). 붙이면 비트 단위로 같다.
+            #   골라 임베딩이 5.5e-4 어긋나고 그 오차가 경계 근처 점의 HDBSCAN 클러스터를
+            #   바꾼 적이 있다 (실측). 붙이면 비트 단위로 같다.
             return (x - _MEAN) / _STD
     else:
         def build(i):
@@ -502,75 +500,12 @@ def cluster_by_partition(z, keys, a, reassign_fn):
     return seed, final, rows, info
 
 
-def stability_by_partition(z, seed_pred, parts, mcs, ms, method, eps):
-    """분리 그룹핑을 켰으면 stability 도 **파티션 안에서** 잰다.
-
-    ★ 안 그러면 측정 대상이 달라진다. 그룹은 파티션별로 만들어졌는데 bootstrap 은
-      전체를 한 덩어리로 다시 클러스터링하면, 파티션이 섞이면서 같은 그룹 멤버가
-      다른 클러스터로 흩어져 stability 가 **인위적으로 낮게** 나온다.
-      stability >= 0.75 가 채택 게이트라 판정이 실제로 뒤집힌다.
-    ★ 속도도 문제다. HDBSCAN 은 n 에 초선형이라 전체 1회보다 파티션별 여러 번이 싸다.
-    """
-    import time
-    if parts is None:
-        t = time.time()
-        out = per_group_stability(z, seed_pred, mcs, ms, method, eps)
-        print(f"[stability] bootstrap 완료 ({time.time() - t:.1f}s)", flush=True)
-        return out
-    uniq = sorted(set(parts))
-    stab: dict = {}
-    for k in uniq:
-        idx = np.array([i for i, v in enumerate(parts) if v == k])
-        t = time.time()
-        sub = per_group_stability(z[idx], seed_pred[idx], mcs, ms, method, eps)
-        stab.update(sub)                      # cluster id 는 이미 파티션끼리 안 겹친다
-        print(f"[stability] {k}  n={len(idx):,}  그룹 {len(sub)}개  "
-              f"({time.time() - t:.1f}s)", flush=True)
-    return stab
-
-
 def hdbscan_predict(z, mcs, ms, method, eps):
     import hdbscan
     return hdbscan.HDBSCAN(min_cluster_size=mcs, min_samples=ms,
                             metric=os.environ.get("SITE_METRIC", "euclidean"),
                             cluster_selection_method=method,
                             cluster_selection_epsilon=eps).fit_predict(z.astype(np.float64)).astype(int)
-
-
-def per_group_stability(z, base_pred, mcs, ms, method, eps,
-                        n_boot=None, frac=None, seed=None):
-    """★ 기본값 n_boot=5 / frac=0.8 / seed=42 는 `_grouping_deliverable.py` 원본과 같다.
-    바꾸면 stability 숫자가 통째로 달라져 과거 기록과 비교가 깨진다 —
-    `deploy/config.py::Cluster.STABILITY_*` 로만 조정하고 기본값은 건드리지 마라."""
-    n_boot = int(os.environ.get("SITE_STAB_NBOOT", 5)) if n_boot is None else n_boot
-    frac = float(os.environ.get("SITE_STAB_FRAC", 0.8)) if frac is None else frac
-    seed = int(os.environ.get("SITE_STAB_SEED", 42)) if seed is None else seed
-    """group 별 co-assignment stability: 부분표본에서 그 그룹 멤버쌍이 같은 cluster 유지 평균 비율."""
-    rng = np.random.RandomState(seed)
-    n = len(z)
-    keep = defaultdict(list)
-    for _ in range(n_boot):
-        idx = np.sort(rng.choice(n, int(frac * n), replace=False))
-        pos = {g: i for i, g in enumerate(idx)}
-        p2 = hdbscan_predict(z[idx], mcs, ms, method, eps)
-        for c in set(base_pred.tolist()):
-            if c == -1:
-                continue
-            mem = [g for g in np.where(base_pred == c)[0] if g in pos]
-            if len(mem) < 2:
-                continue
-            lb = np.array([p2[pos[g]] for g in mem])
-            # ★ 같은 쌍 비율을 **닫힌 식**으로 센다. 예전엔 파이썬 이중 루프라
-            #   그룹이 커지면 O(n^2) 로 멈춘 것처럼 보였다 (2,000장 -> 200만 회 x bootstrap 5회).
-            #   같은 라벨끼리만 쌍이 되므로 라벨별 개수 m 에 대해 sum(m*(m-1)/2) 이면 된다.
-            #   noise(-1) 는 "같이 묶였다"로 치지 않으므로 분자에서 뺀다.
-            m = len(lb)
-            tot = m * (m - 1) // 2
-            if tot:
-                v, cnt = np.unique(lb[lb != -1], return_counts=True)
-                same = int((cnt * (cnt - 1) // 2).sum())
-                keep[c].append(same / tot)
-    return {c: float(np.mean(v)) if v else 0.0 for c, v in keep.items()}
 
 
 def reassign_display(mode: str) -> str:
@@ -709,11 +644,6 @@ def main():
     n = len(pred)
 
     clusters = sorted(int(c) for c in set(pred.tolist()) if c != -1)
-    # stability = seed(pre-reassign) 클러스터의 bootstrap co-assignment robustness.
-    # reassign 된 noise 는 HDBSCAN 이 낸 구조가 아니라 후처리 휴리스틱 소속이라 여기 섞으면
-    # "구조 안정성"이 아니라 "재배정 휴리스틱 안정성"이 되어 의미가 달라진다
-    # (base _grouping_deliverable.py 는 애초 reassign 이 없어 pred==seed_pred 였음 -- 그 의미를 유지).
-    stab = stability_by_partition(z, seed_pred, parts, a.mcs, a.ms, a.method, a.eps)
     lab = np.array([l if l is not None else "" for l in labels])
 
     _kind = "frozen" if not a.proj else ("adapted_ens" if len(tags) > 1 else "adapted")
@@ -774,7 +704,7 @@ def main():
                 print(f"  [warn] group {c} composite 실패: {e}", flush=True)
         # medoid = 그룹 중심에 가장 가까운 **실제 원본** (heatmap 과 대조용)
         shutil.copy2(paths[order[0]], comp_root / f"{gtag}_medoid_{Path(paths[order[0]]).name}")
-        rows.append({"group_id": c, "group_size": len(idx), "group_stability": round(stab.get(c, 0.0), 4),
+        rows.append({"group_id": c, "group_size": len(idx),
                       "group_coherence": round(coh, 4),
                       "review_status": "over_merged_review" if over else "candidate",
                       "model_mode": model_mode})
@@ -785,7 +715,7 @@ def main():
                               "purity": round(float(cnts.max() / cnts.sum()), 4)})
 
     with (out / "groups.csv").open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["group_id", "group_size", "group_stability", "group_coherence",
+        w = csv.DictWriter(f, fieldnames=["group_id", "group_size", "group_coherence",
                                            "review_status", "model_mode"])
         w.writeheader()
         w.writerows(rows)
@@ -795,7 +725,6 @@ def main():
                "seed_noise_pct": round(100.0 * seed_noise / n, 2),
                "over_merge_groups": [r["group_id"] for r in rows if r["review_status"].startswith("over")],
                "mean_coherence": round(float(np.mean([r["group_coherence"] for r in rows])) if rows else 0, 4),
-               "mean_stability": round(float(np.mean([r["group_stability"] for r in rows])) if rows else 0, 4),
                "model_mode": model_mode,
                "dial": {"mcs": a.mcs, "ms": a.ms, "method": a.method, "eps": a.eps},
                "reassign": reassign_info}

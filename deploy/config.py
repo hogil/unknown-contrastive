@@ -89,9 +89,9 @@ class Runtime:
     #     channels_last  1.03x  9.0e-4
     #     bf16 + CL      1.54x  6.4e-3   <- 오차가 크다
     #     fp16 + CL      1.50x  8.5e-4   <- 같은 속도에 오차 1/7
-    # ★ 기본 off 인 이유: 5.5e-4 오차만으로도 HDBSCAN bootstrap 이 뒤집혀
-    #   mean_stability 가 0.9682 -> 0.9624 로 갈린 실측이 있다. 측정 잡음폭이
-    #   ARI ±0.019 / Hom ±0.005 인 프로젝트에서 1.5배 때문에 지표를 흔들 수 없다.
+    # ★ 기본 off 인 이유: 5.5e-4 오차만으로도 경계 근처 점의 HDBSCAN 클러스터가
+    #   바뀐 실측이 있다. 측정 잡음폭이 ARI ±0.019 / Hom ±0.005 인 프로젝트에서
+    #   1.5배 때문에 지표를 흔들 수 없다.
     #   속도가 급하고 arm 끼리 상대비교만 하면 되면 fp16 을 켜라 (전 arm 동일 설정 필수).
     AMP = env("SITE_AMP", "off")               # off | fp16 | bf16
     CHANNELS_LAST = env("SITE_CHANNELS_LAST", False)
@@ -124,13 +124,9 @@ class Cluster:
     # 거리 척도. 임베딩이 L2 정규화돼 있어 euclidean 이 cosine 과 단조 동치다.
     METRIC = env("SITE_METRIC", "euclidean")
 
-    # ── group_stability (bootstrap co-assignment) ─────────────────────────
-    # ★ 기본값은 `_grouping_deliverable.py` 원본과 같다. 바꾸면 stability 숫자가
-    #   통째로 달라져 **과거 기록과 비교가 깨진다.** 재현성이 필요 없을 때만 만져라.
-    #   stability >= 0.75 가 무라벨 채택 게이트라 이 값들이 판정을 직접 움직인다.
-    STABILITY_NBOOT = env("SITE_STAB_NBOOT", 5)      # 부분표본 반복 횟수
-    STABILITY_FRAC = env("SITE_STAB_FRAC", 0.8)      # 매 반복에 쓰는 비율
-    STABILITY_SEED = env("SITE_STAB_SEED", 42)       # 고정 seed (재현성)
+    # ★ 260728: bootstrap group_stability(HDBSCAN 을 5회 더 돌려 재는 안정성 지표)는
+    #   사용자 지시로 제거했다 — "사내는 답이 없다, 결과를 빨리 눈으로 보고 값을
+    #   튜닝해가야 한다." HDBSCAN 은 이제 1회만 돈다. 무라벨 판단은 seed_noise/k/coherence.
 
     # 과병합 경고 임계 — 한 그룹이 자기 파티션의 이 비율 이상이면 review 표시.
     # ★ 전체 n 이 아니라 **자기 파티션** 기준이다 (분리 그룹핑을 켜면 전체 기준은 안 걸린다).
