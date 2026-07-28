@@ -437,6 +437,89 @@ def default_config_weights():
     return UC_NUM, uc_den(float(getattr(c, "WT0", 1.0)))
 
 
+# ── mapviewer 규격 palette-indexed 출력 (api/composite_map.py:1198-1290) ──
+# ★ RGB 배열을 만들지 않는다. **palette index 배열 (H,W) uint8 로 바로 렌더**한다.
+#     index 0~23    원본 palette (grade / 경계 / 배경)
+#     index 24~255  composite gradient 232 단계
+#   이렇게 하면
+#     - 6400x6400 RGB(123MB) 중간 배열이 안 생긴다 (index 배열 41MB 만)
+#     - 파일이 3.5배 작다 (실측 44.6MB -> 12.8MB)
+#     - index 의 의미가 **결정적**이라 파일끼리 비교 가능하고,
+#       색만 바꾸려면 PLTE 청크만 갈아끼우면 된다 (재렌더 불필요) — mapviewer UI 가 그렇게 한다
+COMPOSITE_GRADIENT_START = 24
+COMPOSITE_GRADIENT_END = 255
+COMPOSITE_GRADIENT_COUNT = COMPOSITE_GRADIENT_END - COMPOSITE_GRADIENT_START + 1   # 232
+
+
+def build_gradient_entries(stops_hex=None) -> list[int]:
+    """gradient 색을 palette 바이트로 (232*3=696). mapviewer `_build_composite_gradient_entries`."""
+    stops = [_hex(c) for c in (stops_hex or COLOR_STOPS_HEX)]
+    out: list[int] = []
+    n = len(stops) - 1
+    for i in range(COMPOSITE_GRADIENT_COUNT):
+        f = i / max(COMPOSITE_GRADIENT_COUNT - 1, 1) * n
+        lo = max(0, min(n, int(f)))
+        hi = min(n, lo + 1)
+        t = f - lo
+        out.extend(int(a + (b - a) * t) for a, b in zip(stops[lo], stops[hi]))
+    return out
+
+
+def build_sum_map_palette(base_palette: list[int], stops_hex=None) -> list[int]:
+    """256*3=768. index 0~23 = 원본 palette, 24~255 = gradient.
+    mapviewer `_build_sum_map_palette`."""
+    pal = list(base_palette[:768])
+    if len(pal) < 768:
+        pal.extend([0] * (768 - len(pal)))
+    pal[COMPOSITE_GRADIENT_START * 3:] = build_gradient_entries(stops_hex)
+    return pal
+
+
+def render_composite_indexed(value_map, mask, border, base_path, text=None,
+                             vmin=None, vmax=None, stops_hex=None):
+    """palette index 배열 + palette 를 돌려준다 (RGB 를 만들지 않는다).
+
+    렌더 규칙은 `render_composite` 와 같다:
+      chip 안 bin 번호 -> 지운다 / 경계 -> 전부 idx10 / grade -> gradient 24~255
+    ⚠ 원본 palette 의 index 24~30 은 gradient 에 덮인다. 우리 데이터는 0~23 + 31 만
+      쓰므로 안전하지만, 24~30 을 쓰는 palette 가 오면 경계로 보내야 한다.
+    """
+    base = Image.open(base_path)
+    if base.mode != "P":
+        base = base.convert("P", palette=Image.Palette.ADAPTIVE)
+    raw = base.getpalette() or []
+    idx = np.asarray(base, np.uint8).copy()
+
+    t = (idx == TEXT_IDX) if text is None else (text | (idx == TEXT_IDX))
+    idx[t] = 0                                   # bin 번호 -> grade0
+    idx[idx == BG_IDX] = 0                       # 배경 -> grade0 색(흰색)
+    idx[idx == TRANSPARENT_IDX] = 0
+    idx[border] = BORDER_IDX
+
+    v = value_map[mask]
+    if v.size:
+        lo = float(v.min()) if vmin is None else float(vmin)
+        hi = float(v.max()) if vmax is None else float(vmax)
+        if hi > lo:
+            sc = np.clip((v - lo) / (hi - lo), 0.0, 1.0)
+            g = np.rint(sc * (COMPOSITE_GRADIENT_COUNT - 1) + COMPOSITE_GRADIENT_START)
+            idx[mask] = np.clip(g, COMPOSITE_GRADIENT_START,
+                                COMPOSITE_GRADIENT_END).astype(np.uint8)
+        else:
+            idx[mask] = COMPOSITE_GRADIENT_START
+    return idx, build_sum_map_palette(raw, stops_hex)
+
+
+def save_palette_png(index_array, palette_list, path):
+    """mapviewer `_save_palette_png` 와 동일. compress_level 은 환경변수로."""
+    import os
+    im = Image.fromarray(np.asarray(index_array, np.uint8), mode="P")
+    im.putpalette(list(palette_list)[:768])
+    im.save(str(path), format="PNG", optimize=False,
+            compress_level=int(os.environ.get("SITE_PNG_COMPRESS", "6")))
+    return path
+
+
 def write_group_composites(paths, out_dir, grades: list[int] | None = None,
                            prefix: str = "", num=None, den=None,
                            base_path=None, stops_hex=None, positions=None,
@@ -460,17 +543,11 @@ def write_group_composites(paths, out_dir, grades: list[int] | None = None,
         paths, num=num, den=den, grades=grades)
     tag = "" if grades is None else "_" + "".join(str(g) for g in sorted(grades))
     base = base_path or paths[0]
-    # PNG 압축 레벨. 6400x6400 에서 level6 2.32s/36.5MB vs level1 0.91s/54.4MB —
-    # arm 6개 x 그룹 여러 개면 저장만으로 수십 초라 기본을 1 로 둔다.
-    import os
-    _cl = int(os.environ.get("SITE_PNG_COMPRESS", "1"))
-    render_composite(wt, m_wt, border, base, text,
-                     stops_hex=stops_hex, positions=positions).save(
-        out / f"{prefix}square_weighted_average{tag}.png", compress_level=_cl)
+    ix, pal = render_composite_indexed(wt, m_wt, border, base, text, stops_hex=stops_hex)
+    save_palette_png(ix, pal, out / f"{prefix}square_weighted_average{tag}.png")
     if also_square_average:
-        render_composite(sq, m_sq, border, base, text,
-                         stops_hex=stops_hex, positions=positions).save(
-            out / f"{prefix}square_average{tag}.png", compress_level=_cl)
+        ix2, pal2 = render_composite_indexed(sq, m_sq, border, base, text, stops_hex=stops_hex)
+        save_palette_png(ix2, pal2, out / f"{prefix}square_average{tag}.png")
     return {"n": n, "grades": grades, "stops": list(stops_hex),
             "wt_range": [float(wt[m_wt].min()), float(wt[m_wt].max())] if m_wt.any() else None,
             "sq_range": [float(sq[m_sq].min()), float(sq[m_sq].max())] if m_sq.any() else None}
