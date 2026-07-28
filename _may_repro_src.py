@@ -914,8 +914,16 @@ def main():
     logger.info(json.dumps(CFG, indent=2, ensure_ascii=False))
 
     # Data
+    # ★ 절대경로 + 장수를 먼저 찍는다 — 상대경로가 어느 폴더로 풀렸는지,
+    #   실제 몇 장이 잡히는지가 학습 사고의 대부분이다 (deploy/step 들의 [images] 와 동일 취지).
+    logger.info(f"[images] TRAIN_DIR   = {Path(CFG['TRAIN_DIR']).resolve()}")
+    logger.info(f"[images] UNKNOWN_DIR = {Path(CFG['UNKNOWN_DIR']).resolve()}")
     ds_u = _open_dataset(CFG["UNKNOWN_DIR"])               # 전수 임베딩/클러스터링 대상
     ds_t = _open_dataset(CFG["TRAIN_DIR"])                 # 학습 대상(작은 셋)
+    logger.info(f"[images] TRAIN_DIR   이미지 수 = {len(ds_t.samples):,} 장  "
+                f"({len(ds_t.classes)} class)")
+    logger.info(f"[images] UNKNOWN_DIR 이미지 수 = {len(ds_u.samples):,} 장  "
+                f"({len(ds_u.classes)} class)")
 
     # class_to_idx는 UNKNOWN 기준으로 기록
     class_to_idx = {c: i for i, c in enumerate(ds_u.classes)}
