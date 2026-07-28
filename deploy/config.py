@@ -26,6 +26,17 @@ from _site_common import env  # noqa: E402
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# ★★★ composite 색상표 — 파일 경로 + 쓸 스킴 이름. 여기서 바로 보고 바꾼다.
+#   실제 색상 값은 COLOR_LEGENDS_PATH 가 가리키는 JSON 안(composite.<scheme>)에 있다.
+#   스킴 목록: default / anonymous / light_low_035 / light_low_070 /
+#             fast_red_060 / fast_red_040 / fast_red_030 / fast_red_020
+#   (아래 `class Composite` 가 이 두 값을 읽어 쓴다 — env 로 override 하려면
+#    SITE_ENV_OVERRIDE=1 SITE_COLOR_LEGENDS=... SITE_COLOR_SCHEME=...)
+COLOR_LEGENDS_PATH = "D:/project/unknown-contrastive/deploy/color-legends.json"
+COLOR_SCHEME_NAME = "fast_red_020"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 class Paths:
     """모델 · 데이터 · 산출 경로."""
 
@@ -207,15 +218,15 @@ class Composite:
     #     "D:/project/mapviewer/logs/color-legends.json"
     #     단 그 파일의 composite.default 는 **원본 빨강 램프**라 "아래쪽 연하게"가 사라진다
     #     (그 파일에서 흑백인 건 composite 가 아니라 measure.default 다).
-    COLOR_LEGENDS = env("SITE_COLOR_LEGENDS",
-                        "D:/project/unknown-contrastive/deploy/color-legends.json")
-    # 위 파일의 composite.<scheme>. 색을 바꾸려면 **JSON 의 default 항목을 고치면 된다.**
-    #   default        = 채택안. 아래쪽(낮은 quantile)만 흰쪽으로 당겨 바닥을 죽인 것
+    COLOR_LEGENDS = env("SITE_COLOR_LEGENDS", COLOR_LEGENDS_PATH)
+    # 위 파일의 composite.<scheme>. 색을 바꾸려면 **JSON 의 항목을 고치면 된다**
+    # (또는 파일 맨 위 COLOR_LEGENDS_PATH/COLOR_SCHEME_NAME 을 바로 고쳐도 된다).
+    #   default        = 아래쪽(낮은 quantile)만 흰쪽으로 당겨 바닥을 죽인 것
     #   anonymous      = mapviewer 기본 빨강 램프 그대로
-    #   light_low_035 / light_low_070 = 세기 변형 (비교용)
-    #   fast_red_060 / fast_red_040 / fast_red_020 = light_low 의 반대 —
+    #   light_low_035 / light_low_070 = default 세기 변형 (비교용)
+    #   fast_red_060 / fast_red_040 / fast_red_030 / fast_red_020 = light_low 의 반대 —
     #     아래~중간 quantile 을 더 빨리 빨갛게 당김 (숫자가 작을수록 세게). 260728 채택.
-    COLOR_SCHEME = env("SITE_COLOR_SCHEME", "fast_red_020")
+    COLOR_SCHEME = env("SITE_COLOR_SCHEME", COLOR_SCHEME_NAME)
 
     # ── 값 계산 ───────────────────────────────────────────────────────────
     # sq  = 원본 mapviewer   : 분자 grade^2      [0,1,4,9,16,25,36,49]
