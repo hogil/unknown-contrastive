@@ -213,7 +213,9 @@ class Composite:
     #   default        = 채택안. 아래쪽(낮은 quantile)만 흰쪽으로 당겨 바닥을 죽인 것
     #   anonymous      = mapviewer 기본 빨강 램프 그대로
     #   light_low_035 / light_low_070 = 세기 변형 (비교용)
-    COLOR_SCHEME = env("SITE_COLOR_SCHEME", "default")
+    #   fast_red_060 / fast_red_040 / fast_red_020 = light_low 의 반대 —
+    #     아래~중간 quantile 을 더 빨리 빨갛게 당김 (숫자가 작을수록 세게). 260728 채택.
+    COLOR_SCHEME = env("SITE_COLOR_SCHEME", "fast_red_020")
 
     # ── 값 계산 ───────────────────────────────────────────────────────────
     # sq  = 원본 mapviewer   : 분자 grade^2      [0,1,4,9,16,25,36,49]
