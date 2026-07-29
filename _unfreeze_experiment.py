@@ -91,9 +91,15 @@ def score_state(sd_backbone, proj_sd, paths, labels, dev, batch, mcs, ms, method
     meas = ~np.isin(lab, list(ign))
     fp = _drop_megaclusters(pred.copy(), 0.20)
     r = _summarize_predictions(z[meas], lab[meas], fp[meas], fp, lab, ign, "uf")
-    return {"P1": r["P1_capture"], "P2_noise": r["P2_noise_pct"], "P3_comp": r["P3_completeness"],
-            "P4_hom": r["P4_homogeneity"], "ARI": r["ARI"], "k": r["k"],
-            "seed_noise": round(100.0 * float((pred == -1).sum()) / len(pred), 2)}
+    out = {"P1": r["P1_capture"], "P2_noise": r["P2_noise_pct"], "P3_comp": r["P3_completeness"],
+           "P4_hom": r["P4_homogeneity"], "ARI": r["ARI"], "k": r["k"],
+           "seed_noise": round(100.0 * float((pred == -1).sum()) / len(pred), 2)}
+    # ★ 표현 붕괴 탐지. backbone 을 열면 contrastive 가 전부 한 점으로 뭉개는 해로
+    #   빠질 수 있다 (severstal seed1: noise 1.61% 인데 ARI/Comp 가 0.0 — "아무것도
+    #   안 버리고 전부 한 덩어리"). 숫자만 보면 noise 가 낮아 **좋아 보이는 게 최악**이라
+    #   반드시 따로 표시한다 (260729 실측).
+    out["collapsed"] = bool(float(r["ARI"]) <= 1e-9 and float(r["P3_completeness"]) <= 1e-9)
+    return out
 
 
 def load_sd(p):
@@ -184,9 +190,10 @@ def main() -> int:
           f"{'bbΔ%':>9}{'moved':>10}")
     print("-" * 84)
     for n, r in rows.items():
+        _flag = "  ★붕괴" if r.get("collapsed") else ""
         print(f"{n:<22}{str(r['P1']):>7}{r['seed_noise']:>12}{r['ARI']:>9}"
               f"{r['P3_comp']:>8}{r['P4_hom']:>8}{r['k']:>5}"
-              f"{str(r.get('bb_shift_median_pct','-')):>9}{str(r.get('bb_moved_tensors','-')):>10}")
+              f"{str(r.get('bb_shift_median_pct','-')):>9}{str(r.get('bb_moved_tensors','-')):>10}{_flag}")
     print("=" * 84)
     print("★ bbΔ% = **변한 텐서만**의 중앙값 / moved = 변한 텐서 수. b4 는 0.135%(378/378) 였다.")
     print("★ 판정: uf* 가 frozen_headonly 를 P1>P2_noise 순으로 이겨야 부분해동이 이득이다.")
