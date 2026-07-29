@@ -71,6 +71,16 @@ CFG: Dict[str, Any] = {
     "WARMUP_EPOCHS": 2,           # 워밍업 에폭(학습 안정화)
     "BATCH": 256,                 # 배치 크기 (GPU 메모리 고려)
     "LR_HEAD": 1e-3,              # 헤드 학습률
+    # ★ backbone 부분 해동 (260729). 기본 0 = 기존 동작(완전 freeze) 그대로.
+    #   근거: b4 배포본이 이긴 이유가 backbone 을 **아주 약하게 방향성 있게** 미세조정한
+    #   것이었다 — FCMAE 대비 중앙값 0.135% 변화. 같은 크기 랜덤섭동 8개는 전부 b4 에
+    #   못 미쳤다(`_b4_perturbation_control.py`, runs/b4_perturb/clean546_n8.json).
+    #   그런데 우리 레시피는 backbone 을 얼리고 head 만 학습해서 그 축을 아예 못 건드렸다.
+    #   N = 뒤에서부터 해동할 stage 수 (ConvNeXt 는 stages.0~3). 1 이면 stages.3 만.
+    "UNFREEZE_LAST_N": 0,
+    #   해동한 backbone 의 학습률. 0 이면 LR_HEAD/100 (b4 수준의 미세 변화를 노린 값).
+    #   ⚠ head LR 을 그대로 쓰면 사전학습 표현이 부서진다 — 반드시 훨씬 작게.
+    "LR_BACKBONE": 0.0,
     "WD": 1e-6,                   # weight decay
     "TEMP": 0.07,                 # InfoNCE temperature
     "SEED": 42,                   # 시드(가능한 결정성↑)
@@ -151,6 +161,8 @@ if _os.environ.get("REPRO_BATCH"):
 # ★ recipe knob sweep (coordinate-descent 최적화용). 값 없으면 baseline 유지.
 if _os.environ.get("REPRO_TEMP"):    CFG["TEMP"] = float(_os.environ["REPRO_TEMP"])
 if _os.environ.get("REPRO_LR"):      CFG["LR_HEAD"] = float(_os.environ["REPRO_LR"])
+if _os.environ.get("REPRO_UNFREEZE"):    CFG["UNFREEZE_LAST_N"] = int(_os.environ["REPRO_UNFREEZE"])
+if _os.environ.get("REPRO_LR_BACKBONE"): CFG["LR_BACKBONE"] = float(_os.environ["REPRO_LR_BACKBONE"])
 if _os.environ.get("REPRO_QUEUE"):   CFG["QUEUE_SIZE"] = int(_os.environ["REPRO_QUEUE"])
 if _os.environ.get("REPRO_NEG"):     CFG["IGNORE_NEG_SIM"] = float(_os.environ["REPRO_NEG"])
 if _os.environ.get("REPRO_EPOCHS"):  CFG["EPOCHS"] = int(_os.environ["REPRO_EPOCHS"])
@@ -304,6 +316,28 @@ class CL(nn.Module):
         self.proj = Proj(d, CFG["PROJ_DIM"])
         if CFG["FREEZE_BACKBONE"]:
             for p in self.backbone.parameters(): p.requires_grad=False
+            # ★ 부분 해동 — 뒤쪽 stage N 개만 다시 켠다 (260729).
+            #   앞쪽 stage 는 저수준 특징이라 건드릴 이유가 적고, 해동 범위가 넓을수록
+            #   사전학습 표현이 망가질 위험이 커진다. 그래서 뒤에서부터만 연다.
+            n_uf = int(CFG.get("UNFREEZE_LAST_N", 0) or 0)
+            if n_uf > 0:
+                stages = getattr(self.backbone, "stages", None)
+                if stages is None:
+                    raise RuntimeError("UNFREEZE_LAST_N 을 썼는데 backbone 에 .stages 가 없다 "
+                                       "— 이 backbone 구조에선 해동 범위를 정의할 수 없다.")
+                n_uf = min(n_uf, len(stages))
+                opened = []
+                for s in range(len(stages) - n_uf, len(stages)):
+                    for p in stages[s].parameters(): p.requires_grad = True
+                    opened.append(f"stages.{s}")
+                # norm_pre 는 stages 직후라 같이 연다 (있을 때만)
+                if hasattr(self.backbone, "norm_pre"):
+                    for p in self.backbone.norm_pre.parameters(): p.requires_grad = True
+                    opened.append("norm_pre")
+                n_tr = sum(p.numel() for p in self.backbone.parameters() if p.requires_grad)
+                n_all = sum(p.numel() for p in self.backbone.parameters())
+                print(f"[unfreeze] backbone 부분 해동: {opened}  "
+                      f"({n_tr/1e6:.1f}M / {n_all/1e6:.1f}M = {100*n_tr/n_all:.1f}%)", flush=True)
         # ★ residual adapter (REPRO_ADAPTER=1): f + γ·adapt(f), γ=0 init → frozen 하한 보장. backbone 은 여전히 frozen.
         self.use_adapter = _os.environ.get("REPRO_ADAPTER") == "1"
         if self.use_adapter:
@@ -959,9 +993,24 @@ def main():
 
     # Model / Optim
     model = CL().to(device).to(memory_format=torch.channels_last)
-    # 옵티마(헤드만 학습 or 전체): 현재는 FREEZE_BACKBONE=True라 헤드만 대상
-    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],
-                            lr=CFG["LR_HEAD"], weight_decay=CFG["WD"])
+    # 옵티마 — backbone 을 부분 해동했으면 **별도 param group 에 훨씬 작은 LR** 을 준다.
+    # ★ head LR(보통 4e-3)을 사전학습 backbone 에 그대로 먹이면 표현이 부서진다.
+    #   목표는 b4 수준(중앙값 0.135%)의 미세한 방향성 변화라 기본은 LR_HEAD/100.
+    _bb_ids = {id(p) for p in model.backbone.parameters()}
+    _bb = [p for p in model.parameters() if p.requires_grad and id(p) in _bb_ids]
+    _hd = [p for p in model.parameters() if p.requires_grad and id(p) not in _bb_ids]
+    if _bb:
+        lr_bb = float(CFG.get("LR_BACKBONE") or 0.0) or CFG["LR_HEAD"] / 100.0
+        groups = [{"params": _hd, "lr": CFG["LR_HEAD"]},
+                  {"params": _bb, "lr": lr_bb}]
+        print(f"[optim] head {sum(p.numel() for p in _hd)/1e6:.2f}M @ lr={CFG['LR_HEAD']:.2e}  |  "
+              f"backbone {sum(p.numel() for p in _bb)/1e6:.1f}M @ lr={lr_bb:.2e}", flush=True)
+    else:
+        groups = [{"params": _hd, "lr": CFG["LR_HEAD"]}]
+    opt = torch.optim.AdamW(groups, lr=CFG["LR_HEAD"], weight_decay=CFG["WD"])
+    # 워밍업이 group 별 LR 을 덮어쓰지 않도록 각자의 기준 LR 을 보관해 둔다.
+    for g in opt.param_groups:
+        g["base_lr"] = g["lr"]
     scaler = torch.amp.GradScaler("cuda", enabled=(device.type=="cuda"))
     neg_bank = QueueBank(CFG["PROJ_DIM"], CFG["QUEUE_SIZE"]).to(device) if CFG["USE_QUEUE"] else None
 
@@ -970,9 +1019,13 @@ def main():
     for ep in range(1, CFG["EPOCHS"]+1):
         # LR warmup (옵션)
         if CFG["WARMUP_EPOCHS"] > 0 and ep <= CFG["WARMUP_EPOCHS"]:
-            warm_lr = CFG["LR_HEAD"] * (ep / max(1, CFG["WARMUP_EPOCHS"]))
-            for g in opt.param_groups: g["lr"] = warm_lr
-            logger.info(f"[LR warmup] epoch {ep} lr={warm_lr:.2e}")
+            # ★ group 마다 **자기 기준 LR** 에 비율을 곱한다. 예전처럼 한 값으로 덮으면
+            #   backbone group 이 head LR 을 받아 사전학습 표현이 부서진다 (260729).
+            _r = ep / max(1, CFG["WARMUP_EPOCHS"])
+            for g in opt.param_groups:
+                g["lr"] = g.get("base_lr", CFG["LR_HEAD"]) * _r
+            _lrs = [round(g["lr"], 10) for g in opt.param_groups]
+            logger.info(f"[LR warmup] epoch {ep} ratio={_r:.2f} lrs={_lrs}")
 
         # 에폭별 샘플링
         r = float(CFG.get("TRAIN_SAMPLING_RATIO", 1.0))

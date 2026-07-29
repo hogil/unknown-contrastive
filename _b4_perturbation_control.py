@@ -164,15 +164,20 @@ def main() -> int:
     pert = [r for n, r in rows if n.startswith("perturb")]
     fc, b4 = rows[0][1], rows[1][1]
     print("\n" + "=" * 76)
-    print("[판정] b4 의 우위가 '같은 크기 랜덤 섭동' 분포 안에 들어가는가?")
+    print("[판정] b4 가 '같은 크기 랜덤 섭동' 분포의 어디에 있는가?")
+    print("       ★ 분포 밖이라고 다 좋은 게 아니다 — **어느 쪽으로** 벗어났는지가 결론이다.")
     for key, better_is_low in (("P1", False), ("seed_noise", True), ("ARI", False)):
         vals = [p1num(p[key]) if key == "P1" else p[key] for p in pert]
         bv = p1num(b4[key]) if key == "P1" else b4[key]
         fv = p1num(fc[key]) if key == "P1" else fc[key]
         lo, hi = min(vals), max(vals)
-        inside = lo <= bv <= hi
-        print(f"  {key:<11} FCMAE={fv:<9} b4={bv:<9} 섭동범위=[{lo}, {hi}]  "
-              f"-> b4 {'분포 안 (운으로 설명됨)' if inside else '★분포 밖 (진짜 신호)'}")
+        if lo <= bv <= hi:
+            verdict = "분포 안 — 운으로 설명됨 (신호 없음)"
+        elif (bv < lo) == better_is_low:
+            verdict = "★분포 밖 · 더 좋은 쪽 — 진짜 이득"
+        else:
+            verdict = "▼분포 밖 · 더 나쁜 쪽 — 진짜 손해 (랜덤섭동보다도 나쁘다)"
+        print(f"  {key:<11} FCMAE={fv:<9} b4={bv:<9} 섭동범위=[{lo}, {hi}]  -> {verdict}")
     print("=" * 76)
 
     outp = REPO / a.out
