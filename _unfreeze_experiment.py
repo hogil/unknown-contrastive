@@ -152,7 +152,12 @@ def main() -> int:
     for tag, n_uf, lr_bb, tb in ARMS:
         if _only and tag not in _only:
             continue
-        run_dir = out_root / (tag if a.seed == 42 else f"{tag}_s{a.seed}")
+        # ★★ run dir 에 **pool 이름**이 반드시 들어가야 한다. 예전엔 tag(+seed)만 써서,
+        #    다른 pool 로 돌려도 앞 pool 의 체크포인트를 찾아 **학습을 건너뛰고 그걸 채점**했다.
+        #    그 탓에 severstal/anchor "교차검증"이 실제로는 clean546 학습본을 다른 pool 에
+        #    갖다 댄 교차전이 측정이었고, 그걸 근거로 낸 기각 결론이 전부 무효였다 (260730).
+        _pool_tag = Path(a.pool).stem
+        run_dir = out_root / _pool_tag / (tag if a.seed == 42 else f"{tag}_s{a.seed}")
         ck_glob = sorted(run_dir.glob(f"abl_uf_{tag}_B4_*/checkpoints/last_training.pt"))
         if not ck_glob and not a.skip_train:
             print(f"\n=== 학습 {tag} (unfreeze={n_uf}, lr_bb={lr_bb or 'auto(1/100)'}) ===", flush=True)

@@ -1,11 +1,21 @@
-# backbone 부분 해동 — **최종 기각** (260729~30)
+# backbone 부분 해동 — clean546 3승, 교차검증 **재실행 중** (260729~30)
 
-> **결론 먼저**: clean546 에서 3-seed 전승했지만 severstal 에서 2/3 붕괴, anchor 에서
-> 3패로 **기각**. `FREEZE_BACKBONE=True` 유지. clean546 승리는 도메인 특화조차 아닌
-> **pool 특이 현상**이었다. (아래는 그 경과를 시간순으로 남긴 것 — 중간의 "승자 확정"
-> 절은 clean546 단독 결과일 때의 기록이고 최종 결론이 아니다.)
-> ★ 이 과정에서 **더 큰 발견**이 나왔다 — 문서 끝의 "학습한 head 가 anchor 에서 P1 을
-> 망친다" 절을 볼 것.
+> ## ★★★ 정정 (260730) — 아래 severstal/anchor 절은 **무효다**
+> `_unfreeze_experiment.py` 의 run dir 이 `runs/unfreeze/<tag>` 로 **pool 이름을 안 담아서**,
+> severstal/anchor 로 돌렸을 때 clean546 실험이 남긴 같은 tag 의 체크포인트를 발견하고
+> **학습을 건너뛴 뒤 그 clean546 학습본을 채점**했다. 즉 그 절들은 "그 pool 에서 학습한
+> 레시피"가 아니라 **"clean546 학습본을 다른 pool 에 갖다 댄 교차전이"** 를 측정했다.
+> severstal 의 "붕괴"도 웨이퍼 학습본을 철강에 쓴 결과라 당연한 것이었다.
+>
+> **따라서 "최종 기각"·"pool 특이 현상"·"학습한 head 가 anchor 의 P1 을 망친다" 는 전부
+> 근거가 없다.** 유효한 것은 **clean546 3-seed 전승뿐**이다.
+> 증거: `frozen_headonly` 체크포인트의 `cfg.TRAIN_DIR` = `mwm38_clean546.json`, class 9개
+> (anchor 43 / severstal 5). 무효 산출은 `runs/unfreeze/_INVALID_crosspool_260730/` 로 격리.
+> 수정: run dir 에 pool stem 추가 -> `runs/unfreeze/<pool>/<tag>`. severstal 재실행 중.
+>
+> 교훈: **"학습을 건너뛴다"는 최적화는 건너뛴 조건이 같은지 확인하는 코드가 없으면
+> 조용히 다른 실험을 측정한다.** skip 키에 실험을 규정하는 축(pool·seed·레시피)이 전부
+> 들어가야 한다.
 
 판정 기준은 **사전등록본**(`docs/paper/LABELFREE_SELECTION_PREREG_260729.md`)을 그대로 쓴다:
 P1 > P2_noise > P3_comp > P4_hom 사전식, 밴드 noise ±2.28pp / Comp ±0.033 / Hom ±0.005.
@@ -77,7 +87,7 @@ b4 를 흉내내는 게 아니라 훨씬 크게 움직이면서 더 안정적이
 **원본 backbone** 에 붙여 재게 되어 해동 효과가 통째로 사라진다. 전 arm 을 같은 epoch 으로
 학습해 `last_training.pt`(backbone 378 + head 8 전체 보유)로 채점한다.
 
-## ★★ severstal 교차검증 = **거부. 일반 레시피로 채택 불가** (260730)
+## ~~severstal 교차검증~~ — ⚠ **무효 (학습이 안 일어났다, 위 정정 참조)**
 
 | seed | frozen_headonly | uf1_lr1e-3 |
 |---|---|---|
@@ -102,7 +112,7 @@ backbone 을 열자 contrastive 가 퇴화해가 걸렸다. 나머지 1 seed 도
   클래스가 4개뿐(clean546 은 9개)이다. 어려운 과제 + 적은 클래스에서 backbone 을 열면
   퇴화해로 빠지기 쉽다. **검증 안 된 가설이다.**
 
-## ★★★ anchor 도 거부 = **최종 기각. clean546 승리는 pool 특이 현상이었다** (260730)
+## ~~anchor 도 거부~~ — ⚠ **무효 (학습이 안 일어났다, 위 정정 참조)**
 
 anchor(웨이퍼, 2260장, 측정 37클래스, mcs12/ms4) — P1(1순위 기준) **3-seed 전패**:
 
@@ -118,7 +128,11 @@ clean546 3승은 도메인 특화가 아니라 **그 pool 에서만 나는 현�
 
 증거 요약: clean546 3승 / severstal 2붕괴+1패 / anchor 3패.
 
-## ★★★ 훨씬 큰 발견 — **학습한 head 가 anchor 에서 P1 을 망친다**
+## ~~훨씬 큰 발견 — 학습한 head 가 anchor 에서 P1 을 망친다~~ — ⚠ **무효**
+
+(아래 표의 `frozen_headonly` 행은 anchor 로 학습한 게 아니라 **clean546 학습본**이다.
+'우리 레시피가 P1 을 망친다'가 아니라 '다른 pool 학습본을 갖다 대면 나쁘다'일 뿐이다.
+PROJ_DIM 가설도 이 무효 관측에서 나온 것이라 **재확인 전까지 보류**한다.)
 
 같은 표에서 나온, 부분해동보다 중요한 사실:
 
