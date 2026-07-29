@@ -40,13 +40,28 @@ import grouping_deploy as gd  # noqa: E402
 
 FCMAE = "weights/convnextv2_base.fcmae_ft_in22k_in1k_384.pth"
 
-# (tag, UNFREEZE_LAST_N, LR_BACKBONE)  — LR_BACKBONE 0 이면 LR_HEAD/100
+# (tag, UNFREEZE_LAST_N, LR_BACKBONE, TRAIN_BATCH) — LR_BACKBONE 0 이면 LR_HEAD/100
+# ★ 해동 stage 를 늘리면 activation 이 늘어 OOM 난다 (uf2 가 batch64 에서 CUDA OOM,
+#   260729 실측). 학습 batch 만 낮춘다 — 채점 batch 는 arm 마다 동일하게 유지해야
+#   비교가 안 흔들린다.
 ARMS = [
-    ("frozen_headonly", 0, 0.0),        # 현행 레시피 = 기준선
-    ("uf1_lr1e-5",      1, 1e-5),       # 마지막 stage, head LR 의 1/100
-    ("uf1_lr1e-4",      1, 1e-4),       # 마지막 stage, 1/10  (더 크게 움직임)
-    ("uf2_lr1e-5",      2, 1e-5),       # 마지막 2 stage
+    ("frozen_headonly", 0, 0.0,  64),   # 현행 레시피 = 기준선
+    ("uf1_lr1e-5",      1, 1e-5, 64),   # 마지막 stage, head LR 의 1/100
+    ("uf1_lr1e-4",      1, 1e-4, 64),   # 마지막 stage, 1/10  (더 크게 움직임)
+    ("uf2_lr1e-5",      2, 1e-5, 24),   # 마지막 2 stage (batch 낮춰 OOM 회피)
+    ("uf1_lr1e-3",      1, 1e-3, 64),   # 마지막 stage, head 와 동일 LR (상한 탐색)
 ]
+
+
+def build_head(proj_sd, dev):
+    """last_training.pt 의 `proj.net.*` 를 grouping_deploy 와 **같은 구조**로 되살린다.
+    ★ 이걸 안 붙이면 학습한 head 를 버리고 backbone 만 채점하게 되어,
+      head-only 학습 arm 이 학습 안 한 FCMAE 와 **소수점까지 같은 점수**로 나온다
+      (260729 실측으로 걸린 함정)."""
+    pj = {k[len("net."):] if k.startswith("net.") else k: v for k, v in proj_sd.items()}
+    proj = gd.build_proj()
+    proj.load_state_dict(pj)
+    return proj.eval().to(dev)
 
 
 def score_state(sd_backbone, proj_sd, paths, labels, dev, batch, mcs, ms, method, eps):
@@ -63,10 +78,8 @@ def score_state(sd_backbone, proj_sd, paths, labels, dev, batch, mcs, ms, method
     m = gd.maybe_channels_last(m.eval().to(dev))
     with torch.no_grad():
         raw = gd.embed_backbone(paths, m, dev, batch, None, "feat")
-        if proj_sd is not None:
-            proj = gd.load_proj_from_state(proj_sd, dev) if hasattr(gd, "load_proj_from_state") else None
-            if proj is not None:
-                raw = proj(raw.to(dev)).cpu()
+        if proj_sd:
+            raw = build_head(proj_sd, dev)(raw.to(dev)).cpu()
     z = torch.nn.functional.normalize(raw.float(), dim=1).numpy().astype("float32")
     pred = gd.hdbscan_predict(z, mcs, ms, method, eps)
     lab = np.array([l if l is not None else "" for l in labels])
@@ -101,6 +114,7 @@ def main() -> int:
     ap.add_argument("--device", default="auto")
     ap.add_argument("--out", default="runs/unfreeze/report.json")
     ap.add_argument("--skip-train", action="store_true", help="이미 학습된 것만 채점")
+    ap.add_argument("--arms", default="", help="콤마구분 tag 만 실행 (기본 전체)")
     a = ap.parse_args()
 
     dev = gd.resolve_device(a.device)
@@ -119,15 +133,18 @@ def main() -> int:
                                               dev, a.batch, a.mcs, a.ms, a.method, a.eps)
 
     out_root = REPO / "runs/unfreeze"
-    for tag, n_uf, lr_bb in ARMS:
-        run_dir = out_root / tag
+    _only = {x.strip() for x in a.arms.split(",") if x.strip()}
+    for tag, n_uf, lr_bb, tb in ARMS:
+        if _only and tag not in _only:
+            continue
+        run_dir = out_root / (tag if a.seed == 42 else f"{tag}_s{a.seed}")
         ck_glob = sorted(run_dir.glob(f"abl_uf_{tag}_B4_*/checkpoints/last_training.pt"))
         if not ck_glob and not a.skip_train:
             print(f"\n=== 학습 {tag} (unfreeze={n_uf}, lr_bb={lr_bb or 'auto(1/100)'}) ===", flush=True)
             env = dict(os.environ)
             env.update({
                 "REPRO_DATA": str(REPO / a.pool), "REPRO_BACKBONE": str(REPO / FCMAE),
-                "REPRO_OUT": str(run_dir / "run"), "REPRO_BATCH": str(a.batch),
+                "REPRO_OUT": str(run_dir / "run"), "REPRO_BATCH": str(tb),
                 "REPRO_EPOCHS": str(a.epochs), "REPRO_SEED": str(a.seed),
                 "REPRO_TAG": f"_uf_{tag}", "REPRO_UNFREEZE": str(n_uf),
                 "REPRO_LR_BACKBONE": str(lr_bb), "PYTHONIOENCODING": "utf-8",
@@ -143,24 +160,31 @@ def main() -> int:
         if not bb:
             print(f"[error] {tag}: 체크포인트에 backbone.* 가 없다 -> 건너뜀", flush=True)
             continue
-        print(f"[score] {tag}  (backbone 텐서 {len(bb)}개)", flush=True)
-        rows[tag] = score_state(bb, None, paths, labels, dev, a.batch,
+        pj = {k[len("proj."):]: v for k, v in full.items() if k.startswith("proj.")}
+        print(f"[score] {tag}  (backbone {len(bb)}개 + head {len(pj)}개)", flush=True)
+        rows[tag] = score_state(bb, pj, paths, labels, dev, a.batch,
                                 a.mcs, a.ms, a.method, a.eps)
-        # 학습이 backbone 을 실제로 얼마나 움직였는지 (0 이면 해동이 안 먹은 것)
+        # 학습이 backbone 을 실제로 얼마나 움직였는지.
+        # ★ 378개 **전체**의 중앙값을 쓰면 안 된다 — 해동한 건 stages.3 뿐(약 20%)이라
+        #   중앙값이 항상 0 으로 나와 "안 움직였다"는 거짓 신호를 준다 (260729 실측).
+        #   변한 텐서만 골라 중앙값을 내고, 몇 개가 변했는지도 같이 남긴다.
         fc = load_sd(REPO / FCMAE)
-        d = [( (bb[k].float()-fc[k].float()).abs().mean() / fc[k].float().abs().mean() ).item()
+        d = [((bb[k].float() - fc[k].float()).abs().mean() / fc[k].float().abs().mean()).item()
              for k in bb if k in fc and bb[k].shape == fc[k].shape and fc[k].float().abs().mean() > 0]
-        rows[tag]["bb_shift_median_pct"] = round(float(np.median(d)) * 100, 4)
+        moved = [x for x in d if x > 1e-9]
+        rows[tag]["bb_moved_tensors"] = f"{len(moved)}/{len(d)}"
+        rows[tag]["bb_shift_median_pct"] = round(float(np.median(moved)) * 100, 4) if moved else 0.0
 
     print("\n" + "=" * 84)
-    print(f"{'arm':<22}{'P1':>7}{'seed_noise':>12}{'ARI':>9}{'Comp':>8}{'Hom':>8}{'k':>5}{'bbΔ%':>9}")
+    print(f"{'arm':<22}{'P1':>7}{'seed_noise':>12}{'ARI':>9}{'Comp':>8}{'Hom':>8}{'k':>5}"
+          f"{'bbΔ%':>9}{'moved':>10}")
     print("-" * 84)
     for n, r in rows.items():
         print(f"{n:<22}{str(r['P1']):>7}{r['seed_noise']:>12}{r['ARI']:>9}"
               f"{r['P3_comp']:>8}{r['P4_hom']:>8}{r['k']:>5}"
-              f"{str(r.get('bb_shift_median_pct','-')):>9}")
+              f"{str(r.get('bb_shift_median_pct','-')):>9}{str(r.get('bb_moved_tensors','-')):>10}")
     print("=" * 84)
-    print("★ bbΔ% = 학습이 backbone 을 움직인 정도(중앙값). b4 는 0.135% 였다.")
+    print("★ bbΔ% = **변한 텐서만**의 중앙값 / moved = 변한 텐서 수. b4 는 0.135%(378/378) 였다.")
     print("★ 판정: uf* 가 frozen_headonly 를 P1>P2_noise 순으로 이겨야 부분해동이 이득이다.")
 
     outp = REPO / a.out
