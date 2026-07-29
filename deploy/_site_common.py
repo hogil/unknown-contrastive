@@ -154,7 +154,13 @@ def live_dial() -> tuple[int, int, str, float]:
 
 
 def show_config(C) -> dict:
-    """Config 클래스의 대문자 속성을 표로 출력하고 dict 로 반환 (재현성 기록용)."""
+    """Config 클래스의 대문자 속성을 표로 출력하고 dict 로 반환 (재현성 기록용).
+
+    ★ 여기서 `apply_cluster_env()` 도 같이 부른다 — 모든 step 이 main() 맨 앞에서
+      이 함수를 부르므로, 한 군데만 걸어두면 step 하나를 빠뜨릴 일이 없다.
+      (step 을 빠뜨려서 생기는 조용한 불일치가 바로 260729 감사에서 나온 버그다.)
+    """
+    apply_cluster_env()
     d = {k: getattr(C, k) for k in dir(C) if k.isupper() and not k.startswith("_")}
     src = "config.py  (SITE_ENV_OVERRIDE=1 이면 환경변수가 이긴다)"
     if _ENV_OVERRIDE:
@@ -281,13 +287,43 @@ def cluster_env() -> dict:
         from config import Cluster as C, Composite as K
     except Exception:
         return {}
-    return {
+    try:
+        from config import Runtime as R
+    except Exception:
+        R = None
+    d = {
         "SITE_COMPOSITE_MAX_MEMBERS": str(K.MAX_MEMBERS),
         "UC_PALETTE_MODE": str(C.PALETTE_MODE),
         "SITE_METRIC": str(C.METRIC),
         "SITE_OVER_MERGE_FRAC": str(C.OVER_MERGE_FRAC),
         "SITE_HDBSCAN_GPU": "1" if C.HDBSCAN_GPU else "0",
     }
+    if R is not None:
+        # ★ 260729 감사: 이 3개도 config 에 써도 아무 데도 도달하지 않고 있었다
+        #   (cluster_env 가 만들어진 이유와 똑같은 실패가 3건 더 남아 있었다).
+        #   grouping_deploy 는 셋 다 os.environ 에서 읽는다.
+        d.update({
+            "SITE_DECODE_WORKERS": str(R.DECODE_WORKERS),
+            "SITE_AMP": str(R.AMP),
+            "SITE_CHANNELS_LAST": "1" if R.CHANNELS_LAST else "0",
+        })
+    return d
+
+
+def apply_cluster_env() -> dict:
+    """`cluster_env()` 를 **이 프로세스의 os.environ 에도** 적용한다.
+
+    ★ run() 은 서브프로세스 env 만 채운다(e = dict(os.environ) 사본). 그런데
+      step2 의 Rule C 채점과 step5 의 시간축 격자는 **step 자기 프로세스 안에서**
+      grouping_deploy.hdbscan_predict 를 직접 부르고, 그건 SITE_METRIC /
+      SITE_HDBSCAN_GPU 를 os.environ 에서 읽는다. 그래서 예전엔 config 로
+      METRIC=cosine 을 켜면 **최종 grouping 만 cosine, epoch 선택은 euclidean**
+      이라는 split-brain 이 조용히 생겼다 (260729 감사).
+      각 step 이 시작할 때 한 번 부르면 in-process 와 subprocess 가 같아진다.
+    """
+    e = cluster_env()
+    os.environ.update(e)
+    return e
 
 
 def deploy_cmd(backbone: str, pool: str, out: Path, mcs: int, ms: int,

@@ -55,15 +55,28 @@ def load_step0(out_root) -> dict:
 
 
 def score_epochs(pool: str, backbone: str, ckpt_dir: Path, mcs: int, ms: int,
-                 device: str, batch: int, cache_dir: str = "") -> list[dict]:
+                 device: str, batch: int, cache_dir: str = "",
+                 method: str = "", eps=None) -> list[dict]:
     """backbone feature 1회 계산 후 epoch head 별 label-free 지표.
 
     라벨을 전혀 쓰지 않는다 (사내엔 없다).
+
+    ★ method/eps 를 안 주면 config.Cluster 에서 그때 읽는다. 예전엔 "leaf"/0.06 이
+      하드코딩돼 있어서, config 로 METHOD=eom 을 켜도 **최종 grouping 만 eom 이고
+      epoch 선택(Rule C)은 leaf 로 채점**됐다 — 고른 epoch 이 배포 다이얼 기준
+      argmin 이 아니게 되는데 로그엔 아무 표시도 없었다 (260729 감사).
     """
     add_path(REPO)
     import torch
     import torch.nn.functional as F
     import grouping_deploy as gd
+
+    if not method or eps is None:
+        from config import Cluster as _C
+        method = method or str(_C.METHOD)
+        eps = _C.EPS if eps is None else eps
+    _method, _eps = str(method), float(eps)
+    print(f"  [score] HDBSCAN mcs={mcs} ms={ms} method={_method} eps={_eps}", flush=True)
 
     paths, _ = gd.collect_pool(str(rel(pool)))
     if not paths:
@@ -90,7 +103,7 @@ def score_epochs(pool: str, backbone: str, ckpt_dir: Path, mcs: int, ms: int,
         proj = gd.load_proj(str(cp), device)
         with torch.no_grad():
             z = F.normalize(proj(raw.to(device)), dim=1).cpu().numpy()
-        pred = gd.hdbscan_predict(z, mcs, ms, "leaf", 0.06)
+        pred = gd.hdbscan_predict(z, mcs, ms, _method, _eps)
         n = len(pred)
         k = len(set(pred[pred >= 0].tolist()))
         seed_noise = float((pred == -1).sum()) / n * 100.0
@@ -159,7 +172,7 @@ def main() -> int:
 
         print(f"\n--- Rule C 채점 seed={seed} ---")
         rows = score_epochs(pool, Config.BACKBONE, ck, mcs, ms,
-                            Config.DEVICE, int(Config.BATCH), _cache)
+                            Config.DEVICE, int(Config.BATCH), _cache, method, eps)
         sel = rule_c(rows, float(Config.K_PERCENTILE))
         if not sel:
             print(f"[error] seed={seed} Rule C 선택 실패 (유효 epoch 없음)")

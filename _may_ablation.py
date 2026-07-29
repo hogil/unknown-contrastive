@@ -67,7 +67,20 @@ if __name__ == "__main__":
         if _local_override_raw is not None:
             cell_cfg["USE_LOCAL"] = _local_override
         M.CFG.clear(); M.CFG.update(BASE); M.CFG.update(cell_cfg)
-        M.CFG["OUTPUT_DIR"] = BASE["OUTPUT_DIR"].rsplit("/run", 1)[0] + f"/abl{_tag}_{c}"
+        # ★ 기본값(`.../runs/may_repro/run`)의 **끝에 붙은** "/run" 만 떼려던 코드였는데
+        #   rsplit 은 **중간의 "/runs" 도** 잡는다. REPRO_OUT 은 절대경로라
+        #   Linux 에서 `/opt/repo/runs/site/<TS>/step2_recipe/seed42` 가 통째로
+        #   `/opt/repo` 로 잘려 체크포인트가 repo 루트로 튀어나가고, step2 의 seed·
+        #   step3 의 셀이 전부 같은 폴더(`abl_B4`)로 충돌했다 — step2/step3 가
+        #   체크포인트를 못 찾아 "모든 seed 실패"로 죽는다.
+        #   Windows 는 경로가 백슬래시라 매치가 안 돼 우연히 무사했다 = **사내
+        #   Ubuntu24 에서만 터지는, 여기선 재현 안 되는 버그**였다 (260729 감사).
+        _out_base = BASE["OUTPUT_DIR"]
+        for _suf in ("/run", "\\run"):
+            if _out_base.endswith(_suf):
+                _out_base = _out_base[: -len(_suf)]
+                break
+        M.CFG["OUTPUT_DIR"] = _out_base + f"/abl{_tag}_{c}"
         M.RUN_TS = datetime.now().strftime("%y%m%d_%H%M%S")
         print(f"\n===== CELL {c} : {cell_cfg} -> {M.CFG['OUTPUT_DIR']}_{M.RUN_TS} =====", flush=True)
         M.main()

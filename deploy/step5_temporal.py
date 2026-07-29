@@ -34,7 +34,7 @@ from _site_common import (add_path, REPO, banner, check_inputs, die, env, rel,  
                           save_result, run_root, show_config, show_images)
 
 
-from config import Paths, Runtime, Temporal  # noqa: E402
+from config import Cluster, Paths, Runtime, Temporal  # noqa: E402
 
 
 class Config:
@@ -182,7 +182,9 @@ def main() -> int:
         if len(idx) < mcs * 2 or len(idx) < 5:
             per_batch.append({"name": name, "n": len(idx), "clusters": []})
             continue
-        pred = gd.hdbscan_predict(zb, mcs, ms, "leaf", 0.06)
+        # ★ method/eps 를 하드코딩하면 config.Cluster.METHOD/EPS 를 켜도 시간축
+        #   격자만 leaf/0.06 으로 돌아 배포 다이얼과 어긋난다 (260729 감사).
+        pred = gd.hdbscan_predict(zb, mcs, ms, str(Cluster.METHOD), float(Cluster.EPS))
         cl = []
         for c in sorted(set(pred[pred >= 0].tolist())):
             m = pred == c

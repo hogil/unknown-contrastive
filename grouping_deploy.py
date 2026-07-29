@@ -721,7 +721,15 @@ def main():
             except Exception as e:
                 print(f"  [warn] group {c} composite 실패: {e}", flush=True)
         # medoid = 그룹 중심에 가장 가까운 **실제 원본** (heatmap 과 대조용)
-        shutil.copy2(paths[order[0]], comp_root / f"{gtag}_medoid_{Path(paths[order[0]]).name}")
+        # ★ 존재 확인 필수. 위 대표이미지 루프는 확인하는데 여기만 빠져 있어서,
+        #   manifest 작성 후 파일이 지워진 경우(운영 트리에선 흔하다) 임베딩·HDBSCAN·
+        #   composite 를 다 끝낸 뒤 groups.csv/summary.json 을 쓰기 **직전에** 죽었다
+        #   — 그 arm 이 통째로 실패로 기록된다 (260729 감사).
+        _med = Path(paths[order[0]])
+        if _med.exists():
+            shutil.copy2(_med, comp_root / f"{gtag}_medoid_{_med.name}")
+        else:
+            print(f"  [warn] group {c} medoid 원본 없음 -> 건너뜀: {_med}", flush=True)
         rows.append({"group_id": c, "group_size": len(idx),
                       "group_coherence": round(coh, 4),
                       "review_status": "over_merged_review" if over else "candidate",

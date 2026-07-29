@@ -71,7 +71,7 @@ def load(out_root, step) -> dict:
 
 
 def train_and_score(cell: str, seed: int, pool: str, mcs: int, ms: int,
-                    out_root: Path) -> dict | None:
+                    out_root: Path, cache_dir: str = "") -> dict | None:
     run_dir = out_root / f"{cell}_s{seed}"
     print(f"\n--- 셀 {cell} (seed {seed}) ---")
     rc = run([sys.executable, "-u", "_may_ablation.py", "B4"],
@@ -87,7 +87,12 @@ def train_and_score(cell: str, seed: int, pool: str, mcs: int, ms: int,
     if ck is None or not ck.exists():
         print(f"[error] {cell} s{seed}: 체크포인트 없음 -> 건너뜀")
         return None
-    rows = score_epochs(pool, Config.BACKBONE, ck, mcs, ms, Config.DEVICE, int(Config.BATCH))
+    # ★ cache_dir 를 빠뜨리면 셀마다 pool 전체를 원본 해상도로 다시 디코드한다
+    #   (step2 는 넘기고 있었다). 기본 9셀 + round-2 까지 15회 학습이라 실측
+    #   7.6 vs 19.7 img/s 기준 스윕당 수 시간이 그냥 날아갔다 (260729 감사).
+    #   method/eps 는 안 넘기면 score_epochs 가 config 에서 live 로 읽는다.
+    rows = score_epochs(pool, Config.BACKBONE, ck, mcs, ms, Config.DEVICE,
+                        int(Config.BATCH), cache_dir)
     sel = rule_c(rows, float(Config.K_PERCENTILE))
     if not sel:
         return None
@@ -117,7 +122,7 @@ def main() -> int:
     out_root = rel(Config.OUT_ROOT) / "step3_sweep"
     r1 = {}
     for cell in cells:
-        got = train_and_score(cell, int(Config.ROUND1_SEED), pool, mcs, ms, out_root)
+        got = train_and_score(cell, int(Config.ROUND1_SEED), pool, mcs, ms, out_root, _cache)
         if got:
             r1[cell] = got
         # 중간 저장 — 도중에 끊겨도 진행분이 남는다
@@ -147,7 +152,7 @@ def main() -> int:
               f"(1-seed 결과는 잡음폭 안에서 뒤집힐 수 있다)")
         for cell in top:
             for sd in seeds2:
-                got = train_and_score(cell, sd, pool, mcs, ms, out_root)
+                got = train_and_score(cell, sd, pool, mcs, ms, out_root, _cache)
                 if got:
                     r2.setdefault(cell, []).append(got)
                 save_result(rel(Config.OUT_ROOT), "step3_partial", {"round1": r1, "round2": r2})

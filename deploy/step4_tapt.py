@@ -92,6 +92,11 @@ def main() -> int:
     e = dict(os.environ)
     e.update({
         "PYTHONIOENCODING": "utf-8",
+        # ★ 필수 — 이게 없으면 아래 SITE_* 가 **전부 무시된다**. config.py 가 권위라서
+        #   env 는 SITE_ENV_OVERRIDE=1 일 때만 이긴다(_site_common.env). 예전엔 이게
+        #   빠져 있어서 step4 가 TAPT 가 아니라 **FCMAE 로 step3 를 통째로 재실행**하고,
+        #   OUT_ROOT 도 안 바뀌어 **진짜 step3_result.json 을 덮어썼다** (260729 감사).
+        "SITE_ENV_OVERRIDE": "1",
         "SITE_BACKBONE": str(tapt),
         "SITE_OUT_ROOT": str(rel(Config.OUT_ROOT) / "step4_tapt_work"),
         "SITE_CELLS": str(Config.CELLS),
