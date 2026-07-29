@@ -1,4 +1,11 @@
-# backbone 부분 해동 — head-only 를 3-seed 전승으로 이김 (clean546, 260729)
+# backbone 부분 해동 — **최종 기각** (260729~30)
+
+> **결론 먼저**: clean546 에서 3-seed 전승했지만 severstal 에서 2/3 붕괴, anchor 에서
+> 3패로 **기각**. `FREEZE_BACKBONE=True` 유지. clean546 승리는 도메인 특화조차 아닌
+> **pool 특이 현상**이었다. (아래는 그 경과를 시간순으로 남긴 것 — 중간의 "승자 확정"
+> 절은 clean546 단독 결과일 때의 기록이고 최종 결론이 아니다.)
+> ★ 이 과정에서 **더 큰 발견**이 나왔다 — 문서 끝의 "학습한 head 가 anchor 에서 P1 을
+> 망친다" 절을 볼 것.
 
 판정 기준은 **사전등록본**(`docs/paper/LABELFREE_SELECTION_PREREG_260729.md`)을 그대로 쓴다:
 P1 > P2_noise > P3_comp > P4_hom 사전식, 밴드 noise ±2.28pp / Comp ±0.033 / Hom ±0.005.
@@ -16,7 +23,7 @@ ARI 는 판정 기준이 **아니다**(참고용으로만 싣는다).
 
 ## 결과 — clean546 / mcs6·ms3 / 20ep
 
-### 승자 확정: `uf1_lr1e-3` (마지막 stage 만 해동, backbone LR = 1e-3 = head LR)
+### (당시) 최선 후보: `uf1_lr1e-3` (마지막 stage 만 해동, backbone LR = 1e-3 = head LR)
 
 | seed | arm | P1 | seed_noise | Comp | Hom | ARI |
 |---|---|---|--:|--:|--:|--:|
