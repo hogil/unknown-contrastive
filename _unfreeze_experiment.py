@@ -54,6 +54,11 @@ ARMS = [
     #   위를 열어 진짜 최적점이 내부에 있는지 본다 (backbone 이 부서지는 지점도 같이 확인).
     ("uf1_lr2e-3",      1, 2e-3, 64),
     ("uf1_lr4e-3",      1, 4e-3, 64),
+    # ★ PROJ_DIM 축 (backbone 은 얼린 채 head 차원만 바꾼다).
+    #   anchor 에서 학습 head 가 P1 을 28/37 -> 17/37 로 떨어뜨린 원인 후보.
+    ("pd256",           0, 0.0,  64),
+    ("pd512",           0, 0.0,  64),
+    ("pd1024",          0, 0.0,  64),
 ]
 
 
@@ -159,6 +164,8 @@ def main() -> int:
                 "REPRO_TAG": f"_uf_{tag}", "REPRO_UNFREEZE": str(n_uf),
                 "REPRO_LR_BACKBONE": str(lr_bb), "PYTHONIOENCODING": "utf-8",
             })
+            if tag.startswith("pd"):
+                env["REPRO_PROJ_DIM"] = tag[2:]
             subprocess.call([sys.executable, "-u", "_may_ablation.py", "B4"],
                             cwd=str(REPO), env=env)
             ck_glob = sorted(run_dir.glob(f"abl_uf_{tag}_B4_*/checkpoints/last_training.pt"))

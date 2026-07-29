@@ -162,6 +162,10 @@ if _os.environ.get("REPRO_BATCH"):
 if _os.environ.get("REPRO_TEMP"):    CFG["TEMP"] = float(_os.environ["REPRO_TEMP"])
 if _os.environ.get("REPRO_LR"):      CFG["LR_HEAD"] = float(_os.environ["REPRO_LR"])
 if _os.environ.get("REPRO_UNFREEZE"):    CFG["UNFREEZE_LAST_N"] = int(_os.environ["REPRO_UNFREEZE"])
+# ★ PROJ_DIM 은 그동안 하드코딩(128)이라 한 번도 스윕된 적이 없다. anchor(측정 37클래스)
+#   에서 학습한 head 가 P1 을 28/37 -> 17/37 로 **떨어뜨리는** 게 관측돼(260730),
+#   1024 -> 128 압축이 클래스 많을 때 병목이라는 가설을 시험하려고 노브를 뚫는다.
+if _os.environ.get("REPRO_PROJ_DIM"):    CFG["PROJ_DIM"] = int(_os.environ["REPRO_PROJ_DIM"])
 if _os.environ.get("REPRO_LR_BACKBONE"): CFG["LR_BACKBONE"] = float(_os.environ["REPRO_LR_BACKBONE"])
 if _os.environ.get("REPRO_QUEUE"):   CFG["QUEUE_SIZE"] = int(_os.environ["REPRO_QUEUE"])
 if _os.environ.get("REPRO_NEG"):     CFG["IGNORE_NEG_SIM"] = float(_os.environ["REPRO_NEG"])
