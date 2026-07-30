@@ -429,6 +429,19 @@ def train_env(backbone: str, pool: str, out_dir: Path, seed: int, epochs: int,
         extra["REPRO_DEVICE"] = str(getattr(_R2, "DEVICE", "cuda"))
     except Exception:
         extra["REPRO_DEVICE"] = "cuda"
+    # ★ 학습기 **자체 클러스터링** 다이얼도 config 를 따르게 한다.
+    #   `_may_repro_src` 는 자기 CFG(MIN_CLUSTER_SIZE=12 등)로 `cluster_summary/` 와
+    #   `clusters/` 를 만드는데, 그동안 config 와 **다른 값**으로 돌고 있었고 바꿀
+    #   방법도 없었다 (260731). 이제 deploy 로 돌리면 config.Cluster 와 일치한다.
+    try:
+        from config import Cluster as _C2
+        extra.update({
+            "REPRO_MCS": str(_C2.MCS), "REPRO_MS": str(_C2.MS),
+            "REPRO_METHOD": str(_C2.METHOD), "REPRO_EPS": str(_C2.EPS),
+            "REPRO_METRIC": str(_C2.METRIC),
+        })
+    except Exception:
+        pass
     return {**extra,
         "REPRO_DATA": str(rel(pool)),
         "REPRO_BACKBONE": str(rel(backbone)),

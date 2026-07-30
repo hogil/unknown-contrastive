@@ -171,6 +171,16 @@ if _os.environ.get("REPRO_UNFREEZE"):    CFG["UNFREEZE_LAST_N"] = int(_os.enviro
 #   에서 학습한 head 가 P1 을 28/37 -> 17/37 로 **떨어뜨리는** 게 관측돼(260730),
 #   1024 -> 128 압축이 클래스 많을 때 병목이라는 가설을 시험하려고 노브를 뚫는다.
 if _os.environ.get("REPRO_PROJ_DIM"):    CFG["PROJ_DIM"] = int(_os.environ["REPRO_PROJ_DIM"])
+# ★ 학습기 **자체 클러스터링** 다이얼 (cluster_summary/·clusters/ 를 만드는 그것).
+#   deploy step 들의 다이얼(config.Cluster)과는 **다른 값**이었고, 여기엔 override 가
+#   아예 없어서 config 로도 env 로도 못 바꿨다 — 36장 pool 에서 MIN_CLUSTER_SIZE=12 가
+#   너무 커 클러스터가 0개로 나와도 손댈 방법이 없었다 (260731).
+#   deploy 경로에서는 `_site_common.train_env` 가 config.Cluster 값을 넣어준다.
+if _os.environ.get("REPRO_MCS"):    CFG["MIN_CLUSTER_SIZE"] = int(_os.environ["REPRO_MCS"])
+if _os.environ.get("REPRO_MS"):     CFG["MIN_SAMPLES"] = int(_os.environ["REPRO_MS"])
+if _os.environ.get("REPRO_METHOD"): CFG["CLUSTER_SELECTION_METHOD"] = _os.environ["REPRO_METHOD"]
+if _os.environ.get("REPRO_EPS"):    CFG["CLUSTER_SELECTION_EPSILON"] = float(_os.environ["REPRO_EPS"])
+if _os.environ.get("REPRO_METRIC"): CFG["HDBSCAN_METRIC"] = _os.environ["REPRO_METRIC"]
 if _os.environ.get("REPRO_LR_BACKBONE"): CFG["LR_BACKBONE"] = float(_os.environ["REPRO_LR_BACKBONE"])
 if _os.environ.get("REPRO_QUEUE"):   CFG["QUEUE_SIZE"] = int(_os.environ["REPRO_QUEUE"])
 if _os.environ.get("REPRO_NEG"):     CFG["IGNORE_NEG_SIM"] = float(_os.environ["REPRO_NEG"])
@@ -860,6 +870,30 @@ def cluster_and_save_hdbscan(
             # 기존: rep_name = f"cluster_{lab:03d}__{classes[rep_idx]}__..."
             rep_name = f"{tag}__{classes[rep_idx]}__medoid_dist{d[local]:.4f}{src.suffix}"
             link_or_copy(src, summary_dir / rep_name, logger)
+
+            # ★ 클러스터별 composite map — medoid 옆에 같이 둔다 (260731).
+            #   예전엔 `cluster_summary/` 에 medoid 1장만 있어서, 이 폴더로 클러스터를
+            #   검토할 때 "그 그룹이 전체적으로 어떤 모양인가"를 볼 수 없었다.
+            #   composite 는 원본 6400x6400 을 다시 읽어야 해 비싸므로 **중심에 가까운
+            #   순으로 상한(Composite.MAX_MEMBERS, 기본 10)** 만 쓴다.
+            #   실패해도 학습 결과를 버리지 않는다 — 경고만 남기고 계속한다.
+            try:
+                import os as _o
+                _mx = int(_o.environ.get("SITE_COMPOSITE_MAX_MEMBERS", 10))
+                _order = [int(idxs[j]) for j in np.argsort(d)]
+                _use = _order if _mx <= 0 else _order[:_mx]
+                _srcs = [str(_pick_export_src(files[j])) for j in _use]
+                import sys as _s
+                _dep = str(Path(__file__).resolve().parent / "deploy")
+                if _dep not in _s.path:
+                    _s.path.append(_dep)
+                from composite import write_group_composites as _wgc
+                _wgc(_srcs, summary_dir, prefix=f"{tag}__")
+                logger.info(f"  [composite] {tag} 멤버 {len(idxs)} 중 {len(_use)}장 -> cluster_summary/")
+            except Exception as _e:
+                import traceback as _tb
+                logger.warning(f"  [composite] {tag} 실패: {type(_e).__name__}: {_e}")
+                logger.warning(_tb.format_exc())
 
         # per-cluster txt (이름도 태그로 맞춤)
         # 기존: with open(cdir / f"cluster_{lab:03d}.txt", ...
