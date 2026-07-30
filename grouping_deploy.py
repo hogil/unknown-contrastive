@@ -673,6 +673,7 @@ def main():
     rep_root.mkdir(exist_ok=True)
     comp_root.mkdir(exist_ok=True)
     rows, off_rows = [], []
+    _comp_fail: list = []      # composite 실패 기록 (조용히 넘어가지 않게 summary 에 남긴다)
     for c in clusters:
         idx = np.where(pred == c)[0]
         center = z[idx].mean(0)
@@ -719,7 +720,18 @@ def main():
                 print(f"  [composite] {gtag}  멤버 {len(idx)} 중 {len(_use)}장 사용  "
                       f"({time.time() - _t:.1f}s)", flush=True)
             except Exception as e:
-                print(f"  [warn] group {c} composite 실패: {e}", flush=True)
+                # ★ 예전엔 f"{e}" 만 찍었다. MemoryError 처럼 메시지가 빈 예외는
+                #   "composite 실패: " 로만 남아 원인을 알 수 없었고, medoid 복사는
+                #   try 밖이라 **composite 만 없고 cluster·medoid 는 생긴 채 파이프라인이
+                #   성공으로 끝났다** (사내 서버에서 step2/3 가 이 증상, 260730).
+                #   타입 + traceback 을 찍고, 실패 건수를 summary 에 남겨 로그를 안 뒤져도
+                #   보이게 한다.
+                import traceback
+                _comp_fail.append({"group": int(c), "error": f"{type(e).__name__}: {e}"})
+                print(f"  [warn] ★ group {c} composite 실패: {type(e).__name__}: {e}",
+                      flush=True)
+                if len(_comp_fail) == 1:      # 첫 실패만 전체 traceback (로그 폭발 방지)
+                    traceback.print_exc()
         # medoid = 그룹 중심에 가장 가까운 **실제 원본** (heatmap 과 대조용)
         # ★ 존재 확인 필수. 위 대표이미지 루프는 확인하는데 여기만 빠져 있어서,
         #   manifest 작성 후 파일이 지워진 경우(운영 트리에선 흔하다) 임베딩·HDBSCAN·
@@ -751,6 +763,10 @@ def main():
                "seed_noise_pct": round(100.0 * seed_noise / n, 2),
                "over_merge_groups": [r["group_id"] for r in rows if r["review_status"].startswith("over")],
                "mean_coherence": round(float(np.mean([r["group_coherence"] for r in rows])) if rows else 0, 4),
+               # ★ composite 실패를 summary 에 남긴다. 예전엔 warn 한 줄만 찍고 지나가서
+               #   composite 가 하나도 없는데도 파이프라인이 성공으로 끝났다 (260730).
+               "composite_failed": len(_comp_fail),
+               "composite_failures": _comp_fail[:5],
                "model_mode": model_mode,
                "dial": {"mcs": a.mcs, "ms": a.ms, "method": a.method, "eps": a.eps},
                "reassign": reassign_info}
