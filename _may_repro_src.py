@@ -948,7 +948,32 @@ def main():
     if hasattr(torch, "set_float32_matmul_precision"):
         torch.set_float32_matmul_precision("high")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # ★ device 는 **요청받은 대로** 쓴다. 예전엔 CUDA 가 없으면 조용히 CPU 로 떨어졌다 —
+    #   6400x6400 이미지로 CPU 학습을 하면 정상처럼 보이면서 수십 배 느려지고,
+    #   사내 서버에서 "step2 가 GPU 를 전혀 안 쓴다(nvidia-smi 0)"로 관측됐다 (260730).
+    #   REPRO_DEVICE=cuda 를 명시했는데 CUDA 가 없으면 **진단을 찍고 죽는다.**
+    _dev_req = (_os.environ.get("REPRO_DEVICE") or "").strip().lower()
+    _cuda_ok = torch.cuda.is_available()
+    if _dev_req.startswith("cuda") and not _cuda_ok:
+        raise RuntimeError(
+            "REPRO_DEVICE=cuda 인데 torch.cuda.is_available()==False — CPU 로 조용히 "
+            "떨어지지 않고 여기서 멈춘다.\n"
+            f"  torch            : {torch.__version__}\n"
+            f"  torch CUDA build : {torch.version.cuda}\n"
+            f"  device_count     : {torch.cuda.device_count()}\n"
+            f"  CUDA_VISIBLE_DEVICES = {_os.environ.get('CUDA_VISIBLE_DEVICES', '(unset)')}\n"
+            "  흔한 원인: (1) CPU-only torch wheel 설치 — torch.version.cuda 가 None 이면 이것.\n"
+            "             (2) 드라이버/CUDA 불일치  (3) CUDA_VISIBLE_DEVICES='' 로 가려짐\n"
+            "  CPU 로 진짜 돌리려면 REPRO_DEVICE=cpu 를 명시해라.")
+    if _dev_req == "cpu":
+        device = torch.device("cpu")
+    else:
+        device = torch.device("cuda" if _cuda_ok else "cpu")
+        if not _cuda_ok:
+            print("[warn] ★ CUDA 를 못 찾아 **CPU 로 학습한다** — 6400x6400 이미지에선 "
+                  f"수십 배 느리다. torch={torch.__version__} cuda_build={torch.version.cuda} "
+                  f"CUDA_VISIBLE_DEVICES={_os.environ.get('CUDA_VISIBLE_DEVICES','(unset)')}",
+                  flush=True)
     run_dir = Path(f"{CFG['OUTPUT_DIR']}_{RUN_TS}")
     logger = setup_logger(run_dir)
     logger.info("===== RUN START =====")

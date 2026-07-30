@@ -399,6 +399,14 @@ def train_env(backbone: str, pool: str, out_dir: Path, seed: int, epochs: int,
     except Exception:
         _w = 0
     extra = {"REPRO_WORKERS": str(_w)} if _w > 0 else {}
+    # ★ device 를 반드시 넘긴다. 안 넘기면 학습기가 혼자 판단해 CUDA 없을 때 **조용히
+    #   CPU 로** 떨어진다 — 사내 서버에서 "step2 가 GPU 를 전혀 안 쓴다"의 원인이었다.
+    #   넘기면 CUDA 가 없을 때 학습기가 진단을 찍고 **죽는다** (260730).
+    try:
+        from config import Runtime as _R2
+        extra["REPRO_DEVICE"] = str(getattr(_R2, "DEVICE", "cuda"))
+    except Exception:
+        extra["REPRO_DEVICE"] = "cuda"
     return {**extra,
         "REPRO_DATA": str(rel(pool)),
         "REPRO_BACKBONE": str(rel(backbone)),
