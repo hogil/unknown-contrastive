@@ -165,6 +165,28 @@ def live_dial() -> tuple[int, int, str, float]:
     return int(C.MCS), int(C.MS), str(C.METHOD), float(C.EPS)
 
 
+def step_dir(out_root, base_name: str) -> Path:
+    """step 산출 폴더를 **그 step 을 돌린 시각으로** 만든다: `<run>/<base>_<YYMMDD_HHMMSS>`.
+
+    ★ 왜: 예전엔 `<run>/step1_zeroshot` 고정이라 step1 을 **다시 돌리면 앞 결과를 덮어썼다.**
+      폴더가 안 생기는 게 아니라 같은 자리에 지우고 쓴 것이다 — 프로젝트 절대규칙
+      ("새 실험은 반드시 새 폴더명", 결과 삭제/덮어쓰기 금지) 위반이었다 (260730).
+    ★ run 폴더 자체는 step0 것이라 공유해야 한다(step1~5 가 manifest·캐시를 물려 쓴다).
+      그래서 **run 은 공유, step 산출 폴더만 시각으로 분리**한다.
+    ★ `<base>_latest.txt` 에 이번 폴더명을 남겨, 사람이 최신을 바로 찾을 수 있게 한다.
+    """
+    d = rel(out_root)
+    stamp = _STEP_START.get("at") or "nostamp"
+    out = d / f"{base_name}_{stamp}"
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        (d / f"{base_name}_latest.txt").write_text(out.name + "\n", encoding="utf-8")
+    except Exception:
+        pass
+    print(f"[out] {base_name} -> {out.name}  (재실행하면 새 폴더가 생긴다)", flush=True)
+    return out
+
+
 def show_config(C) -> dict:
     """Config 클래스의 대문자 속성을 표로 출력하고 dict 로 반환 (재현성 기록용).
 
@@ -497,8 +519,16 @@ def save_result(out_root, step: str, payload: dict) -> Path:
         "elapsed_sec": round(elapsed, 1) if elapsed is not None else None,
         "run_dir_stamp": Path(str(d)).name,   # step0 이 만든 폴더 시각 (구분용)
     }
+    body = json.dumps(payload, indent=2, ensure_ascii=False, default=str)
+    # ★ 고정 이름 = **최신 포인터**. downstream step 이 이 이름을 읽으므로 유지해야 한다
+    #   (step2 는 step1_result.json 을 기준선으로 읽는다).
     p = d / f"{step}_result.json"
-    p.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    p.write_text(body, encoding="utf-8")
+    # ★ 이력 사본 — 고정 이름만 쓰면 재실행 때 앞 결과가 사라진다. 결과 덮어쓰기 금지
+    #   규칙에 맞게 실행 시각을 붙인 사본을 함께 남긴다 (260730).
+    stamp = _STEP_START.get("at")
+    if stamp:
+        (d / f"{step}_result_{stamp}.json").write_text(body, encoding="utf-8")
 
     # run 루트에 step 별 실행 시각 원장 — 폴더 하나만 보고 전 step 이력을 알 수 있게.
     #   step3 는 partial 을 여러 번 저장하므로 **같은 step 줄은 덮어쓴다.**

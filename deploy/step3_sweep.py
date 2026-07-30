@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, read_summary, rel, run, save_result,
-                          run_root, live_dial, show_config, show_images, train_env)
+                          run_root, live_dial, step_dir, show_config, show_images, train_env)
 from step2_recipe import rule_c, score_epochs  # noqa: E402
 
 
@@ -119,7 +119,7 @@ def main() -> int:
     print(f"[sweep] round-1: {len(cells)} 셀 x 1 seed({Config.ROUND1_SEED}) "
           f"x {Config.EPOCHS} epoch\n        순서: {cells}")
 
-    out_root = rel(Config.OUT_ROOT) / "step3_sweep"
+    out_root = step_dir(Config.OUT_ROOT, "step3_sweep")
     r1 = {}
     for cell in cells:
         got = train_and_score(cell, int(Config.ROUND1_SEED), pool, mcs, ms, out_root, _cache)

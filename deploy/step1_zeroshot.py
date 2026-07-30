@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, make_z0_set, read_summary, rel, run,
-                          save_result, run_root, live_dial, show_config, show_images)
+                          save_result, run_root, live_dial, step_dir, show_config, show_images)
 
 
 from config import Cluster, Composite, Paths, Runtime  # noqa: E402
@@ -103,7 +103,7 @@ def main() -> int:
     check_inputs(Config.BACKBONE, s0["image_root"],
                  champ if use_champ else None)
 
-    out_root = rel(Config.OUT_ROOT) / "step1_zeroshot"
+    out_root = step_dir(Config.OUT_ROOT, "step1_zeroshot")
     # (arm 이름, backbone, proj 목록)
     arms: list[tuple[str, str, list[str] | None]] = [("frozen", Config.BACKBONE, None)]
     # ★ z0 는 champion 과 head 수를 맞춘다. 용량이 다르면 비교가 무효다.

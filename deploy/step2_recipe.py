@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (add_path, REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, read_summary, rel, run, save_result,
-                          run_root, live_dial, show_config, show_images, train_env)
+                          run_root, live_dial, step_dir, show_config, show_images, train_env)
 
 
 from config import Cluster, Paths, Recipe, Runtime, epochs, recipe  # noqa: E402
@@ -146,7 +146,7 @@ def main() -> int:
     print(f"[pool] {pool}  n={s0['n_images']:,}장   [dial] config 값 그대로 mcs={mcs} ms={ms} "
           f"method={method} eps={eps}\n")
 
-    out_root = rel(Config.OUT_ROOT) / "step2_recipe"
+    out_root = step_dir(Config.OUT_ROOT, "step2_recipe")
     seeds = [int(s) for s in str(Config.SEEDS).split(",") if s.strip()]
     per_seed = {}
 
