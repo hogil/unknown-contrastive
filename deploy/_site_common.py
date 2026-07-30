@@ -93,11 +93,23 @@ def die(msg: str, code: int = 2):
     sys.exit(code)
 
 
+# ★ step 이 **실제로 돌기 시작한** 시각. run 폴더 이름은 step0 이 만든 타임스탬프라
+#   step1~5 가 언제 돌았는지는 거기서 알 수 없다 (폴더를 쪼개면 step0 의 manifest·캐시를
+#   물려 쓰는 체인이 깨지므로 폴더는 공유하고 **시각만 따로 기록**한다, 260730).
+_STEP_START: dict = {}
+
+
 def banner(step: str, title: str, ladder: str = ""):
+    import time
+    from datetime import datetime
+    _STEP_START["name"] = step
+    _STEP_START["t0"] = time.time()
+    _STEP_START["at"] = datetime.now().strftime("%y%m%d_%H%M%S")
     line = "=" * 78
     print(f"\n{line}\n[{step}] {title}")
     if ladder:
         print(f"  배포 사다리: {ladder}")
+    print(f"  시작: {_STEP_START['at']}")
     print(line, flush=True)
 
 
@@ -375,9 +387,19 @@ def train_env(backbone: str, pool: str, out_dir: Path, seed: int, epochs: int,
 
     ★ REPRO_NEG 가 아니라 REPRO_IGNORE_NEG_SIM 이다 — 오타 시 조용히 무시되고
       스윕 셀 3개가 중복 실행된 전례가 있다(260726).
-    ★ REPRO_WORKERS 는 넘기지 마라 — Windows spawn 으로 학습이 죽는다.
+    ★ REPRO_WORKERS 는 **Windows 에서** 넘기지 마라 — spawn 으로 학습이 죽는다.
+      그래서 `Runtime.TRAIN_WORKERS` 기본값이 0(단일 스레드)이고, 0 이면 아예 안 넘긴다.
+      사내 Ubuntu24 에서는 >0 으로 켜야 학습이 디코드 병목에서 풀린다 —
+      실측 2.65 img/s(anchor)는 GPU 연산이 아니라 6400x6400 단일스레드 디코드 탓이다.
     """
-    return {
+    _w = 0
+    try:
+        from config import Runtime as _R
+        _w = int(getattr(_R, "TRAIN_WORKERS", 0) or 0)
+    except Exception:
+        _w = 0
+    extra = {"REPRO_WORKERS": str(_w)} if _w > 0 else {}
+    return {**extra,
         "REPRO_DATA": str(rel(pool)),
         "REPRO_BACKBONE": str(rel(backbone)),
         "REPRO_OUT": str(rel(out_dir)),
@@ -446,9 +468,46 @@ def fmt_row(name: str, s: dict | None) -> str:
 
 
 def save_result(out_root, step: str, payload: dict) -> Path:
+    """결과 JSON 저장 + **그 step 이 실제로 돌은 시각**을 같이 남긴다.
+
+    ★ run 폴더 이름(`runs/site/260728_160026`)은 step0 이 만든 시각이라, 거기만 보면
+      step1~5 가 언제 돌았는지 알 수 없었다. 폴더를 step 마다 쪼개면 step0 의
+      manifest·디코드 캐시를 물려 쓰는 체인이 깨지므로(run_root 주석 참조), 폴더는
+      공유한 채 **시각을 결과 JSON + `_steps.log` 양쪽에 기록**한다 (260730).
+    """
+    import time
+    from datetime import datetime
     d = rel(out_root)
     d.mkdir(parents=True, exist_ok=True)
+    now = datetime.now()
+    t0 = _STEP_START.get("t0")
+    elapsed = (time.time() - t0) if t0 else None
+    payload = dict(payload)
+    payload["_timing"] = {
+        "started_at": _STEP_START.get("at"),
+        "finished_at": now.strftime("%y%m%d_%H%M%S"),
+        "elapsed_sec": round(elapsed, 1) if elapsed is not None else None,
+        "run_dir_stamp": Path(str(d)).name,   # step0 이 만든 폴더 시각 (구분용)
+    }
     p = d / f"{step}_result.json"
     p.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
-    print(f"\n[OUT] {p}", flush=True)
+
+    # run 루트에 step 별 실행 시각 원장 — 폴더 하나만 보고 전 step 이력을 알 수 있게.
+    #   step3 는 partial 을 여러 번 저장하므로 **같은 step 줄은 덮어쓴다.**
+    el = f"{elapsed/60:.1f}분" if elapsed and elapsed >= 60 else (f"{elapsed:.0f}초" if elapsed else "?")
+    line = (f"{step:<16} {_STEP_START.get('at','?')} -> {payload['_timing']['finished_at']}"
+            f"  ({el})")
+    ledger = d / "_steps.log"
+    # ★ 같은 step 줄만 **정확히** 교체한다. 접두사(startswith)로 지우면 "step3" 저장이
+    #   "step3_partial" 줄까지 함께 지운다 — 첫 필드를 정확 비교한다 (260730).
+    try:
+        prev = ledger.read_text(encoding="utf-8").splitlines() if ledger.exists() else []
+    except Exception:
+        prev = []
+    old = [l for l in prev if l.strip() and l.split(" ", 1)[0] != step]
+    ledger.write_text("\n".join(old + [line]) + "\n", encoding="utf-8")
+
+    print(f"\n[OUT] {p}")
+    print(f"[time] {line}   (run 폴더 시각 {payload['_timing']['run_dir_stamp']} 은 step0 것)",
+          flush=True)
     return p

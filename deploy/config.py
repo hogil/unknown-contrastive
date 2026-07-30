@@ -95,6 +95,17 @@ class Runtime:
     # 디코드 프로세스 수. 0 = cpu_count 전부. 코어가 많을수록 캐시 생성이 빨라진다.
     DECODE_WORKERS = env("SITE_DECODE_WORKERS", 0)
 
+    # ★ **학습** DataLoader 워커 수. 0 = 단일 스레드(현행, Windows 안전).
+    #   실측(260730, anchor): 학습이 epoch 당 213s 인데 그 epoch 은 565장(2260×sampling
+    #   0.25)이라 **2.65 img/s** — GPU 연산 한계가 아니라 6400x6400 단일스레드 디코드에
+    #   **GPU 가 굶는 것**이다 (그 사이 nvidia-smi 는 100% 로 보이지만 처리량이 이렇다).
+    #   ⚠ Windows 에서 >0 으로 켜면 spawn 으로 학습이 죽은 전례가 있다
+    #     (`_site_common.train_env` 경고). 그래서 **기본 0 을 유지**한다.
+    #   ✅ 사내 서버는 Ubuntu24(fork 기본)라 거기서는 켤 수 있다 — 켜면 학습이 디코드
+    #     병목에서 풀린다. 켠 뒤 첫 run 은 반드시 학습이 끝까지 도는지 확인하라.
+    #   (`_may_repro_src` 는 persistent_workers=False 라 워커 leak 은 안전하다.)
+    TRAIN_WORKERS = env("SITE_TRAIN_WORKERS", 0)
+
     # ── 정밀도 (기본 끔) ──────────────────────────────────────────────────
     # 실측 배속/오차 (4060 Ti, 임베딩 최대 절대차):
     #     channels_last  1.03x  9.0e-4
