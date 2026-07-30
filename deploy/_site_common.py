@@ -498,13 +498,22 @@ def save_result(out_root, step: str, payload: dict) -> Path:
     line = (f"{step:<16} {_STEP_START.get('at','?')} -> {payload['_timing']['finished_at']}"
             f"  ({el})")
     ledger = d / "_steps.log"
-    # ★ 같은 step 줄만 **정확히** 교체한다. 접두사(startswith)로 지우면 "step3" 저장이
-    #   "step3_partial" 줄까지 함께 지운다 — 첫 필드를 정확 비교한다 (260730).
+    # ★ dedupe 키 = (step 이름, **시작시각**). 이유:
+    #   - step3 는 한 번 실행 중에 partial 을 수십 번 저장한다 -> 시작시각이 같으니 1줄로 합쳐진다.
+    #   - 같은 step 을 **다시 돌리면** 시작시각이 다르니 **새 줄로 쌓인다** = 재실행 이력이 남는다.
+    #   step 이름만으로 비교했더니 step1 을 3번 돌려도 마지막 1줄만 남아 이력이 사라졌다 (260730).
+    #   (접두사 비교도 안 된다 — "step3" 저장이 "step3_partial" 줄까지 지운다.)
     try:
         prev = ledger.read_text(encoding="utf-8").splitlines() if ledger.exists() else []
     except Exception:
         prev = []
-    old = [l for l in prev if l.strip() and l.split(" ", 1)[0] != step]
+    key = (step, str(_STEP_START.get("at", "")))
+
+    def _key_of(l: str):
+        f = l.split()
+        return (f[0], f[1]) if len(f) >= 2 else (l.strip(), "")
+
+    old = [l for l in prev if l.strip() and _key_of(l) != key]
     ledger.write_text("\n".join(old + [line]) + "\n", encoding="utf-8")
 
     print(f"\n[OUT] {p}")

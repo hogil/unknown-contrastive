@@ -141,7 +141,12 @@ CFG.update({
     "OUTPUT_DIR":  r"D:/project/unknown-contrastive/runs/may_repro/run",
     "LOCAL_BACKBONE_WEIGHTS": r"D:/project/unknown-contrastive/_b4_backbone.pth",       # ★ b4 진짜 backbone (contrastive_b4.pt 에서 추출; backbone.pth 와 다름)
     "BATCH": 128,        # 16GB 안전 (발산 batch8 대비 16×; feedback_batch_same_condition = same-condition)
-    "NUM_WORKERS": 0,    # Windows DataLoader worker-leak 방지
+    # ★ 플랫폼별로 갈린다 (260730). Windows = 0 (spawn 으로 학습이 죽은 전례, task #25).
+    #   Linux(사내 Ubuntu24) = 워커 사용 — 학습이 **6400x6400 단일스레드 디코드**에 GPU 를
+    #   굶기고 있었다 (실측 anchor 2.65 img/s = epoch 213s / 565장, GPU 연산 한계 아님).
+    #   persistent=False 라 워커 leak 은 없다. REPRO_WORKERS 로 언제든 덮어쓸 수 있다.
+    "NUM_WORKERS": 0 if __import__("sys").platform.startswith("win")
+                   else min(16, (__import__("os").cpu_count() or 8)),
     "PERSISTENT": False,
 })
 
