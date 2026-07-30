@@ -11,7 +11,7 @@
 > 근거가 없다.** 유효한 것은 **clean546 3-seed 전승뿐**이다.
 > 증거: `frozen_headonly` 체크포인트의 `cfg.TRAIN_DIR` = `mwm38_clean546.json`, class 9개
 > (anchor 43 / severstal 5). 무효 산출은 `runs/unfreeze/_INVALID_crosspool_260730/` 로 격리.
-> 수정: run dir 에 pool stem 추가 -> `runs/unfreeze/<pool>/<tag>`. severstal 재실행 중.
+> 수정: run dir 에 pool stem 추가 -> `runs/unfreeze/<pool>/<tag>`. **재실행 완료 결과는 문서 맨 끝**.
 >
 > 교훈: **"학습을 건너뛴다"는 최적화는 건너뛴 조건이 같은지 확인하는 코드가 없으면
 > 조용히 다른 실험을 측정한다.** skip 키에 실험을 규정하는 축(pool·seed·레시피)이 전부
@@ -165,3 +165,46 @@ pool 에 따라 뒤집힌다.**
 
 재현: `python _unfreeze_experiment.py --pool <manifest> --epochs 20 --seed <N> --arms <tags>`
 산출: `runs/unfreeze/*.json`
+
+
+---
+
+# ★ 제대로 학습한 교차검증 (260730, 버그 수정 후)
+
+run dir 에 pool 을 넣어 **실제로 그 pool 에서 학습**한 뒤 채점한 결과. 위쪽 severstal/anchor
+절(무효)과 혼동하지 말 것. 체크포인트 검증: `cfg.TRAIN_DIR = severstal_pilot260726.json`,
+class 5개.
+
+## severstal (철강, 995장, mcs6/ms3, 20ep) — **0승 3패**
+
+| seed | arm | P1 | seed_noise | Comp | **Hom** | ARI |
+|---|---|---|--:|--:|--:|--:|
+| 1 | frozen_headonly | 4/4 | 69.05 | 0.4089 | **0.8477** | 0.3010 |
+| 1 | uf1_lr1e-3 | 4/4 | 70.25 | 0.3887 | **0.7218** | 0.2414 |
+| 2 | frozen_headonly | 4/4 | 69.85 | 0.4057 | **0.8683** | 0.2758 |
+| 2 | uf1_lr1e-3 | 4/4 | 69.85 | 0.3944 | **0.7761** | 0.2630 |
+| 42 | frozen_headonly | 4/4 | 70.85 | 0.4141 | **0.8523** | 0.3012 |
+| 42 | uf1_lr1e-3 | 4/4 | 73.87 | 0.4248 | **0.7824** | 0.2795 |
+
+사전등록 기준 판정: seed1 frozen 승(Hom) / seed2 frozen 승(Hom) / seed42 frozen 승(noise
+1.9밴드). **P1 은 전 seed 4/4 동률**이라 Hom·noise 에서 갈렸고, **Hom 이 0.85 -> 0.72~0.78 로
+일관되게 나빠진다.**
+
+★ **붕괴는 전혀 없다.** 무효판에서 보고했던 "2/3 표현 붕괴(noise 1.61%, ARI 0.0)"는 순수하게
+**웨이퍼 학습본을 철강에 갖다 댄 아티팩트**였다. 제대로 학습하면 severstal 에서도 정상
+수렴하고 단지 기준선보다 조금 나쁠 뿐이다. — 무효 결과로 극적인 결론을 내면 이렇게 된다.
+
+## 현재 유효한 증거
+
+| pool | 도메인 | 결과 |
+|---|---|---|
+| clean546 | 웨이퍼 | uf1_lr1e-3 **3승 0패** |
+| severstal | 철강 | uf1_lr1e-3 **0승 3패** (Hom 열세, 붕괴 없음) |
+| anchor | 웨이퍼 | **실행 중** (결정 시험) |
+
+도메인 의존이 이제 **제대로 측정됐다**. anchor(두 번째 웨이퍼 pool)가 갈림길:
+- anchor 도 승 -> **"웨이퍼 한정 옵션"** 으로 채택 가능 (도메인 조건 명시).
+- anchor 패 -> clean546 승리는 pool 특이 현상. 축을 닫는다.
+
+anchor 비용: 2260장/6400px 라 epoch 당 ~233s, 학습 1회 ~78분, 6회 ~8시간. 여러 루프 주기에
+걸쳐 돈다.
