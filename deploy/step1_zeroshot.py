@@ -43,8 +43,8 @@ class Config:
     B4_PROJ = Paths.B4_PROJ
     REASSIGN = Cluster.REASSIGN
     PARTITION_BY = Cluster.PARTITION_BY
-    Z0_SEED = 42
-    SKIP_CHAMPION = False
+    Z0_SEED = Cluster.Z0_SEED              # ★ config 로 (하드코딩이었다, 260730)
+    SKIP_CHAMPION = Cluster.SKIP_CHAMPION  # ★ config 로 (SITE_SKIP_CHAMPION 이 먹지 않았다)
     PALETTE_PROBE = Cluster.PALETTE_PROBE
     COMPOSITE_ALL_ARMS = Composite.ALL_ARMS
 

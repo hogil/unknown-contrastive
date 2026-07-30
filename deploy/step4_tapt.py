@@ -29,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (REPO, banner, die, env, fmt_row, read_summary, rel,  # noqa: E402
-                          save_result, run_root, show_config, show_images)
+                          save_result, run_root, show_config, show_images, step_dir)
 
 
 from config import Paths, Sweep  # noqa: E402
@@ -135,7 +135,8 @@ def main() -> int:
         #   OUT_ROOT 도 안 바뀌어 **진짜 step3_result.json 을 덮어썼다** (260729 감사).
         "SITE_ENV_OVERRIDE": "1",
         "SITE_BACKBONE": str(tapt),
-        "SITE_OUT_ROOT": str(rel(Config.OUT_ROOT) / "step4_tapt_work"),
+        # ★ 재실행하면 새 폴더. 고정 이름이면 앞 TAPT sweep 결과를 덮어썼다 (260730).
+        "SITE_OUT_ROOT": str(step_dir(Config.OUT_ROOT, "step4_tapt_work")),
         "SITE_CELLS": str(Config.CELLS),
         "SITE_ROUND1_SEED": str(Config.ROUND1_SEED),
         "SITE_TOP_N": str(Config.TOP_N),

@@ -178,6 +178,16 @@ class Cluster:
     #   (그 경우 UC_PALETTE_MASK=1 을 학습·채점 양쪽에 동일하게 준다).
     PALETTE_PROBE = env("SITE_PALETTE_PROBE", True)
 
+    # ★ step1 전용 두 값 — 예전엔 `step1_zeroshot.py` 안에 **하드코딩**돼 있어서
+    #   config 로도 env 로도 못 바꿨다 (SITE_SKIP_CHAMPION=1 을 줘도 champion 이 그대로
+    #   돌았다, 260730 실측). config 로 끌어올린다.
+    #   SKIP_CHAMPION: champion head 를 아예 안 돌린다(체크포인트가 없거나, frozen/z0
+    #     기준선만 빠르게 보고 싶을 때). False 면 파일이 있을 때만 돈다.
+    SKIP_CHAMPION = env("SITE_SKIP_CHAMPION", False)
+    #   Z0_SEED: 랜덤 head(z0) 대조군의 시드. ★ 대조군이므로 arm 비교 중엔 고정해야 한다 —
+    #     바꾸면 "학습이 이겼나"의 기준선 자체가 움직인다.
+    Z0_SEED = env("SITE_Z0_SEED", 42)
+
     # ★ palette 마스킹 모드. 260728 ablation(6조건 x 5 disjoint subset x 2 다이얼 = 60셀,
     #   라벨 채점) 승자 = unify_border.
     #     unify_border    0~7 유지 + 경계 마커(11~30)를 **기본 칩경계색(10)으로 통일** + 배경 흰색
