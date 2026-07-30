@@ -25,16 +25,17 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _site_common import (add_path, REPO, banner, check_inputs, die, env, rel,  # noqa: E402
-                          save_result, run_root, show_config, show_images)
+                          save_result, run_root, show_config, show_images, step_dir)
 
 
-from config import Cluster, Paths, Runtime, Temporal  # noqa: E402
+from config import Cluster, Composite, Paths, Runtime, Temporal  # noqa: E402
 
 
 class Config:
@@ -186,11 +187,16 @@ def main() -> int:
         #   격자만 leaf/0.06 으로 돌아 배포 다이얼과 어긋난다 (260729 감사).
         pred = gd.hdbscan_predict(zb, mcs, ms, str(Cluster.METHOD), float(Cluster.EPS))
         cl = []
+        _gidx = np.asarray(idx)
         for c in sorted(set(pred[pred >= 0].tolist())):
             m = pred == c
             cen = zb[m].mean(axis=0)
             cen = cen / (np.linalg.norm(cen) + 1e-12)
-            cl.append({"id": int(c), "size": int(m.sum()), "centroid": cen})
+            # ★ 멤버의 **전역 인덱스**를 남긴다. 예전엔 centroid/size 만 저장해서
+            #   알람이 떠도 "그 클러스터가 어떤 이미지인지" 되돌릴 수 없었다 —
+            #   그래서 step5 는 composite/대표이미지를 만들 수 없었다 (260730).
+            cl.append({"id": int(c), "size": int(m.sum()), "centroid": cen,
+                       "members": _gidx[m].tolist()})
         per_batch.append({"name": name, "n": len(idx), "clusters": cl})
         print(f"  [{name}] n={len(idx):<5} k={len(cl):<4} noise={(pred==-1).sum()/len(idx)*100:5.1f}%")
 
@@ -290,6 +296,55 @@ def main() -> int:
     print("\n  주의: 여기 FAR 은 '배경 구간에 신규불량이 없다'는 가정 위에서 잰 값이다.")
     print("        그 구간에 실제 신규불량이 있었다면 FAR 이 과대평가된다 — 현업과 확인해라.")
 
+    # ── ★ 신규 클러스터의 대표이미지 + composite ──────────────────────────
+    #   예전엔 step5 가 FAR/lag 숫자만 냈다. 알람이 떠도 **그게 무슨 불량인지 볼 수단이
+    #   없었다** — `docs/ABSOLUTE_RULES.md` §7("composite 와 실제 멤버 이미지로 눈으로
+    #   확인해야 최종 판정")을 만족할 수 없는 상태였다 (260730).
+    #   권장 운영점(rec) 기준으로 관측 구간에서 신규로 걸린 클러스터를 그대로 산출한다.
+    novel_out = step_dir(Config.OUT_ROOT, "step5_novel")
+    thr_rec, floor_rec = float(rec["threshold"]), int(rec["min_size"])
+    novel_report = []
+    n_made = 0
+    for b in obs_slice:
+        for c in b["clusters"]:
+            if not (max_sim(c) < thr_rec and c["size"] >= floor_rec):
+                continue
+            tag = f"{b['name']}_c{c['id']:03d}_n{c['size']}"
+            gdir = novel_out / tag
+            (gdir / "representatives").mkdir(parents=True, exist_ok=True)
+            # 중심에 가까운 순 (composite 상한도 이 순서로 자른다)
+            cen = c["centroid"]
+            mem = sorted(c["members"], key=lambda i: float(np.linalg.norm(z[i] - cen)))
+            for rank, i in enumerate(mem[:12], 1):
+                src = Path(paths_s[i])
+                if src.exists():
+                    shutil.copy2(src, gdir / "representatives" / f"rep{rank:02d}_{src.name}")
+            mx = int(Composite.MAX_MEMBERS)
+            use = mem if mx <= 0 else mem[:mx]
+            try:
+                from composite import write_group_composites
+            except Exception:
+                from deploy.composite import write_group_composites
+            try:
+                write_group_composites([paths_s[i] for i in use],
+                                       gdir / "composites", prefix=f"{tag}_")
+                n_made += 1
+                print(f"  [novel] {tag}  max_sim={max_sim(c):.4f} < {thr_rec:.4f}  "
+                      f"멤버 {c['size']} 중 {len(use)}장으로 composite", flush=True)
+            except Exception as e:
+                import traceback
+                print(f"  [warn] ★ {tag} composite 실패: {type(e).__name__}: {e}", flush=True)
+                if n_made == 0:
+                    traceback.print_exc()
+            novel_report.append({"batch": b["name"], "cluster": c["id"], "size": c["size"],
+                                 "max_sim": round(max_sim(c), 6), "dir": str(gdir.name)})
+    if novel_report:
+        print(f"\n  ★ 신규 클러스터 {len(novel_report)}개 산출 (composite {n_made}개) -> {novel_out}")
+        print("     ※ 알람의 근거다. 이 composite 와 representatives 를 눈으로 확인해야")
+        print("        최종 판정이다 (ABSOLUTE_RULES §7 — 무라벨 지표만으로는 판정 불가).")
+    else:
+        print(f"\n  신규로 걸린 클러스터가 없다 (관측 구간 {len(obs_slice)} 배치). -> {novel_out}")
+
     save_result(rel(Config.OUT_ROOT), "step5",
                 {"dial": {"mcs": mcs, "ms": ms}, "proj": projs,
                  "n_batches": len(batches),
@@ -300,7 +355,11 @@ def main() -> int:
                  "n_calib_sims": len(calib_sims),
                  "ref_size_percentiles": {"min": ref_sizes[0], "p50": ref_sizes[len(ref_sizes)//2],
                                           "max": ref_sizes[-1]},
-                 "grid": grid, "recommended": rec, "config": cfg})
+                 "grid": grid, "recommended": rec,
+                 # ★ 알람의 근거 — 신규 클러스터별 산출 폴더까지 남긴다.
+                 "novel_clusters": novel_report,
+                 "novel_dir": str(novel_out),
+                 "config": cfg})
     print(f"\n[OUT] {rel(Config.OUT_ROOT)}")
     return 0
 

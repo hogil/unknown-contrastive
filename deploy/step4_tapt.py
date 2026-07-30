@@ -82,6 +82,43 @@ def main() -> int:
         print("\n사다리 ①~③ 만으로 운영하려면:  python deploy/step5_temporal.py")
         return 0
 
+    # ★ TAPT 파일이 **FCMAE 와 같은 가중치면** 시험할 게 없다. 실측(260730):
+    #   `weights/tapt/backbone_tapt.pth` 가 FCMAE 와 378개 텐서 전부 동일(상대차 0.0000%)
+    #   이었는데, step4 는 그걸 모르고 sweep 을 3.8분 다시 돌려 "③과 ④ 동률" 이라는
+    #   결론을 냈다. FCMAE 를 FCMAE 와 비교한 것이라 사다리 ④ 판정이 통째로 무의미했다.
+    #   여기서 미리 잡아 **헛된 학습과 잘못된 결론을 막는다.**
+    try:
+        import torch
+        import numpy as _np
+
+        def _sd(p):
+            d = torch.load(str(p), map_location="cpu", weights_only=False)
+            for k in ("state_dict", "model"):
+                if isinstance(d, dict) and k in d:
+                    d = d[k]
+            return d
+
+        _t, _f = _sd(tapt), _sd(rel(Paths.BACKBONE))
+        _common = [k for k in _t if k in _f and hasattr(_t[k], "shape")
+                   and _t[k].shape == _f[k].shape]
+        _n_diff = sum(1 for k in _common
+                      if (_t[k].float() - _f[k].float()).abs().mean().item() > 1e-9)
+        print(f"[check] TAPT vs FCMAE: 매칭 {len(_common)}개 중 **다른 텐서 {_n_diff}개**")
+        if _common and _n_diff == 0:
+            print("\n[FATAL] TAPT backbone 이 FCMAE 와 **완전히 동일하다** — TAPT 가 아니다.")
+            print(f"        {tapt}")
+            print("  이대로 돌리면 FCMAE 를 FCMAE 와 비교해 '③과 ④ 동률' 이라는")
+            print("  **가짜 결론**이 나온다 (실측으로 이미 그렇게 나온 적 있다, 260730).")
+            print("  진짜 TAPT backbone 으로 교체하고 다시 돌려라 — 자매 repo known-cnn 의")
+            print("  supervised CNN 학습 결과에서 backbone 을 추출해야 한다(라벨 필요).")
+            save_result(rel(Config.OUT_ROOT), "step4",
+                        {"status": "aborted", "reason": "TAPT backbone == FCMAE (not TAPT)",
+                         "tapt_backbone": str(tapt), "n_tensors_compared": len(_common),
+                         "n_tensors_differing": _n_diff, "config": cfg})
+            return 2
+    except Exception as _e:
+        print(f"[warn] TAPT/FCMAE 동일성 검사를 못 했다 ({type(_e).__name__}: {_e}) — 계속한다")
+
     s3p = rel(Config.OUT_ROOT) / "step3_result.json"
     if not s3p.exists():
         die("step3 결과가 없다. ④는 ③을 이겨야 의미가 있으므로 먼저 돌려라:\n"
