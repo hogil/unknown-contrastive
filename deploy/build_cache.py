@@ -103,9 +103,19 @@ def _one(job):
 
 
 # ── 공개 API ──────────────────────────────────────────────────────────────
-def cache_paths(cache_dir) -> tuple[Path, Path, Path]:
+def cache_paths(cache_dir, key: str = "") -> tuple[Path, Path, Path]:
+    """캐시 파일 3종 경로. ★ key 를 주면 **파일명에 넣는다.**
+
+    예전엔 key 와 무관하게 `cache_384.*` 하나였고, key 는 meta JSON 안에만 있었다.
+    그래서 설정이 다른 캐시를 두 판 만들면 **뒤엣것이 앞엣것을 덮어썼다** —
+    step0 이 raw/masked 를 둘 다 만들면 masked 만 남고, step1 의 raw arm 4개
+    (frozen/z0/champion/b4)가 전부 cache miss 로 원본 6400x6400 을 다시 읽었다.
+    실측 6.3 img/s 단일스레드라 GPU 가 10% 아래로 굶는다 (260731 서버 신고).
+    이제 설정마다 다른 파일이라 공존한다.
+    """
     d = Path(cache_dir)
-    return d / f"{CACHE_NAME}.npy", d / f"{CACHE_NAME}.json", d / f"{CACHE_NAME}.done"
+    stem = f"{CACHE_NAME}_{key}" if key else CACHE_NAME
+    return d / f"{stem}.npy", d / f"{stem}.json", d / f"{stem}.done"
 
 
 def load_cache(cache_dir, paths, palette_mask: bool):
@@ -114,14 +124,18 @@ def load_cache(cache_dir, paths, palette_mask: bool):
     파일 목록·IMG·palette_mask 가 하나라도 다르면 **무시한다**. 조용히 틀린 캐시를
     쓰는 것보다 느린 게 낫다.
     """
-    npy, meta, done = cache_paths(cache_dir)
+    key = _key(paths, palette_mask)
+    npy, meta, done = cache_paths(cache_dir, key)
     if not (npy.exists() and meta.exists()):
-        return None
+        # 예전 이름(키 없는 cache_384.*)도 받아준다 — meta 의 key 가 맞을 때만.
+        npy, meta, done = cache_paths(cache_dir)
+        if not (npy.exists() and meta.exists()):
+            return None
     try:
         m = json.loads(meta.read_text(encoding="utf-8"))
     except Exception:
         return None
-    if m.get("key") != _key(paths, palette_mask) or m.get("img") != IMG:
+    if m.get("key") != key or m.get("img") != IMG:
         return None
     if not m.get("complete"):
         return None
@@ -136,9 +150,9 @@ def build(paths, cache_dir, palette_mask: bool, workers: int = 0,
     from concurrent.futures import ProcessPoolExecutor
     d = Path(cache_dir)
     d.mkdir(parents=True, exist_ok=True)
-    npy, meta, done_p = cache_paths(d)
     n = len(paths)
     key = _key(paths, palette_mask)
+    npy, meta, done_p = cache_paths(d, key)   # ★ 설정마다 다른 파일 (덮어쓰기 금지)
     workers = workers or max(4, min(64, (os.cpu_count() or 4)))
 
     prev = {}
