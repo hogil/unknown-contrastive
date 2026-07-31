@@ -260,14 +260,38 @@ def parse_fields_from_filename(path_str: str):
 
 
 # ===================== Data =====================
+# ★ palette 전처리 (UC_PALETTE_MASK / UC_PALETTE_MODE).
+#   wafer PNG 는 mode="P" 이고 index 0~7 이 결함 grade, 그 위는 칩경계·배경·invalid 다.
+#   그 색이 clustering shortcut 이 되므로 경계는 기본 경계색(idx10)으로 **통일**하고
+#   나머지는 흰색으로 지운다 (`scripts._common.mask_palette_non_grade_to_white`).
+#   ⚠ 260731 이전에는 이 학습기에 마스킹 코드가 **아예 없어서** 항상 raw 로 학습했다.
+#     채점(grouping_deploy)만 마스킹하면 학습 때와 다른 입력이 되어 결과가 무의미해진다 —
+#     그래서 여기와 채점이 **같은 env** 를 봐야 한다. deploy 는 `train_env()` 로 넘긴다.
+_PALETTE_MASK = _os.environ.get("UC_PALETTE_MASK", "0").strip().lower() in ("1", "true", "yes", "on")
+try:
+    from scripts._common import mask_palette_non_grade_to_white as _mask_palette
+except Exception:
+    _mask_palette = None
+
+
+def _open_rgb(p):
+    """Image.open -> (선택) palette 마스킹 -> RGB. 학습·임베딩이 같은 경로를 쓴다."""
+    im = Image.open(p)
+    if _PALETTE_MASK and _mask_palette is not None:
+        im = _mask_palette(im)
+    return im.convert("RGB")
+
+
 class PairDS(Dataset):
     def __init__(self, items, t): self.items=items; self.t=t
     def __len__(self): return len(self.items)
     def __getitem__(self, i):
         p,y,c = self.items[i]
-        with Image.open(p) as im:
-            im = im.convert("RGB")
+        im = _open_rgb(p)
+        try:
             x1 = self.t(im.copy()); x2 = self.t(im.copy())
+        finally:
+            im.close()
         return x1, x2, y, str(p), c
 
 def build_loader(ds, device):
@@ -628,9 +652,11 @@ def extract(model, items, device, logger: logging.Logger, log_progress: bool = T
         def __len__(self): return len(self.items)
         def __getitem__(self,i):
             p,y,c = self.items[i]
-            with Image.open(p) as im:
-                im = im.convert("RGB")
+            im = _open_rgb(p)          # ★ 학습(PairDS)과 **같은 전처리**여야 한다
+            try:
                 x = self.t(im)
+            finally:
+                im.close()
             return x, y, str(p), c
 
     ds=SingleView(items, tfm(False))

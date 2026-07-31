@@ -79,12 +79,31 @@ def build_decode_cache(pool_path, out_root) -> str:
     cdir = cache_dir_for(Config.OUT_BASE, Config.CACHE_DIR)
     paths = [str(p) for p, _ in sorted(load_pool_manifest(Path(str(rel(pool_path)))),
                                        key=lambda e: e[0])]
-    pm = str(os.environ.get("UC_PALETTE_MASK", "0")).lower() in ("1", "true", "yes", "on")
+    # ★ 캐시는 palette 설정마다 **다른 키**다 (build_cache._key 가 mask/mode 를 해시에 넣는다).
+    #   한 판만 만들면 나머지 arm/step 은 전부 cache miss 로 원본 6400x6400 을 다시 읽는다.
+    #   지금 파이프라인은 **두 설정이 동시에 필요**하다:
+    #     raw    — step1 의 frozen/champion/b4 (그 head 들이 마스킹 없이 학습됐다)
+    #     masked — step1 의 frozen_masked + step2/3/4/5 전부 (Cluster.PALETTE_MASK)
+    #   그래서 둘 다 만든다. 키가 달라 같은 폴더에 공존한다.
+    want = [(False, "raw")]
     try:
-        build(paths, cdir, pm, int(Config.DECODE_WORKERS))
-    except Exception as e:
-        print(f"[cache] 생성 실패({type(e).__name__}: {e}) -> 캐시 없이 진행한다", flush=True)
-        return ""
+        if bool(Cluster.PALETTE_MASK):
+            want.append((True, f"masked({Cluster.PALETTE_MODE})"))
+    except Exception:
+        pass
+    if str(os.environ.get("UC_PALETTE_MASK", "0")).lower() in ("1", "true", "yes", "on"):
+        if not any(m for m, _ in want):
+            want.append((True, "masked(env)"))
+    for pm, tag in want:
+        print(f"[cache] palette={tag}", flush=True)
+        os.environ["UC_PALETTE_MODE"] = str(Cluster.PALETTE_MODE)
+        try:
+            build(paths, cdir, pm, int(Config.DECODE_WORKERS))
+        except Exception as e:
+            print(f"[cache] {tag} 생성 실패({type(e).__name__}: {e}) -> 이 설정은 원본을 읽는다",
+                  flush=True)
+            if not pm:
+                return ""
     return cdir
 
 

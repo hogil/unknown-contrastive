@@ -328,6 +328,10 @@ def cluster_env() -> dict:
     d = {
         "SITE_COMPOSITE_MAX_MEMBERS": str(K.MAX_MEMBERS),
         "UC_PALETTE_MODE": str(C.PALETTE_MODE),
+        # ★ MODE 를 켜는 스위치. 이게 빠져 있어서 `unify_border` 가 **죽은 설정**이었다 —
+        #   grouping_deploy 기본이 "0" 이라 step2/3/4/5 는 전부 raw 로 채점되고 있었다.
+        #   step1 은 arm 마다 env_extra 로 덮어쓰므로 여기 값에 영향받지 않는다.
+        "UC_PALETTE_MASK": "1" if getattr(C, "PALETTE_MASK", False) else "0",
         "SITE_METRIC": str(C.METRIC),
         "SITE_OVER_MERGE_FRAC": str(C.OVER_MERGE_FRAC),
         "SITE_HDBSCAN_GPU": "1" if C.HDBSCAN_GPU else "0",
@@ -439,6 +443,12 @@ def train_env(backbone: str, pool: str, out_dir: Path, seed: int, epochs: int,
             "REPRO_MCS": str(_C2.MCS), "REPRO_MS": str(_C2.MS),
             "REPRO_METHOD": str(_C2.METHOD), "REPRO_EPS": str(_C2.EPS),
             "REPRO_METRIC": str(_C2.METRIC),
+            # ★ palette 전처리를 **학습에도** 준다. 학습기는 원래 마스킹 코드가 아예
+            #   없어서(`Image.open(p).convert("RGB")` 뿐) 항상 raw 로 학습했다.
+            #   채점만 마스킹하면 학습 때와 다른 입력이 되어 결과가 무의미해지므로
+            #   반드시 cluster_env() 와 **같은 값**이어야 한다 (260731).
+            "UC_PALETTE_MASK": "1" if getattr(_C2, "PALETTE_MASK", False) else "0",
+            "UC_PALETTE_MODE": str(_C2.PALETTE_MODE),
         })
     except Exception:
         pass

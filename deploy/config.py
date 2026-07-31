@@ -201,6 +201,18 @@ class Cluster:
     #   ⚠ 학습과 채점에 **같은 값**을 줘야 한다. 다르면 입력이 갈려 결과가 무의미해진다.
     PALETTE_MODE = env("UC_PALETTE_MODE", "unify_border")
 
+    # ★ 위 PALETTE_MODE 를 **실제로 켜는 스위치**. 이게 없으면 MODE 는 죽은 설정이다
+    #   (`grouping_deploy._PALETTE_MASK` 기본 "0", 학습기는 마스킹 코드 자체가 없었다).
+    #   260731 실측 이전까지 step2/3/4/5 는 전부 `raw` 로 학습·채점하고 있었다 —
+    #   그런데 같은 pool 에서 마스킹만 켠 arm 이 frozen 을 **24.84pp** 이겼고
+    #   (seed_noise 33.67 -> 8.83, 잡음폭 2.28 의 10배), 60셀 ablation 도 같은 방향이었다
+    #   (unify_border ARI 0.8300 vs raw 0.5460). 그래서 기본을 켬으로 둔다.
+    #   ⚠ step1 은 여기에 **영향받지 않는다** — arm 마다 명시적으로 켜고 끈다.
+    #     champion / May b4 head 는 마스킹 **없이** 학습된 것이라 켜면 입력 불일치가 되고,
+    #     frozen 은 그것들의 기준선이라 같이 raw 여야 한다. `frozen_masked` 가 probe 다.
+    #     반면 step2/3/4 는 **여기서 새로 학습**하므로 학습·채점 양쪽에 같이 켜면 불일치가 없다.
+    PALETTE_MASK = env("SITE_PALETTE_MASK", True)
+
     # ★ 분리 그룹핑 — 파일명 코드마다 **따로** 클러스터링한다.
     #   사내 파일명: `AAQ729_00C_20_20260501_010000_83.0_17_PE_ENGINEER.png`
     #     `_` 로 나눈 필드 -> [AAQ729, 00C, 20, 20260501, ...]  코드는 **필드 1**.
