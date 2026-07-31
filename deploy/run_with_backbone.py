@@ -35,16 +35,24 @@ STEPS = {"1": "step1_zeroshot", "2": "step2_recipe", "3": "step3_sweep", "5": "s
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--step", required=True, choices=sorted(STEPS),
-                    help="돌릴 step 번호 (4 는 이미 TAPT 전용이라 제외)")
-    ap.add_argument("--backbone", required=True, help="쓸 backbone .pth")
+    # ★ 기본값을 둔다 — 가장 흔한 용도가 "step2 를 TAPT 로" 라서, 인자 없이 그냥
+    #   돌아가는 게 맞다. 무엇으로 정해졌는지는 아래에서 반드시 찍는다.
+    ap.add_argument("--step", default="2", choices=sorted(STEPS),
+                    help="돌릴 step 번호 (기본 2. 4 는 이미 TAPT 전용이라 제외)")
+    ap.add_argument("--backbone", default=Paths.TAPT_BACKBONE,
+                    help=f"쓸 backbone .pth (기본 {Paths.TAPT_BACKBONE})")
     ap.add_argument("--tag", default="", help="작업 폴더 이름에 쓸 꼬리표 (기본: backbone 파일명)")
     a = ap.parse_args()
 
     script = STEPS[a.step]
     bb = rel(a.backbone)
+    print(f"[args] --step {a.step} ({STEPS[a.step]})   --backbone {a.backbone}"
+          + ("   (둘 다 기본값)" if a.step == "2" and a.backbone == Paths.TAPT_BACKBONE else ""))
     if not bb.exists():
-        die(f"backbone 이 없다: {bb}")
+        die(f"backbone 이 없다: {bb}\n"
+            "  TAPT 를 쓰려면 먼저 만들어라:\n"
+            "    python deploy/extract_tapt.py --src <known-cnn 의 best_model.pth>\n"
+            "  다른 backbone 을 쓰려면:  --backbone <경로>")
 
     banner(f"STEP {a.step} @ 다른 backbone", f"{bb.name} 으로 격리 실행")
 
