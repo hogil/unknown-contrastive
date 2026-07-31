@@ -28,7 +28,7 @@ from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # n
 from step2_recipe import rule_c, score_epochs  # noqa: E402
 
 
-from config import Cluster, Paths, Runtime, Sweep, epochs, recipe  # noqa: E402
+from config import Cluster, Composite, Paths, Runtime, Sweep, epochs, recipe  # noqa: E402
 
 
 class Config:
@@ -47,6 +47,8 @@ class Config:
     ROUND1_SEED = Sweep.ROUND1_SEED
     TOP_N = Sweep.TOP_N
     ROUND2_SEEDS = Sweep.ROUND2_SEEDS
+    # ★ 셀마다 그룹핑 산출물(composite)을 만들지. step1 의 arm 정책과 같은 스위치.
+    COMPOSITE_ALL_ARMS = Composite.ALL_ARMS
 
 
 CELL_AXES = Sweep.AXES
@@ -97,8 +99,28 @@ def train_and_score(cell: str, seed: int, pool: str, mcs: int, ms: int,
     if not sel:
         return None
     print(f"  ★ Rule C: {sel['selected']['ckpt']} seed_noise={sel['selected']['seed_noise_pct']}%")
+
+    # ★ 이 셀이 고른 epoch 으로 **그룹핑 산출물**을 만든다 (composite + 대표이미지).
+    #   score_epochs 는 HDBSCAN 을 돌리긴 하지만 k/seed_noise **숫자만** 남기고 버린다.
+    #   그래서 예전엔 셀 폴더에 그림이 하나도 없었고, 이긴 셀(final/)만 볼 수 있었다.
+    #   지는 셀을 눈으로 못 보면 "왜 졌는지"를 확인할 수 없다 — 사내엔 답이 없어서
+    #   숫자로 순위를 못 매기고 눈으로 봐야 한다(docs/ABSOLUTE_RULES.md §7).
+    #   step1 이 arm 마다 만드는 것과 같은 정책이라 같은 스위치(Composite.ALL_ARMS)를 쓴다.
+    grp = None
+    if Config.COMPOSITE_ALL_ARMS:
+        cp = ck / sel["selected"]["ckpt"]
+        grp = run_dir / f"grouping_{Path(sel['selected']['ckpt']).stem}"
+        print(f"  [composite] 셀 {cell} 의 선택 epoch 으로 그룹핑 -> {grp.name}")
+        rc2 = run(deploy_cmd(Config.BACKBONE, pool, grp, mcs, ms, [str(cp)],
+                             Config.DEVICE, int(Config.BATCH), Config.REASSIGN,
+                             cache_dir, False, Config.PARTITION_BY),
+                  log_path=run_dir / f"{grp.name}.log")
+        if rc2 != 0:
+            print(f"  [warn] {cell} 그룹핑 종료코드 {rc2}")
+
     return {"cell": cell, "seed": seed, "ckpt_dir": str(ck.relative_to(REPO)),
-            "recipe": cell_recipe(cell), "epochs": rows, **sel}
+            "recipe": cell_recipe(cell), "epochs": rows,
+            "grouping_dir": str(grp) if grp else None, **sel}
 
 
 def main() -> int:
