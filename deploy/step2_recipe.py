@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _site_common import (add_path, REPO, band, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
+from _site_common import (add_path, REPO, band, banner, baseline_arms, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, read_summary, rel, run, save_result,
                           run_root, live_dial, step_dir, show_config, show_images, train_env)
 
@@ -212,12 +212,13 @@ def main() -> int:
     print("\n" + "=" * 78)
     print("[결과] step1 기준선 대비 (같은 다이얼/pool/reassign)")
     print("=" * 78)
-    for name in ("frozen",):
-        if base.get(name):
-            print(fmt_row(f"[step1] {name}", base[name]))
+    # ★ 전 arm 을 찍되, 판정에 쓰는 기준선을 표시한다 (어느 게 같은 조건인지 보이게).
+    _bfz, _bz0, _ = baseline_arms(base)
     for k, v in base.items():
-        if k.startswith("z0"):
-            print(fmt_row(f"[step1] {k}", v))
+        if not (k.startswith("frozen") or k.startswith("z0")):
+            continue
+        mark = " ←판정기준" if (v is _bfz or v is _bz0) else ""
+        print(fmt_row(f"[step1] {k}{mark}", v))
     for name, s in finals.items():
         print(fmt_row(f"[step2] {name}", s))
 
@@ -239,12 +240,15 @@ def judge(base: dict, finals: dict) -> list[str]:
     _B = band("noise")          # ★ config.Judge.BAND 에서 live 로 읽는다
     sn = lambda s: (s or {}).get("seed_noise_pct", (s or {}).get("seed_noise"))
     out = []
-    fz, z0k = base.get("frozen"), next((k for k in base if k.startswith("z0")), None)
-    z0 = base.get(z0k) if z0k else None
+    # ★ 내 palette 설정과 **같은 조건**의 기준선을 쓴다. 마스킹을 켜고 학습해놓고
+    #   raw frozen 과 비교하면 마스킹 효과가 학습 효과로 둔갑한다 (260731 실측).
+    fz, z0, _pnote = baseline_arms(base)
+    out.append(f"기준선 palette = {_pnote}")
     best_name = max(finals, key=lambda k: -(sn(finals[k]) if sn(finals[k]) is not None else 1e9))
     best = finals[best_name]
     out.append(f"step2 최선: {best_name}  seed_noise={sn(best)}  k={(best or {}).get('k')}")
-    for ref, label in ((fz, "frozen"), (z0, "z0(랜덤 head)")):
+    _sfx = "_masked" if "같은 조건" in _pnote else ""
+    for ref, label in ((fz, f"frozen{_sfx}"), (z0, f"z0(랜덤 head){_sfx}")):
         if ref is None or sn(ref) is None or sn(best) is None:
             continue
         d = sn(ref) - sn(best)

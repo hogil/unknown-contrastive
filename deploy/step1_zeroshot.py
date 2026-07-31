@@ -121,6 +121,19 @@ def main() -> int:
     if Config.PALETTE_PROBE:
         arms.append(("frozen_masked", Config.BACKBONE, None))
 
+    # ★ step2~5 가 마스킹을 켜고 학습한다면(Cluster.PALETTE_MASK) **그쪽 기준선도
+    #   마스킹이어야 한다.** 안 그러면 step2 가 "raw frozen 대비 22pp 개선"이라고
+    #   보고하는데 그 대부분이 마스킹 효과이고 학습 효과가 아니다 — 실측(260731):
+    #       frozen        33.67  raw,    학습 X
+    #       frozen_masked  8.83  마스킹, 학습 X   <- step2 와 같은 입력
+    #       step2 seed42  11.33  마스킹, 학습 O   <- 실제로는 2.50pp 나빠졌다
+    #   z0 도 같은 이유로 마스킹 판이 필요하다. frozen/z0 는 head 가 없거나
+    #   랜덤이라 "학습 때와 입력이 달라지는" 문제가 없어 켤 수 있다.
+    #   (champion / b4 는 마스킹 없이 학습된 head 라 여전히 raw 로 둔다.)
+    if bool(Cluster.PALETTE_MASK):
+        arms.append((f"z0_x{n_heads}_masked", Config.BACKBONE,
+                     make_z0_set(out_root / "_z0", n_heads, int(Config.Z0_SEED))))
+
     # ★ May 배포본은 자체 backbone 을 쓰는 독립 arm — FCMAE 와 섞으면 안 된다.
     b4bb, b4pj = rel(Config.B4_BACKBONE), rel(Config.B4_PROJ)
     if b4bb.exists() and b4pj.exists():
@@ -139,7 +152,9 @@ def main() -> int:
     results = {}
     for name, bb, projs in arms:
         out = out_root / name.replace("(", "_").replace(")", "")
-        extra = {"UC_PALETTE_MASK": "1"} if name == "frozen_masked" else {"UC_PALETTE_MASK": "0"}
+        # arm 이름에 _masked 가 붙은 것만 마스킹. 나머지는 명시적으로 끈다
+        # (config 기본이 켬이라 안 끄면 champion/b4 가 학습 때와 다른 입력을 받는다).
+        extra = {"UC_PALETTE_MASK": "1" if name.endswith("_masked") else "0"}
         rc = run(deploy_cmd(bb, pool, out, mcs, ms, projs,
                             Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache,
                             skip_comp, Config.PARTITION_BY),
@@ -173,7 +188,7 @@ def main() -> int:
             rc = run(deploy_cmd(bbb, pool, bout, mcs, ms, bprojs,
                                 Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache,
                                 False, Config.PARTITION_BY),
-                     env_extra={"UC_PALETTE_MASK": "1" if bname == "frozen_masked" else "0"},
+                     env_extra={"UC_PALETTE_MASK": "1" if bname.endswith("_masked") else "0"},
                      log_path=out_root / f"{bout.name}_composite.log")
             if rc != 0:
                 print(f"[warn] composite 재실행 종료코드 {rc}")

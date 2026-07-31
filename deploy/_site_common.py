@@ -307,6 +307,41 @@ def run(cmd: list[str], env_extra: dict | None = None, log_path: Path | None = N
         return p.returncode
 
 
+def baseline_arms(step1_arms: dict) -> tuple[dict | None, dict | None, str]:
+    """step1 arm 표에서 **내 palette 설정과 같은** frozen / z0 기준선을 고른다.
+
+    ★ 왜 필요한가 (260731 실측). step2~5 는 `Cluster.PALETTE_MASK` 로 마스킹을 켜고
+      학습하는데, step1 의 `frozen` arm 은 raw 다. 그대로 비교하면:
+          frozen        33.67  raw,    학습 X
+          frozen_masked  8.83  마스킹, 학습 X   <- step2 와 같은 입력
+          step2 seed42  11.33  마스킹, 학습 O
+      step2 는 "vs frozen 22.34pp 개선 — 유효" 라고 판정했지만, 그 22.34pp 는 거의
+      전부 **마스킹 효과**이고 학습은 오히려 2.50pp 나빴다. 1축 비교가 깨진 것이다.
+      마스킹을 켜면 기준선도 `frozen_masked` / `z0_*_masked` 여야 한다.
+
+    반환: (frozen, z0, 설명문). 맞는 arm 이 없으면 raw 로 떨어지고 설명문에 경고를 남긴다.
+    """
+    try:
+        from config import Cluster as C
+        masked = bool(C.PALETTE_MASK)
+    except Exception:
+        masked = False
+    if not masked:
+        z0k = next((k for k in step1_arms if k.startswith("z0") and not k.endswith("_masked")), None)
+        return step1_arms.get("frozen"), (step1_arms.get(z0k) if z0k else None), "raw"
+
+    fz = step1_arms.get("frozen_masked")
+    z0k = next((k for k in step1_arms if k.startswith("z0") and k.endswith("_masked")), None)
+    z0 = step1_arms.get(z0k) if z0k else None
+    note = "masked(unify_border) — 내 학습 입력과 같은 조건의 기준선"
+    if fz is None:
+        fz = step1_arms.get("frozen")
+        note = ("★ 경고: 마스킹을 켜고 학습했는데 step1 에 masked 기준선이 없다. "
+                "raw frozen 과 비교하면 마스킹 효과가 학습 효과로 잘못 집계된다 — "
+                "step1 을 다시 돌려라 (Cluster.PALETTE_PROBE=True).")
+    return fz, z0, note
+
+
 def band(axis: str = "noise") -> float:
     """판정 잡음폭. **config.Judge.BAND 에서 매번 live 로 읽는다.**
 
