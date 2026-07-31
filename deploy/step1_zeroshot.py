@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
+from _site_common import (REPO, band, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, make_z0_set, read_summary, rel, run,
                           save_result, run_root, live_dial, step_dir, show_config, show_images)
 
@@ -191,6 +191,7 @@ def main() -> int:
 
 def judge(results: dict, arms: list) -> tuple[str, list[str]]:
     """label-free 판정. 라벨이 없으므로 seed_noise / k / coherence 로만 본다."""
+    _B = band("noise")          # ★ config.Judge.BAND 에서 live 로 읽는다
     fz, notes = results.get("frozen"), []
     if not fz:
         return "판정 불가 (frozen 결과 없음)", ["frozen arm 이 실패했다. 로그를 봐라."]
@@ -206,10 +207,10 @@ def judge(results: dict, arms: list) -> tuple[str, list[str]]:
     z0 = results.get(z0key) if z0key else None
     if z0 and fz_sn is not None and sn(z0) is not None:
         d = sn(z0) - fz_sn
-        if d < -2.28:
+        if d < -_B:
             notes.append(f"★ 랜덤 head 만으로 frozen 보다 seed_noise 가 {-d:.2f}pp 낮다. "
                          f"이 pool 에서는 '학습 없이 head 만 붙이는 것'도 후보다.")
-        elif d > 2.28:
+        elif d > _B:
             notes.append(f"랜덤 head 는 frozen 보다 {d:.2f}pp 나쁘다 — 이 pool 에서 랜덤 투영은 해롭다.")
         else:
             notes.append(f"랜덤 head 는 frozen 과 잡음폭 안(Δ{d:+.2f}pp) — 대조군으로 중립.")
@@ -220,15 +221,15 @@ def judge(results: dict, arms: list) -> tuple[str, list[str]]:
             "champion 체크포인트를 받아서 다시 돌려라. frozen/z0 기준선은 위에 확보됐다."]
 
     ch_sn, z_sn = sn(ch), sn(z0) if z0 else None
-    beats_frozen = ch_sn is not None and fz_sn is not None and ch_sn < fz_sn - 2.28
-    beats_z0 = ch_sn is not None and z_sn is not None and ch_sn < z_sn - 2.28
+    beats_frozen = ch_sn is not None and fz_sn is not None and ch_sn < fz_sn - _B
+    beats_z0 = ch_sn is not None and z_sn is not None and ch_sn < z_sn - _B
 
     b4 = results.get("contrastive_b4(May)")
     if b4 and sn(b4) is not None and ch_sn is not None:
         d = sn(b4) - ch_sn
-        if d < -2.28:
+        if d < -_B:
             notes.append(f"★ May 배포본 b4 가 champion 보다 seed_noise {-d:.2f}pp 낮다 — b4 를 써라.")
-        elif d > 2.28:
+        elif d > _B:
             notes.append(f"May 배포본 b4 는 champion 보다 {d:.2f}pp 나쁘다.")
         else:
             notes.append(f"May 배포본 b4 와 champion 은 잡음폭 안(Δ{d:+.2f}pp) — 둘 중 아무거나.")

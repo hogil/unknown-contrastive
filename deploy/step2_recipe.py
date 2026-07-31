@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _site_common import (add_path, REPO, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
+from _site_common import (add_path, REPO, band, banner, check_inputs, deploy_cmd, die, env,  # noqa: E402
                           fmt_row, read_summary, rel, run, save_result,
                           run_root, live_dial, step_dir, show_config, show_images, train_env)
 
@@ -236,6 +236,7 @@ def main() -> int:
 
 
 def judge(base: dict, finals: dict) -> list[str]:
+    _B = band("noise")          # ★ config.Judge.BAND 에서 live 로 읽는다
     sn = lambda s: (s or {}).get("seed_noise_pct", (s or {}).get("seed_noise"))
     out = []
     fz, z0k = base.get("frozen"), next((k for k in base if k.startswith("z0")), None)
@@ -247,13 +248,13 @@ def judge(base: dict, finals: dict) -> list[str]:
         if ref is None or sn(ref) is None or sn(best) is None:
             continue
         d = sn(ref) - sn(best)
-        if d > 2.28:
-            out.append(f"  vs {label}: seed_noise {d:.2f}pp 개선 (잡음폭 2.28 밖) — 유효")
-        elif d < -2.28:
+        if d > _B:
+            out.append(f"  vs {label}: seed_noise {d:.2f}pp 개선 (잡음폭 {_B} 밖) — 유효")
+        elif d < -_B:
             out.append(f"  vs {label}: {-d:.2f}pp 악화 — 이 pool 에서 레시피가 해롭다")
         else:
             out.append(f"  vs {label}: Δ{d:+.2f}pp — 잡음폭 안, 차이 없음")
-    if z0 is not None and sn(z0) is not None and sn(best) is not None and sn(best) >= sn(z0) - 2.28:
+    if z0 is not None and sn(z0) is not None and sn(best) is not None and sn(best) >= sn(z0) - _B:
         out.append("  ★ z0 를 못 이겼다 -> '학습이 개선했다'고 쓰지 마라. "
                    "projection head 의 기하 효과와 구분되지 않는다.")
     out.append("  ※ reassign 전(seed_noise)으로 판정했다. reassign 후 noise 는 "

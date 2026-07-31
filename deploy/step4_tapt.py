@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _site_common import (REPO, banner, die, env, fmt_row, read_summary, rel,  # noqa: E402
+from _site_common import (REPO, band, banner, die, env, fmt_row, read_summary, rel,  # noqa: E402
                           save_result, run_root, show_config, show_images, step_dir)
 
 
@@ -165,15 +165,16 @@ def main() -> int:
     print(fmt_row(f"[③] {s3.get('final_winner')}", a))
     print(fmt_row(f"[④] {s4.get('final_winner')}", b))
 
+    _B = band("noise")          # ★ config.Judge.BAND 에서 live 로 읽는다
     sn = lambda s: (s or {}).get("seed_noise_pct", (s or {}).get("seed_noise"))
     notes = []
     if sn(a) is None or sn(b) is None:
         notes.append("비교 불가 (한쪽 결과 없음)")
     else:
         d = sn(a) - sn(b)
-        if d > 2.28:
+        if d > _B:
             notes.append(f"TAPT 가 {d:.2f}pp 우세 (잡음폭 밖) -> ④ 채택 검토")
-        elif d < -2.28:
+        elif d < -_B:
             notes.append(f"TAPT 가 {-d:.2f}pp 열세 -> ④ 기각. ③을 쓴다. "
                          f"(new-domain 에서 TAPT 가 불리하다는 260724 관측과 일치)")
         else:

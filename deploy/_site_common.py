@@ -82,10 +82,8 @@ def env(name: str, default):
     return v
 
 
-# 측정 잡음폭 (동일 config 4회 반복 실측). 이 안의 차이는 "차이 없음"으로 처리.
-BAND = {"noise": 2.28, "ari": 0.019, "hom": 0.005, "comp": 0.033, "p1": 0.0}
-# 민감도 순위 (평균 |diff| / 잡음폭). Comp 가 가장 관대 -> 단독 통과 판정 금지.
-SENSITIVITY = ("P1", "ARI", "Hom", "noise", "Comp")
+# ★ 잡음폭/민감도의 정본은 **config.Judge** 다. 여기 있던 사본은 키까지 소문자로
+#   달라서(ari vs ARI) 두 표가 조용히 갈릴 수 있었다. 아래 band() 로 통일한다.
 
 
 def die(msg: str, code: int = 2):
@@ -307,6 +305,22 @@ def run(cmd: list[str], env_extra: dict | None = None, log_path: Path | None = N
             f.write(line)
         p.wait()
         return p.returncode
+
+
+def band(axis: str = "noise") -> float:
+    """판정 잡음폭. **config.Judge.BAND 에서 매번 live 로 읽는다.**
+
+    이 안의 차이는 "차이 없음"이다 — 동일 config 를 4회 반복해서 나온 측정 산포다.
+    ★ 260731 이전에는 `Judge` 클래스를 **어디서도 import 하지 않았고**, 2.28 이
+      step1/2/4 에 하드코딩돼 있었다. config 를 고쳐도 판정은 옛 값으로 돌았다 —
+      `PALETTE_MODE` 가 죽어 있던 것과 똑같은 유형이다.
+    """
+    try:
+        from config import Judge
+        return float(Judge.BAND[axis])
+    except Exception:
+        return {"noise": 2.28, "ARI": 0.019, "Hom": 0.005,
+                "Comp": 0.033, "P1": 0.0}.get(axis, 0.0)
 
 
 def cluster_env() -> dict:
