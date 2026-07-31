@@ -406,7 +406,12 @@ class Sweep:
     """step3 레시피 스윕. 각 셀은 base 에서 **정확히 1축**만 바꾼다."""
 
     # 실측 승자가 LR 2배(lr008)라 LR 축을 앞에 둔다 — 3셀만 돌려도 방향이 보인다.
-    CELLS = env("SITE_CELLS", "lr008,lr002,q32768,q4096,t030,t010,neg060,neg085,nolocal")
+    # ★ samp* 는 260731 에 base sampling 을 0.25 -> 0.75 로 바꾸면서 넣은 축이다.
+    #   AXES 에 정의만 하고 이 목록에 안 넣으면 **정의만 있고 안 돈다** — 그러면 바꾼
+    #   기본값이 검증되지 않은 채로 남는다. samp025 가 옛 값이라 되돌릴 길도 이 셀이다.
+    CELLS = env("SITE_CELLS",
+                "lr008,lr002,q32768,q4096,t030,t010,neg060,neg085,nolocal,"
+                "samp025,samp050,samp100")
     ROUND1_SEED = env("SITE_ROUND1_SEED", 42)
     TOP_N = env("SITE_TOP_N", 3)               # 상위 N 셀만 multi-seed 재확인 (0=생략)
     ROUND2_SEEDS = env("SITE_ROUND2_SEEDS", "1,2")
