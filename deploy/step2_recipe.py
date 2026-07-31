@@ -198,7 +198,10 @@ def main() -> int:
     # 앙상블(전 seed concat+L2) — 배포 기본값이 앙상블이다
     ens_paths = [str(Path(i["ckpt_dir"]) / i["selected"]["ckpt"]) for i in per_seed.values()]
     ens = None
-    if len(ens_paths) > 1:
+    if len(ens_paths) > 1 and not Recipe.ENSEMBLE:
+        print(f"[ensemble] Recipe.ENSEMBLE=False -> seed {len(ens_paths)}개를 묶지 않는다. "
+              f"seed 별 final_seed*/ 만 만든다.")
+    if len(ens_paths) > 1 and Recipe.ENSEMBLE:
         out = out_root / "final_ensemble"
         run(deploy_cmd(Config.BACKBONE, pool, out, mcs, ms, ens_paths,
                        Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, False, Config.PARTITION_BY),

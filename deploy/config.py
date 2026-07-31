@@ -322,7 +322,14 @@ class Recipe:
     """contrastive 학습 레시피 (B4). step2 기본값이자 step3 스윕의 base."""
 
     EPOCHS = env("SITE_EPOCHS", 20)
-    SEEDS = env("SITE_SEEDS", "42,1,2")        # 3-seed 권장. 급하면 "42"
+    # ★ 260731 사용자 결정: seed 1개 + sampling 을 올려 **한 head 를 깊게** 학습한다.
+    #   같은 비용의 두 가지 쓰임이 있고 그중 하나를 고른 것이다:
+    #       3 seed x 20ep x sampling 0.25 = 15 pool-pass  (head 3개 -> 앙상블)
+    #       1 seed x 20ep x sampling 0.75 = 15 pool-pass  (head 1개, 데이터를 3배 봄)  <- 채택
+    #   ⚠ 이 둘을 비교한 실측은 아직 없다. 0.25 는 May 원본에서 온 값이고 sampling 은
+    #     한 번도 스윕한 적이 없다. 그래서 `Sweep.AXES` 에 samp025/050/100 을 넣어뒀다 —
+    #     step3 가 라벨 없이 골라준다. 그 결과가 나오면 이 기본값을 다시 정해라.
+    SEEDS = env("SITE_SEEDS", "42")
 
     TEMP = env("SITE_TEMP", 0.20)
     QUEUE = env("SITE_QUEUE", 16384)
@@ -331,7 +338,9 @@ class Recipe:
     # ★ 학습 배치는 레시피다(결과가 바뀐다). H200 이라 256 도 무리 없지만
     #   B4 기본은 64 다. 256 을 쓰려면 MayPreset 또는 sweep 셀 `may` 로 **비교해서** 채택해라.
     BATCH = env("SITE_TRAIN_BATCH", 64)
-    SAMPLING = env("SITE_SAMPLING", 0.25)
+    # epoch 마다 pool 의 이 비율만 학습에 쓴다 (매 epoch 다시 추첨 — 같은 부분집합 반복 아님).
+    #   ★ 260731: 0.25 -> 0.75. seed 를 1개로 줄인 만큼 한 head 가 데이터를 더 보게 한다.
+    SAMPLING = env("SITE_SAMPLING", 0.75)
     USE_LOCAL = env("SITE_USE_LOCAL", True)
 
     # ★ residual adapter — GAP 직후, projection head **앞**에 들어간다:
@@ -339,6 +348,13 @@ class Recipe:
     #   frozen 하한이 보장되므로 도움이 될 때만 벗어난다. 시간축 champion 이 이걸 썼다
     #   (`fcmae_ad1_t010_s1_ep4` 의 ad1).
     ADAPTER = env("SITE_ADAPTER", False)
+
+    # ★ 앙상블(여러 체크포인트 concat+L2)을 만들지. 260731 사용자 결정: **끈다.**
+    #   step2 는 seed 가 1개라 어차피 안 만들지만, step3 는 round-2 seed 의 체크포인트를
+    #   승자 것과 같이 묶어 `final/` 을 만들고 있었다. 그것도 앙상블이라 같이 끈다
+    #   (round-2 는 그대로 돈다 — 승자가 잡음이 아닌지 **재확인**하는 게 본래 목적이고,
+    #    앙상블 재료로 쓰는 건 부수효과였다).
+    ENSEMBLE = env("SITE_ENSEMBLE", False)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -407,6 +423,11 @@ class Sweep:
         "q4096":   {"queue": 4096},
         "q32768":  {"queue": 32768},
         "nolocal": {"use_local": False},
+        # ★ sampling 축 — epoch 당 pool 의 몇 %를 학습에 쓰는가. 한 번도 스윕한 적이 없다.
+        #   base 가 0.75 로 바뀌었으니 아래·위를 같이 본다. samp025 는 May 원본 값이다.
+        "samp025": {"sampling": 0.25},
+        "samp050": {"sampling": 0.50},
+        "samp100": {"sampling": 1.00},
         "adapter": {"adapter": True},          # residual adapter on
         "may":     {"batch": 256},             # 5월 원본 batch
     }

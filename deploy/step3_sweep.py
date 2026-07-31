@@ -28,7 +28,7 @@ from _site_common import (REPO, banner, check_inputs, deploy_cmd, die, env,  # n
 from step2_recipe import rule_c, score_epochs  # noqa: E402
 
 
-from config import Cluster, Composite, Paths, Runtime, Sweep, epochs, recipe  # noqa: E402
+from config import Cluster, Composite, Paths, Recipe, Runtime, Sweep, epochs, recipe  # noqa: E402
 
 
 class Config:
@@ -203,7 +203,13 @@ def main() -> int:
 
     # 최종 산출 (승자 셀의 전 seed 앙상블)
     ck_list = [str(Path(r1[final_win]["ckpt_dir"]) / r1[final_win]["selected"]["ckpt"])]
-    ck_list += [str(Path(g["ckpt_dir"]) / g["selected"]["ckpt"]) for g in r2.get(final_win, [])]
+    # ★ round-2 체크포인트를 승자와 묶으면 그게 앙상블이다. Recipe.ENSEMBLE 이 꺼져 있으면
+    #   round-1 승자 **하나만** 쓴다 (round-2 는 그대로 돌아 승자가 잡음이 아닌지 재확인한다).
+    if Recipe.ENSEMBLE:
+        ck_list += [str(Path(g["ckpt_dir"]) / g["selected"]["ckpt"]) for g in r2.get(final_win, [])]
+    else:
+        print(f"[ensemble] Recipe.ENSEMBLE=False -> final/ 은 round-1 승자 단일 체크포인트로 만든다 "
+              f"(round-2 {len(r2.get(final_win, []))}개는 재확인용으로만 쓴다).")
     out = out_root / "final"
     # ★ 여기는 스윕 셀이 아니라 **최종 산출**이다 -> composite 를 만든다.
     #   (셀 비교 때는 끄는 게 맞지만 final 까지 끄면 그림이 하나도 안 남는다)
