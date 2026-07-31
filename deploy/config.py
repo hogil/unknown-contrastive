@@ -33,7 +33,15 @@ from _site_common import env  # noqa: E402
 #             fast_red_060 / fast_red_040 / fast_red_030 / fast_red_020
 #   (아래 `class Composite` 가 이 두 값을 읽어 쓴다 — env 로 override 하려면
 #    SITE_ENV_OVERRIDE=1 SITE_COLOR_LEGENDS=... SITE_COLOR_SCHEME=...)
-COLOR_LEGENDS_PATH = "D:/project/unknown-contrastive/deploy/color-legends.json"
+#
+# ★ 상대경로 / 절대경로 **둘 다** 된다 (`composite._read_stops`):
+#     상대 -> 프로젝트 루트 기준으로 푼다. 폴더를 통째로 어디에 옮겨도 돈다.
+#     절대 -> 그대로 쓴다.  예) mapviewer 정본을 그대로 가리키려면
+#             "D:/project/mapviewer/logs/color-legends.json"
+#             (단 그 파일의 composite.default 는 원본 빨강 램프라 "아래쪽 연하게"가 없다)
+#   기본값이 상대경로인 이유: 절대경로를 박아두면 그 경로가 없는 서버(Ubuntu24)에서
+#   색이 조용히 계산 기본값으로 바뀐다. 폴백이 있어 죽지는 않지만 색이 달라진다.
+COLOR_LEGENDS_PATH = "deploy/color-legends.json"
 COLOR_SCHEME_NAME = "fast_red_020"
 
 
@@ -136,17 +144,21 @@ class Cluster:
     #   ⚠ pool 마다 다시 정하라. 다른 pool 값 이식 금지 (mcs6 이식으로 결론이 뒤집힌 전례).
     #   ⚠ PARTITION_BY 를 켜면 **파티션마다** 적용된다. 작은 파티션이 있으면 낮춰라
     #     (step1 로그의 `[partition] ★ 경고` 확인).
-    MCS = env("SITE_MCS", 20)
+    #   ★ 260731 사용자 지정: 10. (앞선 severstal 실측 승자는 mcs20/ms5 였지만 그건
+    #     그 pool 의 값이고, 다이얼은 pool 마다 다시 정한다 — 이식 금지가 원칙이다.)
+    MCS = env("SITE_MCS", 10)
 
     # HDBSCAN min_samples — **얼마나 보수적으로 볼 것인가.**
     #   한 점이 "밀집 지역에 있다"고 인정받는 데 필요한 이웃 수.
     #   크면 경계의 점을 쉽게 noise 로 던져 클러스터가 단단해지고, 작으면 잘 안 버리는 대신
-    #   서로 다른 그룹이 붙는다. 실측 승자 조합은 mcs20/ms5 (= mcs 의 1/4).
-    MS = env("SITE_MS", 5)
+    #   서로 다른 그룹이 붙는다. (severstal 실측 승자 조합은 mcs20/ms5 = mcs 의 1/4.)
+    #   ★ 260731 사용자 지정: 3.
+    MS = env("SITE_MS", 3)
 
     METHOD = env("SITE_METHOD", "leaf")        # leaf | eom
     # cluster_selection_epsilon. 이 거리 아래로 붙은 클러스터는 합친다. 0 이면 순수 HDBSCAN.
-    EPS = env("SITE_EPS", 0.06)
+    #   ★ 260731 사용자 지정: 0 = 병합 없는 순수 HDBSCAN.
+    EPS = env("SITE_EPS", 0.0)
     # 거리 척도. 임베딩이 L2 정규화돼 있어 euclidean 이 cosine 과 단조 동치다.
     METRIC = env("SITE_METRIC", "euclidean")
 
