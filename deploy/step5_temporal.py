@@ -214,12 +214,36 @@ def main() -> int:
     def max_sim(c):
         return float((R @ c["centroid"]).max())
 
-    calib_sims = [max_sim(c) for b in per_batch[:n_cal] for c in b["clusters"]]
-    print(f"[calib] 유사도 표본 {len(calib_sims)}개  "
+    # ★ 임계용 유사도는 **leave-one-batch-out** 으로 잰다.
+    #   예전엔 캘리브레이션 클러스터를 REF 전체(자기 자신 포함)와 비교했다. centroid 는
+    #   단위벡터라 자기와의 코사인이 정확히 1.0 이고, max 를 취하니 **표본이 전부 1.0** 이
+    #   됐다. 그래서 어떤 퍼센타일을 잡아도 임계가 1.0 이 되고, 관측 클러스터는 거의 항상
+    #   1.0 미만이라 **전부 신규로 판정**됐다 — 감지기가 늘 알람을 울리는 상태였다.
+    #   실측(260731): threshold 1.0 / FAR 1.0·0.75·0.5 / 신규 클러스터 36개.
+    #   운영 시점의 질문은 "**앞선 배치들**로 만든 REF 에 이 배치의 클러스터가 얼마나
+    #   닮았나" 이므로, 캘리브레이션에서도 자기 배치를 뺀 REF 와 비교해야 같은 질문이 된다.
+    _cal_batches = [b for b in per_batch[:n_cal] if b["clusters"]]
+    calib_sims = []
+    for i, b in enumerate(_cal_batches):
+        others = [c for j, ob in enumerate(_cal_batches) if j != i for c in ob["clusters"]]
+        if not others:
+            continue
+        Ro = np.stack([c["centroid"] for c in others])
+        calib_sims += [float((Ro @ c["centroid"]).max()) for c in b["clusters"]]
+    if not calib_sims:
+        die("임계를 만들 수 없다: 클러스터가 나온 캘리브레이션 배치가 "
+            f"{len(_cal_batches)}개뿐이다 (2개 이상 필요).\n"
+            "  SITE_N_CALIB 를 늘리거나, 배치당 장수를 늘리거나, mcs 를 낮춰라.")
+    print(f"[calib] 유사도 표본 {len(calib_sims)}개 (leave-one-batch-out)  "
           f"min={min(calib_sims):.5f} max={max(calib_sims):.5f}")
+    if max(calib_sims) > 0.9999:
+        print("  ⚠ 유사도 1.0 이 섞여 있다 — 배치 간 중복 이미지가 있는지 확인해라.")
     if len(calib_sims) < 30:
-        print("  ⚠ 표본이 30 미만이다. 퍼센타일 임계가 불안정할 수 있다 — "
-              "캘리브레이션 배치를 늘려라.")
+        print(f"  ⚠ 표본이 {len(calib_sims)}개(30 미만)다. 임계는 이 표본의 P 퍼센타일인데,"
+              f" 표본이 적으면 그 값이 통계량이 아니라 관측 최솟값에 가까워진다.")
+        print("     (실측: 같은 분포에서 N=10 이면 P10 이 0.067 폭으로 흔들리고,"
+              " N=120 이면 0.026 으로 준다.)")
+        print("     캘리브레이션 배치(SITE_N_CALIB)를 늘리거나 mcs 를 낮춰 클러스터를 늘려라.")
 
     def size_floor(pct):
         return ref_sizes[min(len(ref_sizes) - 1, int(round(pct / 100 * (len(ref_sizes) - 1))))]
