@@ -221,8 +221,7 @@ def main() -> int:
     _wg = Path(_wg) if _wg else None
     if (not Recipe.ENSEMBLE) and _wg and (_wg / "summary.json").exists():
         import shutil
-        print(f"[final] 승자 셀의 grouping 을 그대로 쓴다 (재계산 없음)
-"
+        print("[final] 승자 셀의 grouping 을 그대로 쓴다 (재계산 없음)\n"
               f"        {_wg}  ->  {out}")
         shutil.copytree(_wg, out, dirs_exist_ok=True)
     else:
