@@ -440,6 +440,13 @@ def deploy_cmd(backbone: str, pool: str, out: Path, mcs: int, ms: int,
            "--method", str(method), "--eps", str(eps),
            "--device", device, "--batch", str(batch),
            "--reassign", reassign]
+    # ★ 대표 이미지 수. 안 넘기면 grouping_deploy 의 기본값(12)이 그대로 쓰여
+    #   config 를 고쳐도 반영이 안 된다 (260731 까지 그랬다).
+    try:
+        from config import Composite as _K
+        cmd += ["--reps", str(int(_K.MAX_REPS))]
+    except Exception:
+        pass
     if cache:
         cmd += ["--cache", str(rel(cache))]
     if no_composites:

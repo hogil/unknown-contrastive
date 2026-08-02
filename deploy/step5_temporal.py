@@ -339,7 +339,9 @@ def main() -> int:
             # 중심에 가까운 순 (composite 상한도 이 순서로 자른다)
             cen = c["centroid"]
             mem = sorted(c["members"], key=lambda i: float(np.linalg.norm(z[i] - cen)))
-            for rank, i in enumerate(mem[:12], 1):
+            # ★ 하드코딩 12 였다 — config 를 고쳐도 step5 만 12장이었다.
+            _reps = int(getattr(Composite, "MAX_REPS", 12))
+            for rank, i in enumerate(mem[:_reps] if _reps > 0 else mem, 1):
                 src = Path(paths_s[i])
                 if src.exists():
                     shutil.copy2(src, gdir / "representatives" / f"rep{rank:02d}_{src.name}")

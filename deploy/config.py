@@ -305,6 +305,16 @@ class Composite:
     # 0 이면 전부 사용 (느리다).
     MAX_MEMBERS = env("SITE_COMPOSITE_MAX_MEMBERS", 10)
 
+    # 그룹마다 `representatives/` 에 복사할 **원본 이미지 수** (중심에 가까운 순).
+    #   composite 와 별개다 — composite 는 위 MAX_MEMBERS 장을 **합쳐 한 장**으로 만들고,
+    #   이건 눈으로 확인할 **원본을 그대로 복사**한다.
+    #   ⚠ 원본 복사라 용량을 먹는다. wafer PNG 가 장당 15.4 MiB 라 그룹 15개 x 30장이면
+    #     한 grouping 당 약 6.9 GiB. step3 는 셀마다 grouping 을 만드니 12셀이면 그 12배다.
+    #     디스크가 빠듯하면 낮춰라. 0 이하면 그룹 전체(= pool 전체 복사)라 권하지 않는다.
+    #   ★ 260731 이전에는 `grouping_deploy.py --reps` 기본값 12 가 그대로 쓰였다 —
+    #     deploy_cmd 가 이 인자를 아예 안 넘겨서 config 로도 env 로도 못 바꿨다.
+    MAX_REPS = env("SITE_MAX_REPS", 30)
+
     # 비교용 square_average 도 같이 저장할지
     ALSO_SQUARE_AVERAGE = env("SITE_COMPOSITE_ALSO_AVG", False)
 
