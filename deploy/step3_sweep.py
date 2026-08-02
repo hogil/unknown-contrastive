@@ -211,12 +211,27 @@ def main() -> int:
         print(f"[ensemble] Recipe.ENSEMBLE=False -> final/ 은 round-1 승자 단일 체크포인트로 만든다 "
               f"(round-2 {len(r2.get(final_win, []))}개는 재확인용으로만 쓴다).")
     out = out_root / "final"
-    # ★ 여기는 스윕 셀이 아니라 **최종 산출**이다 -> composite 를 만든다.
-    #   (셀 비교 때는 끄는 게 맞지만 final 까지 끄면 그림이 하나도 안 남는다)
-    run(deploy_cmd(Config.BACKBONE, pool, out, mcs, ms, ck_list,
-                   Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, False,
-                   Config.PARTITION_BY),
-        log_path=out_root / "final.log")
+    # ★ 앙상블이 아니면 final 은 **승자 셀의 grouping 과 완전히 같은 계산**이다 —
+    #   같은 체크포인트 1개, 같은 pool, 같은 다이얼. 실측으로 값이 소수점까지 일치했다
+    #   (final k=6 seed_noise=38.33 coh=0.7682 == lr002_s42/grouping_proj_ep2, 260731).
+    #   그걸 다시 돌리면 composite 가 원본 6400x6400 을 그룹마다 10장씩 재디코드하므로
+    #   순수한 낭비다. 이미 있는 폴더를 복사한다.
+    #   (앙상블일 때는 체크포인트가 여러 개라 계산이 달라지므로 그대로 다시 돌린다.)
+    _wg = r1[final_win].get("grouping_dir")
+    _wg = Path(_wg) if _wg else None
+    if (not Recipe.ENSEMBLE) and _wg and (_wg / "summary.json").exists():
+        import shutil
+        print(f"[final] 승자 셀의 grouping 을 그대로 쓴다 (재계산 없음)
+"
+              f"        {_wg}  ->  {out}")
+        shutil.copytree(_wg, out, dirs_exist_ok=True)
+    else:
+        # ★ 여기는 스윕 셀이 아니라 **최종 산출**이다 -> composite 를 만든다.
+        #   (셀 비교 때는 끄는 게 맞지만 final 까지 끄면 그림이 하나도 안 남는다)
+        run(deploy_cmd(Config.BACKBONE, pool, out, mcs, ms, ck_list,
+                       Config.DEVICE, int(Config.BATCH), Config.REASSIGN, _cache, False,
+                       Config.PARTITION_BY),
+            log_path=out_root / "final.log")
     final_sum = read_summary(out)
 
     # step1/step2 대비
