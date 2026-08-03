@@ -919,10 +919,15 @@ def write_group_composites(paths, out_dir, grades: list[int] | None = None,
     tag = "" if grades is None else "_" + "".join(str(g) for g in sorted(grades))
     base = base_path or paths[0]
     ix, pal = render_composite_indexed(wt, m_wt, border, base, text, stops_hex=stops_hex)
-    save_palette_png(ix, pal, out / f"{prefix}square_weighted_average{tag}.png")
+    # ★ 파일명은 계산식이 아니라 **몇 장을 합쳤는지**를 말한다.
+    #   `square_weighted_average` 는 분모 공식 이름이라, 이 그림을 보는 현업
+    #   엔지니어에게 아무 정보도 주지 않았다. merged10 = "10장을 합친 지도".
+    #   (어떤 공식으로 합쳤는지는 Composite.METHOD 설정과 이 파일 맨 위 주석에 있다.)
+    save_palette_png(ix, pal, out / f"{prefix}merged{n}{tag}.png")
     if also_square_average:
         ix2, pal2 = render_composite_indexed(sq, m_sq, border, base, text, stops_hex=stops_hex)
-        save_palette_png(ix2, pal2, out / f"{prefix}square_average{tag}.png")
+        # 비교용 변형 (분모만 다르다). 기본은 안 만든다.
+        save_palette_png(ix2, pal2, out / f"{prefix}merged{n}{tag}_alt.png")
     return {"n": n, "grades": grades, "stops": list(stops_hex),
             "wt_range": [float(wt[m_wt].min()), float(wt[m_wt].max())] if m_wt.any() else None,
             "sq_range": [float(sq[m_sq].min()), float(sq[m_sq].max())] if m_sq.any() else None}

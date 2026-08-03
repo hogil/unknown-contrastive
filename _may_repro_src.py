@@ -895,7 +895,8 @@ def cluster_and_save_hdbscan(
             rep_idx = int(idxs[local])
             src = _pick_export_src(files[rep_idx])
             # 기존: rep_name = f"cluster_{lab:03d}__{classes[rep_idx]}__..."
-            rep_name = f"{tag}__{classes[rep_idx]}__medoid_dist{d[local]:.4f}{src.suffix}"
+            # `medoid_dist0.1359` -> `top01`. 거리는 파일명에 안 넣는다 (현업 언어가 아니다).
+            rep_name = f"{tag}__{classes[rep_idx]}__top01{src.suffix}"
             link_or_copy(src, summary_dir / rep_name, logger)
 
             # ★ 클러스터별 composite map — medoid 옆에 같이 둔다 (260731).

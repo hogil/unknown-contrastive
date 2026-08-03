@@ -719,8 +719,8 @@ def main():
         #   arm 을 고르는 판정에는 쓰이지 않는다. 고른 뒤 그 arm 만 만들면 된다.
         # 그룹마다 하위폴더를 만들지 않는다 — composites/ 안에 **파일명으로 구분**해 평평하게.
         #   이름 규칙: group_<번호>_l<lot 수>_w<wafer 수>
-        #     group_000_l3_w123_square_weighted_average.png
-        #     group_000_l3_w123_medoid_<원본파일명>.png
+        #     group_000_l3_w123_merged10.png          <- 10장을 합친 지도 (합성)
+        #     group_000_l3_w123_top01_<원본파일명>.png <- 제일 대표적인 실물 1장
         #   lot 을 앞에 두는 이유: 같은 123장이라도 l1(한 lot) 과 l40(여러 lot) 은
         #   대응이 완전히 다르다. 목록을 정렬해서 볼 때 lot 이 먼저 눈에 들어와야 한다.
         gtag = f"group_{c:03d}_l{len(_lots)}_w{len(idx)}"
@@ -760,7 +760,9 @@ def main():
         #   — 그 arm 이 통째로 실패로 기록된다 (260729 감사).
         _med = Path(paths[order[0]])
         if _med.exists():
-            shutil.copy2(_med, comp_root / f"{gtag}_medoid_{_med.name}")
+            # ★ `medoid` 는 통계 용어라 뺐다. representatives/ 의 top01 과 **같은 파일**이고
+            #   같은 이름을 쓰는 게 헷갈리지 않는다 — "이 그룹을 제일 잘 대표하는 실물 1장".
+            shutil.copy2(_med, comp_root / f"{gtag}_top01_{_med.name}")
         else:
             print(f"  [warn] group {c} medoid 원본 없음 -> 건너뜀: {_med}", flush=True)
         rows.append({"group_id": c, "group_size": len(idx),
