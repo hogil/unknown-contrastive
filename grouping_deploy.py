@@ -667,6 +667,16 @@ def main():
     _kind = "frozen" if not a.proj else ("adapted_ens" if len(tags) > 1 else "adapted")
     model_mode = f"{_kind}[{'+'.join(tags)}]_mcs{a.mcs}ms{a.ms}{a.method}{reassign_display(a.reassign)}"
 
+    # ★ lot id = 파일명에서 **첫 `_` 앞**. 사내 파일명이
+    #   `AAQ729_00C_20_20260501_010000_83.0_17_PE_ENGINEER.png` 이고 AAQ729 가 그것이다.
+    #   한 그룹이 몇 개 lot 에 걸쳐 있는지는 **라벨 없이 읽히는 운영 신호**다:
+    #     lot 1개  -> 그 lot 만의 문제 (자재/설비 특정 건)
+    #     lot 다수 -> 공정 전반 문제
+    #   같은 크기 그룹이라도 대응이 완전히 달라지므로 폴더명·CSV·summary 에 함께 남긴다.
+    def _lot(pth) -> str:
+        stem = Path(pth).stem
+        return stem.split("_", 1)[0] if "_" in stem else stem
+
     # --- representatives + composites + groups.csv (label-free) ---
     rep_root = out / "representatives"
     comp_root = out / "composites"
@@ -686,12 +696,16 @@ def main():
         #   (실측: 분리 전 3건 -> 분리 후 0건).
         _base = n if parts is None else sum(1 for v in parts if v == parts[idx[0]])
         over = len(idx) >= float(os.environ.get("SITE_OVER_MERGE_FRAC", 0.20)) * _base
-        gdir = rep_root / f"group_{c:03d}_n{len(idx)}"
+        _lots = {_lot(paths[i]) for i in idx}
+        gdir = rep_root / f"group_{c:03d}_l{len(_lots)}_w{len(idx)}"
         gdir.mkdir(exist_ok=True)
+        # ★ 파일명 앞자리는 **그룹 중심에서 가까운 순위**다 (order 는 이미
+        #   argsort(||z - center||) 로 정렬돼 있다). near01 이 그 그룹의 medoid 다.
+        #   예전 접두사 `rep` 은 "반복(repeat) 순서"로 읽혀서 무슨 순서인지 알 수 없었다.
         for rank, i in enumerate(order[:a.reps], 1):
             src = Path(paths[i])
             if src.exists():
-                shutil.copy2(src, gdir / f"rep{rank:02d}_{src.name}")
+                shutil.copy2(src, gdir / f"near{rank:02d}_{src.name}")
         # composite — mapviewer(api/composite_map.py) 공식 규격.
         # RGB 평균이 아니라 **palette index 의 grade 빈도**를 쌓아 스칼라 맵으로 만들고
         # colormap 으로 그린다. grade 는 순서형 범주라 색 평균은 의미가 없다.
@@ -700,9 +714,12 @@ def main():
         #   6400x6400 을 다시 읽어야 해서 arm 당 ~70초를 먹는데(실측: 임베딩은 5초),
         #   arm 을 고르는 판정에는 쓰이지 않는다. 고른 뒤 그 arm 만 만들면 된다.
         # 그룹마다 하위폴더를 만들지 않는다 — composites/ 안에 **파일명으로 구분**해 평평하게.
-        #   group_000_n6_square_weighted_average.png
-        #   group_000_n6_medoid_<원본파일명>.png
-        gtag = f"group_{c:03d}_n{len(idx)}"
+        #   이름 규칙: group_<번호>_l<lot 수>_w<wafer 수>
+        #     group_000_l3_w123_square_weighted_average.png
+        #     group_000_l3_w123_medoid_<원본파일명>.png
+        #   lot 을 앞에 두는 이유: 같은 123장이라도 l1(한 lot) 과 l40(여러 lot) 은
+        #   대응이 완전히 다르다. 목록을 정렬해서 볼 때 lot 이 먼저 눈에 들어와야 한다.
+        gtag = f"group_{c:03d}_l{len(_lots)}_w{len(idx)}"
         comp_root.mkdir(parents=True, exist_ok=True)
         if not a.no_composites:
             try:
@@ -743,6 +760,10 @@ def main():
         else:
             print(f"  [warn] group {c} medoid 원본 없음 -> 건너뜀: {_med}", flush=True)
         rows.append({"group_id": c, "group_size": len(idx),
+                      "n_lots": len(_lots),
+                      # 한 lot 에 몰린 비율. 1.0 이면 통째로 한 lot 이다.
+                      "top_lot_frac": round(max(
+                          sum(1 for i in idx if _lot(paths[i]) == L) for L in _lots) / len(idx), 4),
                       "group_coherence": round(coh, 4),
                       "review_status": "over_merged_review" if over else "candidate",
                       "model_mode": model_mode})
@@ -753,10 +774,33 @@ def main():
                               "purity": round(float(cnts.max() / cnts.sum()), 4)})
 
     with (out / "groups.csv").open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["group_id", "group_size", "group_coherence",
-                                           "review_status", "model_mode"])
+        w = csv.DictWriter(f, fieldnames=["group_id", "group_size", "n_lots", "top_lot_frac",
+                                           "group_coherence", "review_status", "model_mode"])
         w.writeheader()
         w.writerows(rows)
+
+    # ── ★ 이미지별 소속 + 임베딩 ─────────────────────────────────────────
+    #   여태 산출은 groups.csv(그룹 단위) + representatives(그룹당 상위 N장) 뿐이라
+    #   **"그룹 3에 든 웨이퍼 전부"를 답할 수단이 없었다** — 200장 그룹이면 30장만
+    #   복사되고 나머지 170장의 파일명이 어디에도 안 남았다.
+    #   그리고 임베딩을 안 남겨서 다이얼(mcs/ms)만 바꿔 다시 묶어보려 해도 pool 전체를
+    #   재디코드+재추론해야 했다 (step5 도 매번 처음부터 다시 임베딩한다).
+    with (out / "assignments.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["row", "path", "lot", "group_id",
+                                          "group_id_seed", "dist_to_centroid"])
+        w.writeheader()
+        _cen = {int(c): z[np.where(pred == c)[0]].mean(0) for c in clusters}
+        for i in range(n):
+            g = int(pred[i])
+            d = (float(np.linalg.norm(z[i] - _cen[g])) if g in _cen else "")
+            w.writerow({"row": i, "path": paths[i], "lot": _lot(paths[i]),
+                        # group_id = reassign **후**, group_id_seed = reassign **전**.
+                        # 판정은 전(seed)으로 하므로 둘 다 남긴다. -1 = noise.
+                        "group_id": g, "group_id_seed": int(seed_pred[i]),
+                        "dist_to_centroid": (round(d, 6) if d != "" else "")})
+    # 임베딩. 행 순서 = assignments.csv 의 row. float32 로 충분하다(원본이 float32).
+    np.save(out / "embeddings.npy", z.astype("float32"))
+    print(f"  [save] assignments.csv ({n} 행)  embeddings.npy {z.shape}", flush=True)
 
     noise = 100.0 * (pred == -1).sum() / n
     summary = {"n": n, "k": len(clusters), "noise_pct": round(noise, 2),
@@ -768,6 +812,10 @@ def main():
                "composite_failed": len(_comp_fail),
                "composite_failures": _comp_fail[:5],
                "model_mode": model_mode,
+               # ★ 어떤 backbone/head 로 만든 결과인지. model_mode 는 태그라 경로가 안 남았다.
+               "backbone": str(a.backbone),
+               "proj": list(a.proj) if getattr(a, "proj", None) else [],
+               "embeddings": "embeddings.npy", "assignments": "assignments.csv",
                "dial": {"mcs": a.mcs, "ms": a.ms, "method": a.method, "eps": a.eps},
                "reassign": reassign_info}
     if part_summary is not None:

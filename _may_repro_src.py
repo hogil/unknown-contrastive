@@ -864,7 +864,8 @@ def cluster_and_save_hdbscan(
     def write_cluster(srow):
         lab, idxs = srow["lab"], srow["idxs"]
         # ← 추가: 폴더/파일 이름 공통 태그
-        tag = f"cluster_{lab:03d}_size_{srow['size']}"
+        _lots = {Path(files[j]).stem.split("_", 1)[0] for j in idxs}
+        tag = f"cluster_{lab:03d}_l{len(_lots)}_w{srow['size']}"
 
         # 기존: cdir = out_clusters_root / f"cluster_{lab:03d}"
         cdir = out_clusters_root / tag

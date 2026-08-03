@@ -333,7 +333,10 @@ def main() -> int:
         for c in b["clusters"]:
             if not (max_sim(c) < thr_rec and c["size"] >= floor_rec):
                 continue
-            tag = f"{b['name']}_c{c['id']:03d}_n{c['size']}"
+            # ★ lot 수도 넣는다 (파일명 첫 `_` 앞이 lot id). 신규 클러스터가
+            #   한 lot 에서만 나왔는지 여러 lot 에 걸쳤는지가 대응을 가른다.
+            _lots = {Path(paths_s[i]).stem.split("_", 1)[0] for i in c["members"]}
+            tag = f"{b['name']}_c{c['id']:03d}_l{len(_lots)}_w{c['size']}"
             gdir = novel_out / tag
             (gdir / "representatives").mkdir(parents=True, exist_ok=True)
             # 중심에 가까운 순 (composite 상한도 이 순서로 자른다)
@@ -344,7 +347,8 @@ def main() -> int:
             for rank, i in enumerate(mem[:_reps] if _reps > 0 else mem, 1):
                 src = Path(paths_s[i])
                 if src.exists():
-                    shutil.copy2(src, gdir / "representatives" / f"rep{rank:02d}_{src.name}")
+                    # near<N> = 그룹 중심에서 가까운 순위 (mem 이 그 순으로 정렬돼 있다)
+                    shutil.copy2(src, gdir / "representatives" / f"near{rank:02d}_{src.name}")
             mx = int(Composite.MAX_MEMBERS)
             use = mem if mx <= 0 else mem[:mx]
             try:
@@ -363,6 +367,7 @@ def main() -> int:
                 if n_made == 0:
                     traceback.print_exc()
             novel_report.append({"batch": b["name"], "cluster": c["id"], "size": c["size"],
+                                 "n_lots": len(_lots), "lots": sorted(_lots)[:20],
                                  "max_sim": round(max_sim(c), 6), "dir": str(gdir.name)})
     if novel_report:
         print(f"\n  ★ 신규 클러스터 {len(novel_report)}개 산출 (composite {n_made}개) -> {novel_out}")
