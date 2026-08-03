@@ -699,13 +699,17 @@ def main():
         _lots = {_lot(paths[i]) for i in idx}
         gdir = rep_root / f"group_{c:03d}_l{len(_lots)}_w{len(idx)}"
         gdir.mkdir(exist_ok=True)
-        # ★ 파일명 앞자리는 **그룹 중심에서 가까운 순위**다 (order 는 이미
-        #   argsort(||z - center||) 로 정렬돼 있다). near01 이 그 그룹의 medoid 다.
-        #   예전 접두사 `rep` 은 "반복(repeat) 순서"로 읽혀서 무슨 순서인지 알 수 없었다.
+        # ★ 앞자리는 **그 그룹을 가장 잘 대표하는 순서**다 — top01 이 제일 대표적이고
+        #   숫자가 커질수록 덜 대표적이다 (top01 = 그 그룹의 medoid).
+        #   폴더가 이미 `representatives/` 라 무엇의 순위인지는 맥락으로 읽힌다.
+        #   ⚠ 파일명에 "중심거리" 같은 계산 용어를 쓰지 않는다 — 이 폴더를 보는 사람은
+        #     현업 엔지니어이고 벡터/거리는 그들의 언어가 아니다. 실제 거리값은
+        #     assignments.csv 의 dist_to_centroid 에 남아 있으니 분석에는 지장이 없다.
+        #     (order 는 argsort(||z - center||) 로 정렬돼 있다.)
         for rank, i in enumerate(order[:a.reps], 1):
             src = Path(paths[i])
             if src.exists():
-                shutil.copy2(src, gdir / f"near{rank:02d}_{src.name}")
+                shutil.copy2(src, gdir / f"top{rank:02d}_{src.name}")
         # composite — mapviewer(api/composite_map.py) 공식 규격.
         # RGB 평균이 아니라 **palette index 의 grade 빈도**를 쌓아 스칼라 맵으로 만들고
         # colormap 으로 그린다. grade 는 순서형 범주라 색 평균은 의미가 없다.

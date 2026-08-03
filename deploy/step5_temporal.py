@@ -347,8 +347,8 @@ def main() -> int:
             for rank, i in enumerate(mem[:_reps] if _reps > 0 else mem, 1):
                 src = Path(paths_s[i])
                 if src.exists():
-                    # near<N> = 그룹 중심에서 가까운 순위 (mem 이 그 순으로 정렬돼 있다)
-                    shutil.copy2(src, gdir / "representatives" / f"near{rank:02d}_{src.name}")
+                    # top<N> = 그 그룹을 잘 대표하는 순서 (top01 이 제일 대표적)
+                    shutil.copy2(src, gdir / "representatives" / f"top{rank:02d}_{src.name}")
             mx = int(Composite.MAX_MEMBERS)
             use = mem if mx <= 0 else mem[:mx]
             try:
